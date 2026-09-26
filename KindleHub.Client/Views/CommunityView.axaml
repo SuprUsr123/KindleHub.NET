@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="KindleHub.Client.Views.CommunityView">
+    <Grid RowDefinitions="Auto,*,Auto" Margin="20">
+        <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,12">
+            <TextBlock Text="Community · Topics" FontSize="32" FontWeight="Bold"/>
+            <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="13"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBox Text="{Binding SearchText}" Width="240" Watermark="Filter topics…"/>
+                <ComboBox ItemsSource="{Binding AllCategories}" SelectedItem="{Binding SelectedCategory}" Width="150"/>
+                <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
+                <Button Content="New Topic" Command="{Binding ShowCreateCommand}" FontWeight="Bold"/>
+                <ProgressBar IsVisible="{Binding IsLoading}" Width="80" IsIndeterminate="True" VerticalAlignment="Center"/>
+            </StackPanel>
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="4">
+            <ListBox ItemsSource="{Binding Topics}" SelectedItem="{Binding SelectedTopic}"
+                     DoubleTapped="Topic_DoubleTapped">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Border Padding="16" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
+                            <StackPanel Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="17"/>
+                                    <TextBlock Text="{Binding CategoryId}" Foreground="Blue"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding Blurb}" Foreground="Gray" TextWrapping="Wrap"/>
+                                <TextBlock FontSize="11" Foreground="Gray">
+                                    <Run Text="by "/><Run Text="{Binding Creator}"/><Run Text="  ·  room "/><Run Text="{Binding Code}"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <StackPanel IsVisible="{Binding ShowCreate}">
+                <TextBlock Text="Create a topic" FontWeight="Bold" Margin="0,0,0,8"/>
+                <Grid ColumnDefinitions="2*,*,*,Auto,Auto">
+                    <TextBox Grid.Column="0" Text="{Binding NewTitle}" Watermark="Topic title" Margin="0,0,8,0"/>
+                    <TextBox Grid.Column="1" Text="{Binding NewBlurb}" Watermark="Blurb (optional)" Margin="0,0,8,0"/>
+                    <ComboBox Grid.Column="2" ItemsSource="{Binding AllCategories}" SelectedItem="{Binding NewCategory}" Margin="0,0,8,0"/>
+                    <Button Grid.Column="3" Content="Create &amp; open" Command="{Binding CreateCommand}"/>
+                    <Button Grid.Column="4" Content="Cancel" Command="{Binding CancelCreateCommand}" Margin="8,0,0,0"/>
+                </Grid>
+                <StackPanel Margin="0,6,0,0" Orientation="Horizontal" Spacing="8">
+                    <TextBox Text="{Binding JoinCode}" Width="180" Watermark="…or join by code"/>
+                    <Button Content="Join" Command="{Binding JoinCommand}"/>
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

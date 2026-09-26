@@ -1,0 +1,23 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="KindleHub.Client.Views.HomeView">
+    <StackPanel Spacing="20" Margin="40" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <TextBlock Text="KindleHub Pro" FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
+        <TextBlock Text="{Binding WelcomeText}" FontSize="24" HorizontalAlignment="Center" TextWrapping="Wrap"/>
+        <TextBlock Text="Your cross-platform gaming and community hub" FontSize="16" Foreground="Gray" HorizontalAlignment="Center"/>
+        
+        <Border Margin="0,40,0,0" Padding="20" Background="{DynamicResource ControlFillColorDefault}" CornerRadius="8" MaxWidth="500">
+            <StackPanel Spacing="12">
+                <TextBlock Text="Features:" FontWeight="Bold" FontSize="18"/>
+                <TextBlock Text="* Global leaderboards for retro games"/>
+                <TextBlock Text="* Community groups and chat"/>
+                <TextBlock Text="* Cross-device message sync"/>
+                <TextBlock Text="* Homebrew app store"/>
+                <TextBlock Text="* Secure account encryption"/>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

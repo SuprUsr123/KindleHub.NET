@@ -1,0 +1,107 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="KindleHub.Client.Views.SettingsView">
+    <ScrollViewer Margin="20">
+        <StackPanel Spacing="20" MaxWidth="520" HorizontalAlignment="Left">
+            <TextBlock Text="Settings" FontSize="32" FontWeight="Bold"/>
+
+            <!-- account / sign in -->
+            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Account" FontSize="20" FontWeight="Bold"/>
+                    <StackPanel Spacing="10" IsVisible="{Binding !IsLoggedIn}">
+                        <TextBlock Text="Sign in to sync data, chat, topics and publish apps." Foreground="Gray"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBox Text="{Binding Username}" Width="210" Watermark="Username"/>
+                            <TextBox Text="{Binding Password}" Width="210" Watermark="Password" PasswordChar="●"
+                                     x:Name="PwBox"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Login" Command="{Binding LoginCommand}"/>
+                            <Button Content="Register" Command="{Binding RegisterCommand}"/>
+                            <ProgressBar IsVisible="{Binding Busy}" Width="60" IsIndeterminate="True" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel Spacing="10" IsVisible="{Binding IsLoggedIn}">
+                        <TextBlock FontWeight="Bold"><Run Text="Signed in as "/><Run Text="{Binding CurrentUserDisplay}"/></TextBlock>
+                        <Button Content="Log out" Command="{Binding LogoutCommand}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- appearance (same keys as the web client's settings) -->
+            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18"
+                    IsVisible="{Binding IsLoggedIn}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Appearance" FontSize="20" FontWeight="Bold"/>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Display name" FontWeight="SemiBold"/>
+                        <TextBlock Text="Shown on your messages and leaderboard entries. Saved to your encrypted account (shared with the web app)."
+                                   Foreground="Gray" FontSize="12"/>
+                        <TextBox Text="{Binding ProfileName}" Watermark="Profile name" KeyDown="ProfileName_KeyDown"/>
+                    </StackPanel>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Font size" FontWeight="SemiBold"/>
+                        <ItemsControl ItemsSource="{Binding FontSizeOptions}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6"/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding}" Click="FontPick_Click"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Colour theme" FontWeight="SemiBold"/>
+                        <ItemsControl ItemsSource="{Binding ThemeOptions}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6"/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding}" Click="ThemePick_Click"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <ToggleSwitch IsChecked="{Binding SimpleMode}" Content="Simple mode (bigger targets, plainer layout)"/>
+                </StackPanel>
+            </Border>
+
+            <!-- sync -->
+            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18"
+                    IsVisible="{Binding IsLoggedIn}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Sync" FontSize="20" FontWeight="Bold"/>
+                    <ToggleSwitch IsChecked="{Binding SyncEnabled}" Content="Sync my account data with the cloud"/>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Content="Sync now" Command="{Binding SyncNowCommand}"/>
+                        <TextBlock Text="{Binding NoteCountLabel}" Foreground="Gray" VerticalAlignment="Center" FontSize="12"/>
+                    </StackPanel>
+                    <TextBlock Foreground="Gray" FontSize="12" TextWrapping="Wrap"
+                               Text="Account data is encrypted on this device before upload; the server only ever holds ciphertext. Chat messages from Messages → tap → To notes land in the same encrypted vault."/>
+                </StackPanel>
+            </Border>
+
+            <!-- about -->
+            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="About" FontSize="20" FontWeight="Bold"/>
+                    <TextBlock Text="KindleHub Pro — desktop client for kindlehub.pro"/>
+                    <TextBlock Text="Cross-platform (Windows · Linux · macOS), .NET 8 + Avalonia" Foreground="Gray"/>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource AccentFillColorDefaultBrush}" FontSize="14"/>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

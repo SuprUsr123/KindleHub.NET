@@ -1,0 +1,17 @@
+# Build artifacts
+artifacts/
+bin/
+obj/
+*.user
+*.suo
+
+# Local session / prefs (contains the auth token — keep out of version control)
+**/session.json
+**/chat_prefs.json
+**/message_secrets.db
+
+# Editor / OS
+.vs/
+.idea/
+.DS_Store
+Thumbs.db

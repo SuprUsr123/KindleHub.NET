@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="KindleHub.Client.MainWindow"
+        Title="KindleHub Pro"
+        MinWidth="1000" MinHeight="700">
+    
+    <Window.Styles>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding" Value="16,12"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        </Style>
+        <Style Selector="Button.nav">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="16,12"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid ColumnDefinitions="250,*" RowDefinitions="Auto,*">
+        <!-- Header -->
+        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="{DynamicResource ControlFillColorDefault}" 
+                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Spacing="16" Margin="20,12">
+                <TextBlock Text="KindleHub Pro" FontSize="24" FontWeight="Bold" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Foreground="Gray" FontSize="14"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Sidebar Navigation -->
+        <Border Grid.Row="1" Grid.Column="0" Background="{DynamicResource ControlFillColorDefault}" 
+                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,1,0">
+            <StackPanel Spacing="4" Margin="8,16">
+                <Button Classes="nav" Content="Home" Command="{Binding NavigateCommand}" CommandParameter="Home"/>
+                <Button Classes="nav" Content="Leaderboards" Command="{Binding NavigateCommand}" CommandParameter="Leaderboards"/>
+                <Button Classes="nav" Content="Community" Command="{Binding NavigateCommand}" CommandParameter="Community"/>
+                <Button Classes="nav" Content="Messages" Command="{Binding NavigateCommand}" CommandParameter="Messages"/>
+                <Button Classes="nav" Content="Games" Command="{Binding NavigateCommand}" CommandParameter="Games"/>
+                <Button Classes="nav" Content="App Store" Command="{Binding NavigateCommand}" CommandParameter="App Store"/>
+                <Button Classes="nav" Content="Settings" Command="{Binding NavigateCommand}" CommandParameter="Settings"/>
+                
+                <Separator Margin="0,20,0,8"/>
+                
+                <StackPanel Spacing="8" IsVisible="{Binding !IsAuthenticated}">
+                    <TextBlock Text="Account" FontWeight="Bold" Margin="8,0" FontSize="14"/>
+                    <Button Classes="nav" Content="Login / Register" Command="{Binding NavigateCommand}" CommandParameter="Settings"/>
+                </StackPanel>
+                
+                <StackPanel Spacing="8" IsVisible="{Binding IsAuthenticated}">
+                    <TextBlock Text="{Binding UserDisplayName}" FontWeight="Bold" Margin="8,0" FontSize="14"/>
+                    <TextBlock Text="{Binding CurrentUser.TierFormatted}" Margin="8,0" FontSize="12" Foreground="Gray"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Main Content -->
+        <ContentControl Grid.Row="1" Grid.Column="1" Content="{Binding CurrentView}" 
+                        HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+    </Grid>
+</Window>
