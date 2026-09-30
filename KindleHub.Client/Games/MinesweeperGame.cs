@@ -21,6 +21,8 @@ public sealed class MinesweeperGame : GameBase
     private readonly bool[] _flag = new bool[Side * Side];
     private bool _started;
     private bool _dead;
+    /// <summary>The mine the player actually stepped on, so Redraw can mark it out.</summary>
+    private int _hit = -1;
     private bool _won;
     private int _flags;
 
@@ -53,6 +55,7 @@ public sealed class MinesweeperGame : GameBase
         Array.Clear(_flag, 0, _flag.Length);
         _started = _dead = _won = false;
         _flags = _opened = 0;
+        _hit = -1;
         ScoreCounts = false;
         Redraw();
     }
@@ -75,7 +78,7 @@ public sealed class MinesweeperGame : GameBase
 
         if (!_started) LayMines(x, y);
 
-        if (_mine[index]) { _dead = true; _open[index] = true; Redraw(); return true; }
+        if (_mine[index]) { _dead = true; _hit = index; _open[index] = true; Redraw(); return true; }
 
         Flood(x, y);
         if (!_dead && _open.Count(b => b) == Side * Side - Mines) { _won = true; ScoreCounts = true; }
@@ -137,29 +140,43 @@ public sealed class MinesweeperGame : GameBase
         for (int i = 0; i < _cells.Count; i++)
         {
             var c = _cells[i];
-            if (!_open[i] && !_flag[i])
+            if (_flag[i])
+            {
+                // A flag stays a flag even after the game ends — it used to fall
+                // through to the number branch and show an adjacent-mine count
+                // instead, because the "flagged" branch required !_dead.
+                // A flag on a mined square is a wrong flag, which reads differently.
+                bool wrong = _dead && !_mine[i];
+                c.Text = wrong ? "✗" : "⚑";
+                c.Background = wrong ? Bad : Cell;
+                c.IsEnabled = false;
+                c.Foreground = wrong ? Cell : Bad;
+                c.FontSize = 20; c.Bold = true;
+                continue;
+            }
+            if (!_open[i])
             {
                 c.Text = ""; c.Background = Cell; c.IsEnabled = !_won; c.Foreground = Ink;
                 c.FontSize = 20; c.Bold = true;
                 continue;
             }
-            if (_flag[i] && !_dead)
+            if (_mine[i])
             {
-                c.Text = "⚑"; c.Background = Cell; c.IsEnabled = !_won; c.Foreground = Bad;
-                c.FontSize = 20; c.Bold = true;
-                continue;
-            }
-            if (_mine[i] && _dead)
-            {
-                c.Text = "✱"; c.Background = Tiles4[4]; c.IsEnabled = false; c.Foreground = Ink;
+                // The mine you stepped on is loud; the rest are revealed quietly.
+                c.Text = "✱";
+                c.Background = _dead && _hit == i ? Bad : Dug;
+                c.IsEnabled = false;
+                c.Foreground = _dead && _hit == i ? Cell : Ink;
                 c.FontSize = 20; c.Bold = true;
                 continue;
             }
             int n = _near[i];
             c.Text = n == 0 ? "" : n.ToString();
             c.IsEnabled = false;
-            c.Background = _open[i] ? Board : Cell;
-            c.Foreground = _open[i] ? DigitColour(n) : Ink;
+            // Dug squares get their own surface rather than a shade of Cell, so the
+            // board reads at a glance instead of looking like nothing happened.
+            c.Background = Dug;
+            c.Foreground = n == 0 ? Muted : DigitColour(n);
             c.FontSize = 18;
             c.Bold = true;
         }

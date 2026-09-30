@@ -6,6 +6,7 @@
         x:Class="KindleHub.Client.Views.GameWindow"
         Title="KindleHub Pro — Game"
         KeyDown="OnKeyDown"
+        Focusable="True"
         Width="680" Height="760"
         MinWidth="460" MinHeight="500"
         WindowStartupLocation="CenterOwner"
@@ -107,10 +108,12 @@
         </Grid>
 
         <StackPanel Grid.Row="3" Spacing="10" Margin="0,14,0,0">
+            <!-- Shown for arrow-key games, not just real-time ones: 2048 is not
+                 real-time and has no tap input, so hiding this left it unplayable. -->
             <StackPanel Orientation="Horizontal"
                         Spacing="8"
                         HorizontalAlignment="Center"
-                        IsVisible="{Binding IsRealTime}">
+                        IsVisible="{Binding IsArrowKeyGame}">
                 <Button Classes="game-key" Content="←" Command="{Binding LeftCommand}" FontSize="17"/>
                 <Button Classes="game-key" Content="↑" Command="{Binding UpCommand}" FontSize="17"/>
                 <Button Classes="game-key" Content="↓" Command="{Binding DownCommand}" FontSize="17"/>

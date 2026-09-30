@@ -27,6 +27,7 @@ public sealed class SnakeGame : GameBase
 
     public override string Slug => "snake";
     public override string Name => "Snake";
+    public override bool UsesArrowKeys => true;
     public override int Columns => Size;
     public override IReadOnlyList<GameCell> Cells => _cells;
     public override bool IsRealTime => true;

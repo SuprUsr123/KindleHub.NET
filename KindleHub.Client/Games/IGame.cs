@@ -40,6 +40,13 @@ public interface IGame
     /// <summary>True for games that advance on a timer (Snake, Tetris) rather than on input.</summary>
     bool IsRealTime { get; }
 
+    /// <summary>
+    /// True when the game is played from the arrow keys or WASD. The window uses
+    /// this to decide whether to show the on-screen D-pad, because a game that
+    /// needs keys has to stay playable without one — 2048 has no other input at all.
+    /// </summary>
+    bool UsesArrowKeys { get; }
+
     /// <summary>Starts a fresh game. Must fully reset state — the view calls this for "New game".</summary>
     void Reset();
 
@@ -56,6 +63,26 @@ public interface IGame
     /// <summary>Handles a key press. Return true if the game consumed it.</summary>
     bool OnKey(GameKey key);
 
+    /// <summary>
+    /// Handles a printable character typed on a physical keyboard. Games that only
+    /// expose an on-screen keyboard (Hangman, Wordle) override this so they don't
+    /// force the player to click letters that already have keys under their fingers.
+    /// Return true if the game consumed it.
+    /// </summary>
+    bool OnChar(char c);
+
+    /// <summary>Handles a backspace from a physical keyboard.</summary>
+    bool OnBackspace();
+
     /// <summary>Handles a tick on the cell at <paramref name="index"/> in <see cref="Cells"/>.</summary>
     bool OnTap(int index);
+}
+
+/// <summary>
+/// A game with a typed row that can be submitted from the keyboard, so Enter does
+/// something without having to find the on-screen ↵.
+/// </summary>
+public interface IWordEntry
+{
+    bool OnSubmit();
 }

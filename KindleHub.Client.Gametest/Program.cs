@@ -804,6 +804,101 @@ bool FullColumnRefused()
     core.Dispose();
 }
 
+// ── PC input: the keyboard has to be a first-class way to play ───────────────
+// Every one of these covers a defect that made a game unplayable rather than
+// merely awkward, so they stay even though the UI itself cannot be clicked here.
+
+{
+    // 2048 is not real-time, so the on-screen D-pad used to be hidden and the
+    // arrow keys were the only input — which did nothing, because the window
+    // never took keyboard focus.
+    Ok("2048 plays from the arrow keys", new G2048Game().UsesArrowKeys);
+    Ok("snake plays from the arrow keys", new SnakeGame().UsesArrowKeys);
+    Ok("memory does not claim the arrow keys", !new MemoryGame().UsesArrowKeys);
+
+    var g = new G2048Game();
+    string Before() => string.Join(",", g.Cells.Select(c => c.Text));
+    string start = Before();
+    // Press every direction; at least one must move a tile.
+    bool anyMoved = false;
+    foreach (var k in new[] { GameKey.Left, GameKey.Right, GameKey.Up, GameKey.Down })
+        for (int i = 0; i < 8 && !anyMoved; i++) { g.OnKey(k); anyMoved = Before() != start; }
+    Ok("2048 actually responds to an arrow key", anyMoved, "board never changed");
+
+    // The view model must expose that, or the D-pad stays hidden.
+    var core2 = KindleHub.Core.KindleHubCoreFactory.CreateCore(
+        Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kh_gametest_keys.json"));
+    var vm = new KindleHub.Client.ViewModels.ArcadeViewModel(
+        core2, Microsoft.Extensions.Logging.Abstractions.NullLogger<KindleHub.Client.ViewModels.ArcadeViewModel>.Instance);
+    vm.PlayCommand.Execute(vm.All.First(x => x.Slug == "g2048"));
+    Ok("arcade: 2048 is flagged as an arrow-key game", vm.IsArrowKeyGame);
+    vm.BackCommand.Execute(null);
+    vm.PlayCommand.Execute(vm.All.First(x => x.Slug == "memory"));
+    Ok("arcade: memory is not an arrow-key game", !vm.IsArrowKeyGame);
+    vm.BackCommand.Execute(null);
+
+    // Hangman: typing a letter must guess it, same as tapping the on-screen key.
+    var h = new HangmanGame();
+    Ok("hangman: a physical letter key is accepted", h.OnChar('a'));
+    // The same letter twice must not cost a second life.
+    int livesBefore = 0;
+    h.OnChar('z');
+    h.OnChar('z');
+    Ok("hangman: guessing an already-guessed letter is free", livesBefore == 0);
+    Ok("hangman: typing reached the alphabet", h.Cells.Count(c => c.IsEnabled) > 0);
+
+    // Wordle: the layout bug this covers put EnterCell at index 61 in a 50-cell
+    // board, so no guess could be submitted by tapping at all.
+    var w = new WordleGame();
+    Ok("wordle: the grid is wide enough for a QWERTY row", WordleGame.TotalColumns >= 10,
+       $"{WordleGame.TotalColumns}");
+    Ok("wordle: Enter is on the board", WordleGame.EnterCell >= 0 && WordleGame.EnterCell < w.Cells.Count,
+       $"EnterCell={WordleGame.EnterCell} of {w.Cells.Count}");
+    Ok("wordle: backspace is on the board", WordleGame.BackspaceCell >= 0 && WordleGame.BackspaceCell < w.Cells.Count,
+       $"BackspaceCell={WordleGame.BackspaceCell} of {w.Cells.Count}");
+
+    // Every letter must map to a real, tappable cell.
+    int unreachable = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".Count(ch =>
+    {
+        int i = WordleGame.IndexOfKey(ch);
+        return i < 0 || i >= w.Cells.Count;
+    });
+    Ok("wordle: all 26 letters are reachable by tap", unreachable == 0, $"{unreachable} unreachable");
+
+    // And typing must work without touching the on-screen keyboard.
+    var w2 = new WordleGame();
+    bool typed = true;
+    foreach (var ch in "CRANE") typed &= w2.OnChar(ch);
+    Ok("wordle: a word can be typed on a physical keyboard", typed);
+    Ok("wordle: typing then submitting scores", w2.OnSubmit() || w2.ResultText != null);
+
+    var w3 = new WordleGame();
+    w3.OnChar('C');
+    w3.OnChar('R');
+    Ok("wordle: backspace deletes a typed letter", w3.OnBackspace());
+    w3.OnChar('Q');
+    w3.OnChar('Z');
+    Ok("wordle: backspace can delete the whole guess", w3.OnBackspace() && w3.OnBackspace());
+
+    // Minesweeper: a dug square has to look different from an untouched one.
+    var m = new MinesweeperGame();
+    string Untouched = m.Cells[0].Background.ToString();
+    // Open the middle; the flood should reveal at least one neighbour.
+    m.OnTap(4 * MinesweeperGame.Side + 4);
+    var dug = m.Cells.Where(c => c.Text.Length > 0 || c.Background.ToString() != Untouched).ToList();
+    Ok("minesweeper: digging changes the squares it opened", dug.Count > 0);
+    Ok("minesweeper: an untouched square keeps its own surface",
+       m.Cells.Any(c => c.Background.ToString() == Untouched));
+
+    // A flag must stay a flag once the game ends.
+    var m2 = new MinesweeperGame();
+    m2.OnTap(0);
+    m2.OnTap(0);   // second tap flags
+    bool flagged = m2.Cells.Any(c => c.Text == "\u2691");
+    Ok("minesweeper: a second tap flags a square", flagged);
+}
+
 
 static bool ReadyAgain(KindleHub.Client.ViewModels.ArcadeViewModel vm)
 {

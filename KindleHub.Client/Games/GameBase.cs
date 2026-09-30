@@ -15,6 +15,14 @@ public abstract class GameBase : IGame
     protected static readonly IBrush Muted = new SolidColorBrush(Color.Parse("#6b6b76"));
     protected static readonly IBrush Board = new SolidColorBrush(Color.Parse("#e9e9ee"));
     protected static readonly IBrush Cell = new SolidColorBrush(Color.Parse("#fbfbfd"));
+
+    /// <summary>
+    /// A revealed/dug square. This has to be a real step away from <see cref="Cell"/>,
+    /// not a few percent of lightness: Minesweeper originally reused
+    /// <see cref="Board"/> here, which is only ~4% darker than an untouched square
+    /// and read as "the colours don't change" rather than "this square is open".
+    /// </summary>
+    protected static readonly IBrush Dug = new SolidColorBrush(Color.Parse("#c8c8d4"));
     protected static readonly IBrush Accent = new SolidColorBrush(Color.Parse("#2f6fed"));
     protected static readonly IBrush Good = new SolidColorBrush(Color.Parse("#1f7a3d"));
     protected static readonly IBrush Bad = new SolidColorBrush(Color.Parse("#b3261e"));
@@ -40,11 +48,14 @@ public abstract class GameBase : IGame
     public virtual bool ScoreCounts { get; protected set; }
     public virtual int Score => 0;
     public virtual bool IsRealTime => false;
+    public virtual bool UsesArrowKeys => false;
 
     public abstract void Reset();
     public virtual void Tick(TimeSpan elapsed) { }
     public abstract void Redraw();
     public virtual bool OnKey(GameKey key) => false;
+    public virtual bool OnChar(char c) => false;
+    public virtual bool OnBackspace() => false;
     public abstract bool OnTap(int index);
 
     // ─── construction helpers ────────────────────────────────────────────────

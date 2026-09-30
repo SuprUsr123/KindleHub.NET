@@ -89,6 +89,22 @@ public sealed class HangmanGame : GameBase
         // Cells are laid out as [word row][gutter][alphabet], so the cell index has
         // to be shifted down to a letter — otherwise the word row is read as A–Z.
         int letter = index - AlphabetOffset;
+        if (letter < 0 || letter >= 26) return false;
+        return Guess(letter);
+    }
+
+    /// <summary>
+    /// Guesses a letter from the physical keyboard, so the on-screen alphabet is
+    /// a fallback rather than the only way to play.
+    /// </summary>
+    public override bool OnChar(char c)
+    {
+        char up = char.ToUpperInvariant(c);
+        return char.IsAsciiLetterUpper(up) && Guess(up - 'A');
+    }
+
+    private bool Guess(int letter)
+    {
         if (_won || _lost || letter < 0 || letter >= 26) return false;
         if (_used[letter]) return true;
         _used[letter] = true;

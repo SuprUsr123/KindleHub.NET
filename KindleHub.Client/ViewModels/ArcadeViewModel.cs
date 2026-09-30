@@ -153,6 +153,14 @@ public class ArcadeViewModel : ViewModelBase
     public bool NotInGame => !InGame;
     public bool IsRealTime => _isRealTime;
 
+    /// <summary>
+    /// True when the current game is played from the arrow keys, so the window
+    /// shows the on-screen D-pad. 2048 is the case that matters: it is not
+    /// real-time, so the D-pad used to be hidden and the arrow keys were the only
+    /// input, which left it unplayable if the window lacked keyboard focus.
+    /// </summary>
+    public bool IsArrowKeyGame => _game?.UsesArrowKeys ?? false;
+
     public bool CanGoLeft { get => _canGoLeft; private set => SetProperty(ref _canGoLeft, value); }
     public bool CanGoRight { get => _canGoRight; private set => SetProperty(ref _canGoRight, value); }
     public bool CanGoUp { get => _canGoUp; private set => SetProperty(ref _canGoUp, value); }
@@ -316,6 +324,33 @@ public class ArcadeViewModel : ViewModelBase
         if (_game == null) return;
         _game.OnKey(key);
         Refresh();
+    }
+
+    /// <summary>Feeds a typed character to the game (Hangman, Wordle).</summary>
+    public bool Type(char c)
+    {
+        if (_game == null || !_game.OnChar(c)) return false;
+        Refresh();
+        return true;
+    }
+
+    /// <summary>Feeds a backspace to the game.</summary>
+    public bool Backspace()
+    {
+        if (_game == null || !_game.OnBackspace()) return false;
+        Refresh();
+        return true;
+    }
+
+    /// <summary>
+    /// Submits the current row from the keyboard (Wordle's Enter). Games that have
+    /// nothing to submit return false so the key is left unhandled.
+    /// </summary>
+    public bool SubmitTyped()
+    {
+        if (_game is not IWordEntry entry || !entry.OnSubmit()) return false;
+        Refresh();
+        return true;
     }
 
     /// <summary>
@@ -516,6 +551,7 @@ public class ArcadeViewModel : ViewModelBase
             OnPropertyChanged(nameof(BoardWidth));
             OnPropertyChanged(nameof(BoardHeight));
             OnPropertyChanged(nameof(IsRealTime));
+            OnPropertyChanged(nameof(IsArrowKeyGame));
             return;
         }
 
@@ -554,6 +590,7 @@ public class ArcadeViewModel : ViewModelBase
         OnPropertyChanged(nameof(BoardWidth));
         OnPropertyChanged(nameof(BoardHeight));
         OnPropertyChanged(nameof(IsRealTime));
+            OnPropertyChanged(nameof(IsArrowKeyGame));
     }
 
     /// <summary>Advances a real-time game. Called by the view's clock.</summary>

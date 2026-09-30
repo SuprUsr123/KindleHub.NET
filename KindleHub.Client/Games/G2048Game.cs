@@ -23,6 +23,7 @@ public sealed class G2048Game : GameBase
 
     public override string Slug => "g2048";
     public override string Name => "2048";
+    public override bool UsesArrowKeys => true;
     public override int Columns => N;
     public override IReadOnlyList<GameCell> Cells => _cells;
     public override int Score => _score;

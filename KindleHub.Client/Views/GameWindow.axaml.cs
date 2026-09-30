@@ -29,7 +29,14 @@ public partial class GameWindow : Window
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Closed += (_, _) => StopClock();
-        Opened += (_, _) => StartClock();
+        Opened += (_, _) =>
+        {
+            StartClock();
+            // Nothing on the board is focusable — the cells are Borders, not
+            // buttons — so without this the window never becomes the keyboard
+            // target and arrow keys silently do nothing. 2048 has no other input.
+            Focus();
+        };
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -76,6 +83,29 @@ public partial class GameWindow : Window
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (_vm is not { InGame: true }) return;
+
+        // Letters first: Hangman and Wordle are typed, not tapped. Matching on
+        // e.Key covers A–Z on any layout and doesn't depend on Shift being held,
+        // so both cases work without an explicit shift check.
+        if (e.Key is >= Key.A and <= Key.Z)
+        {
+            if (_vm.Type((char)e.Key)) e.Handled = true;
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.Back:
+            case Key.Delete:
+                if (_vm.Backspace()) e.Handled = true;
+                return;
+            // Key.Enter and Key.Return are the same value in Avalonia 11, and
+            // listing both is a compile error, so this covers the numpad too.
+            case Key.Enter:
+                if (_vm.SubmitTyped()) e.Handled = true;
+                return;
+        }
+
         var key = e.Key switch
         {
             Key.Left or Key.A => GameKey.Left,
