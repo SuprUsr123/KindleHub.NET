@@ -35,6 +35,19 @@ public class MainViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(UserDisplayName));
                 OnPropertyChanged(nameof(IsAuthenticated));
+
+                if (value != null && !string.IsNullOrEmpty(value.AuthToken))
+                {
+                    try
+                    {
+                        var theme = _core.CurrentPrefs().Theme;
+                        AppTheme.Apply(theme);
+                    }
+                    catch
+                    {
+                        AppTheme.Apply(AppTheme.Light);
+                    }
+                }
             }
         }
     }
@@ -137,8 +150,14 @@ public class MainViewModel : ViewModelBase
             case "Messages":
                 target = _serviceProvider.GetRequiredService<MessagesViewModel>();
                 break;
+            case "Mail":
+                target = _serviceProvider.GetRequiredService<MailViewModel>();
+                break;
             case "Games":
                 target = _serviceProvider.GetRequiredService<GamesViewModel>();
+                break;
+            case "Arcade":
+                target = _serviceProvider.GetRequiredService<ArcadeViewModel>();
                 break;
             case "App Store":
                 target = _serviceProvider.GetRequiredService<AppStoreViewModel>();

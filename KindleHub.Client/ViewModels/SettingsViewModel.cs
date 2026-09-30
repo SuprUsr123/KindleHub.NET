@@ -72,14 +72,20 @@ public class SettingsViewModel : ViewModelBase
         }
     }
 
-    public string[] ThemeOptions { get; } = { "Light", "Dark", "Sepia" };
+    public string[] ThemeOptions { get; } = AppTheme.Options;
+
     public string ThemeName
     {
         get => _themeName;
         set
         {
-            if (SetProperty(ref _themeName, value) && _core.SetTheme(value.ToLowerInvariant()))
-                PushAsync();
+            if (SetProperty(ref _themeName, value))
+            {
+                // Persist the choice AND apply it — the setting used to be stored
+                // but never reached Avalonia, which left the app on the system theme.
+                AppTheme.Apply(value);
+                if (_core.SetTheme(value.ToLowerInvariant())) PushAsync();
+            }
         }
     }
 
@@ -161,8 +167,11 @@ public class SettingsViewModel : ViewModelBase
             _fontSizePx = p.FontSizePx is 13 or 16 or 19 or 22 ? p.FontSizePx : 16;
             OnPropertyChanged(nameof(FontSizePx));
             OnPropertyChanged(nameof(FontSizeName));
-            _themeName = p.Theme switch { "dark" => "Dark", "sepia" => "Sepia", _ => "Light" };
+            _themeName = AppTheme.Normalise(p.Theme);
             OnPropertyChanged(nameof(ThemeName));
+            // Apply the stored preference too, so opening Settings is enough to
+            // correct a window that started on the system theme.
+            AppTheme.Apply(_themeName);
             _simpleMode = p.SimpleMode;
             OnPropertyChanged(nameof(SimpleMode));
             _syncEnabled = p.SyncEnabled;

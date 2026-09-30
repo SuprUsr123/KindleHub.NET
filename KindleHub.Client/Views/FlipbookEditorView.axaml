@@ -1,0 +1,84 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="460" d:DesignHeight="800"
+             x:Class="KindleHub.Client.Views.FlipbookEditorView">
+    <Border Background="{DynamicResource ControlFillColorDefault}" CornerRadius="10" Padding="12">
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="8" MaxWidth="520" HorizontalAlignment="Center">
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Flipbook" FontSize="20" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding FrameCountText}" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                    <TextBlock Text="·" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding GridText}" FontSize="13" Foreground="Gray" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Border x:Name="CanvasHost" Background="Transparent" HorizontalAlignment="Center"
+                        PointerPressed="CanvasHost_PointerPressed"
+                        PointerMoved="CanvasHost_PointerMoved"
+                        PointerReleased="CanvasHost_PointerReleased"
+                        PointerCaptureLost="CanvasHost_PointerCaptureLost">
+                    <Image x:Name="CanvasImage" Stretch="None"/>
+                </Border>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="6">
+                    <Button Content="Draw" Command="{Binding SetPenCommand}" Width="66" Classes="small"/>
+                    <Button Content="Erase" Command="{Binding SetEraseCommand}" Width="66" Classes="small"/>
+                    <Button Content="Onion: off" Command="{Binding CycleOnionCommand}" Width="110" Classes="small"/>
+                    <Button Content="Clear frame" Command="{Binding ClearFrameCommand}" Width="90" Classes="small"/>
+                    <Button Content="Undo" Command="{Binding UndoCommand}" Width="60" Classes="small"/>
+                </StackPanel>
+
+                <WrapPanel HorizontalAlignment="Center" Orientation="Horizontal">
+                    <Button Content="Simple 10x10" Command="{Binding Grid10Command}" Width="104" Classes="small"/>
+                    <Button Content="Medium 14x14" Command="{Binding Grid14Command}" Width="110" Classes="small"/>
+                    <Button Content="Fine 28x28" Command="{Binding Grid28Command}" Width="98" Classes="small"/>
+                </WrapPanel>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="6">
+                    <TextBlock Text="Zoom:" FontSize="12" Foreground="Gray" VerticalAlignment="Center"/>
+                    <Button Content="−" Command="{Binding ZoomOutCommand}" Width="34" Classes="small"/>
+                    <TextBlock Text="{Binding ZoomText}" FontSize="12" FontWeight="Bold" Width="52"
+                               TextAlignment="Center" VerticalAlignment="Center"/>
+                    <Button Content="+" Command="{Binding ZoomInCommand}" Width="34" Classes="small"/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="6">
+                    <Button Content="‹" Command="{Binding PrevFrameCommand}" Width="36" Classes="small"/>
+                    <TextBlock Text="{Binding FrameIndexText}" FontSize="12" FontWeight="Bold" Width="70"
+                               TextAlignment="Center" VerticalAlignment="Center"/>
+                    <Button Content="›" Command="{Binding NextFrameCommand}" Width="36" Classes="small"/>
+                    <Button Content="Move ‹" Command="{Binding MoveFrameLeftCommand}" Width="72" Classes="small"/>
+                    <Button Content="Move ›" Command="{Binding MoveFrameRightCommand}" Width="72" Classes="small"/>
+                    <Button Content="+ Frame" Command="{Binding AddFrameCommand}" Width="80" Classes="small"/>
+                    <Button Content="Duplicate" Command="{Binding DuplicateFrameCommand}" Width="86" Classes="small"/>
+                    <Button Content="Delete" Command="{Binding DeleteFrameCommand}" Width="70" Classes="small"/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="6">
+                    <Button Content="{Binding PlayLabel}" Command="{Binding PlayCommand}" Width="76" Classes="small"/>
+                    <Button Content="−" Command="{Binding DecFpsCommand}" Width="34" Classes="small"/>
+                    <TextBlock Text="{Binding FpsText}" FontSize="12" FontWeight="Bold" Width="56"
+                               TextAlignment="Center" VerticalAlignment="Center"/>
+                    <Button Content="+" Command="{Binding IncFpsCommand}" Width="34" Classes="small"/>
+                </StackPanel>
+
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="Thumbnails" Orientation="Horizontal" Spacing="4" Height="52"/>
+                </ScrollViewer>
+
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBox Text="{Binding FlipbookName, Mode=TwoWay}" Width="190" Watermark="Name your flipbook"/>
+                    <Button Content="Send to chat" Command="{Binding SendCommand}" Width="110" Classes="small primary"/>
+                    <Button Content="Copy code" Command="{Binding CopyCodeCommand}" Width="92" Classes="small"/>
+                    <Button Content="Close" Command="{Binding CloseCommand}" Width="70" Classes="small"/>
+                </StackPanel>
+
+                <TextBlock Text="{Binding StatusText}" FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</UserControl>

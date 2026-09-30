@@ -16,6 +16,8 @@ public class ViewLocator : IDataTemplate
             CommunityViewModel => new CommunityView(),
             MessagesViewModel => new MessagesView(),
             GamesViewModel => new GamesView(),
+            MailViewModel => new MailView(),
+            ArcadeViewModel => new ArcadeView(),
             AppStoreViewModel => new AppStoreView(),
             SettingsViewModel => new SettingsView(),
             _ => new TextBlock { Text = "Unknown ViewModel: " + param?.GetType().Name }

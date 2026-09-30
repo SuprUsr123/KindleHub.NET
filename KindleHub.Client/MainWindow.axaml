@@ -5,6 +5,7 @@
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
         x:Class="KindleHub.Client.MainWindow"
         Title="KindleHub Pro"
+        Background="{DynamicResource AppWindowBackground}"
         MinWidth="1000" MinHeight="700">
     
     <Window.Styles>
@@ -39,7 +40,8 @@
                 <Button Classes="nav" Content="Leaderboards" Command="{Binding NavigateCommand}" CommandParameter="Leaderboards"/>
                 <Button Classes="nav" Content="Community" Command="{Binding NavigateCommand}" CommandParameter="Community"/>
                 <Button Classes="nav" Content="Messages" Command="{Binding NavigateCommand}" CommandParameter="Messages"/>
-                <Button Classes="nav" Content="Games" Command="{Binding NavigateCommand}" CommandParameter="Games"/>
+                <Button Classes="nav" Content="Mail" Command="{Binding NavigateCommand}" CommandParameter="Mail"/>
+                <Button Classes="nav" Content="Arcade" Command="{Binding NavigateCommand}" CommandParameter="Arcade"/>
                 <Button Classes="nav" Content="App Store" Command="{Binding NavigateCommand}" CommandParameter="App Store"/>
                 <Button Classes="nav" Content="Settings" Command="{Binding NavigateCommand}" CommandParameter="Settings"/>
                 

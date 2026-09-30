@@ -40,8 +40,12 @@ Public Module ChatMedia
     End Function
 
     Private Function StrVal(node As JsonNode, fallback As String) As String
-        If node Is Nothing OrElse node.GetValue(Of JsonValueKind)() <> JsonValueKind.String Then Return fallback
-        Return node.GetValue(Of String)()
+        If node Is Nothing Then Return fallback
+        If TypeOf node IsNot JsonValue Then Return fallback
+        If DirectCast(node, JsonValue).GetValueKind() <> JsonValueKind.String Then Return fallback
+        Dim raw = DirectCast(node, JsonValue).GetValue(Of String)()
+        If raw Is Nothing Then Return fallback
+        Return raw
     End Function
 
     ' ── KHIMG1 ──────────────────────────────────────────────────────────────────
@@ -96,7 +100,7 @@ Public Module ChatMedia
         Dim obj = UnpackJson(s.Substring(7))
         If obj Is Nothing Then Return Nothing
         Dim htmlNode = obj("html")
-        If htmlNode Is Nothing OrElse htmlNode.GetValue(Of JsonValueKind)() <> JsonValueKind.String Then Return Nothing
+        If htmlNode Is Nothing OrElse Not TypeOf htmlNode Is JsonValue Then Return Nothing
         Dim html = htmlNode.GetValue(Of String)()
         If html.Length > MaxAppHtmlLen Then Return Nothing
         Return New AppShare With {
@@ -144,17 +148,18 @@ Public Module ChatMedia
         If obj Is Nothing Then Return Nothing
         Dim wNode = obj("w"), hNode = obj("h"), fNode = obj("f")
         If wNode Is Nothing OrElse hNode Is Nothing OrElse fNode Is Nothing Then Return Nothing
-        If wNode.GetValue(Of JsonValueKind)() <> JsonValueKind.Number _
-            OrElse hNode.GetValue(Of JsonValueKind)() <> JsonValueKind.Number Then Return Nothing
+        If Not TypeOf wNode Is JsonValue OrElse Not TypeOf hNode Is JsonValue Then Return Nothing
         Dim w = wNode.GetValue(Of Integer)(), h = hNode.GetValue(Of Integer)()
         If w > 64 OrElse h > 64 Then Return Nothing
-        If fNode.GetValue(Of JsonValueKind)() <> JsonValueKind.Array Then Return Nothing
+        If Not TypeOf fNode Is JsonArray Then Return Nothing
         Dim frames = New List(Of String)()
         For Each f In fNode.AsArray()
             frames.Add(StrVal(f, ""))
         Next
         If frames.Count = 0 OrElse frames.Count > 60 Then Return Nothing
-        Dim fps = Math.Max(1, Math.Min(15, If(obj("fps") IsNot Nothing, obj("fps").GetValue(Of Integer)(), 6)))
+        Dim fps As Integer = 6
+        If obj("fps") IsNot Nothing AndAlso TypeOf obj("fps") Is JsonValue Then fps = obj("fps").GetValue(Of Integer)()
+        fps = Math.Max(1, Math.Min(15, fps))
         Return New Flipbook With {
             .Name = StrVal(obj("n"), ""),
             .Width = w,
@@ -171,14 +176,62 @@ Public Module ChatMedia
     Public Function EncodeFlipbook(fb As Flipbook) As String
         If fb Is Nothing OrElse fb.Frames Is Nothing OrElse fb.Frames.Length = 0 Then Return ""
         If fb.Width > 64 OrElse fb.Height > 64 OrElse fb.Frames.Length > 60 Then Return ""
+        Dim framesNode = New JsonArray()
+        For Each frame In fb.Frames.Take(60)
+            framesNode.Add(frame)
+        Next
         Dim obj = New JsonObject From {
             {"n", fb.Name},
             {"w", fb.Width},
             {"h", fb.Height},
             {"fps", fb.Fps},
-            {"f", New JsonArray(fb.Frames.Select(Function(x) CType(x, JsonNode)))}
+            {"f", framesNode}
         }
         Return "KHFLIP1:" & WireEncode(obj)
+    End Function
+
+    ''' <summary>Hex-pack a binary frame (4 bits per pixel) into the official
+    ''' compact string carried inside KHFLIP1. Each 4-pixel nibble becomes one
+    ''' hex char; the array length is padded up to a multiple of 4.</summary>
+    Public Function FlipPack(frame As Integer(), totalCells As Integer) As String
+        If frame Is Nothing Then Return ""
+        Dim sb = New System.Text.StringBuilder()
+        Dim n = (totalCells + 3) \ 4
+        For i = 0 To n - 1
+            Dim nibble = 0
+            For k = 0 To 3
+                Dim idx = i * 4 + k
+                If idx < frame.Length AndAlso frame(idx) <> 0 Then nibble = nibble Or (1 << k)
+            Next
+            sb.Append(nibble.ToString("X", System.Globalization.CultureInfo.InvariantCulture))
+        Next
+        Return sb.ToString()
+    End Function
+
+    ''' <summary>Reverse of <see cref="FlipPack(Integer[], Integer)"/>: turn the
+    ''' compact string back into a 0/1 pixel array of <c>totalCells</c> cells.</summary>
+    Public Function FlipUnpack(s As String, totalCells As Integer) As Integer()
+        Dim arr = New Integer(Math.Max(0, totalCells) - 1) {}
+        If String.IsNullOrEmpty(s) OrElse totalCells <= 0 Then Return arr
+        For i = 0 To s.Length - 1
+            Dim nibble As Integer
+            Dim v = Asc(s(i))
+            If v >= AscW("0") AndAlso v <= AscW("9") Then
+                nibble = v - AscW("0")
+            ElseIf v >= AscW("A") AndAlso v <= AscW("F") Then
+                nibble = v - AscW("A") + 10
+            ElseIf v >= AscW("a") AndAlso v <= AscW("f") Then
+                nibble = v - AscW("a") + 10
+            Else
+                Continue For
+            End If
+            For k = 0 To 3
+                Dim idx = i * 4 + k
+                If idx >= totalCells Then Exit For
+                arr(idx) = (nibble >> k) And 1
+            Next
+        Next
+        Return arr
     End Function
 
     ' ── KHPOLL1 (poll) ──────────────────────────────────────────────────────────
@@ -192,25 +245,28 @@ Public Module ChatMedia
         Public Property [Open] As Boolean
     End Class
 
-    Public Function TryParsePoll(text As String) As Poll
+Public Function TryParsePoll(text As String) As Poll
         Dim s = If(text, "")
         If Not s.StartsWith("KHPOLL1:", StringComparison.Ordinal) Then Return Nothing
         Dim obj = UnpackJson(s.Substring(8))
         If obj Is Nothing Then Return Nothing
         Dim pidNode = obj("pid"), optsNode = obj("opts")
         If pidNode Is Nothing OrElse optsNode Is Nothing Then Return Nothing
-        If optsNode.GetValue(Of JsonValueKind)() <> JsonValueKind.Array Then Return Nothing
+        If Not TypeOf optsNode Is JsonArray Then Return Nothing
         Dim opts = New List(Of String)()
         For Each o In optsNode.AsArray()
             Dim t = StrVal(o, "")
             If Not String.IsNullOrEmpty(t) Then opts.Add(t.Substring(0, Math.Min(t.Length, 60)))
         Next
         If opts.Count < 2 OrElse opts.Count > 6 Then Return Nothing
+        Dim pid As String = Nothing
+        If TypeOf pidNode Is JsonValue Then pid = pidNode.GetValue(Of String)()
+        If pid Is Nothing Then Return Nothing
         Return New Poll With {
-            .Id = pidNode.GetValue(Of String)(),
+            .Id = pid,
             .Question = StrVal(obj("q"), "(no question)").Substring(0, Math.Min(StrVal(obj("q"), "").Length, 140)),
             .Options = opts.ToArray(),
-            .[Open] = Not (obj("o") IsNot Nothing AndAlso obj("o").GetValue(Of Integer)() = 0)
+            .[Open] = Not (obj("o") IsNot Nothing AndAlso TypeOf obj("o") Is JsonValue AndAlso obj("o").GetValue(Of Integer)() = 0)
         }
     End Function
 
@@ -222,7 +278,8 @@ Public Module ChatMedia
         If poll Is Nothing OrElse poll.Options Is Nothing OrElse poll.Options.Length < 2 Then Return ""
         Dim opts = New JsonArray()
         For Each o In poll.Options.Take(6)
-            opts.Add(StrVal(o, "").Substring(0, Math.Min(StrVal(o, "").Length, 60)))
+            Dim t = If(o, "").Substring(0, Math.Min(If(o, "").Length, 60))
+            opts.Add(t)
         Next
         Dim obj = New JsonObject From {
             {"pid", poll.Id & "_" & DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString("x") & "_" & Random.Shared.Next(1000000).ToString("x")},
@@ -235,7 +292,29 @@ Public Module ChatMedia
 
     ' ── KHVOTE1 (poll vote / other-vote tally) ──────────────────────────────────
     ''' Wire: "KHVOTE1:<pid>:<idx>" or "KHVOTE1:<pid>:t:<base64 text>".
+    Public Class PollTally
+        Public Property TotalVotes As Integer
+        Public Property OptionCounts As Integer()
+    End Class
+
     Public Const PollOtherMax As Integer = 40
+
+    Public Function TallyVotes(messages As IEnumerable(Of Message), poll As Poll) As PollTally
+        If poll Is Nothing OrElse poll.Options Is Nothing Then Return Nothing
+        Dim counts = New Integer(poll.Options.Length - 1) {}
+        Dim total = 0
+        For Each m In messages
+            If m Is Nothing OrElse m.Text Is Nothing Then Continue For
+            If Not m.Text.StartsWith("KHVOTE1:", StringComparison.Ordinal) Then Continue For
+            Dim vote = ParseVote(m.Text)
+            If vote.PollId Is Nothing OrElse vote.PollId <> poll.Id Then Continue For
+            If vote.OptionIndex.HasValue AndAlso vote.OptionIndex.Value >= 0 AndAlso vote.OptionIndex.Value < counts.Length Then
+                counts(vote.OptionIndex.Value) += 1
+                total += 1
+            End If
+        Next
+        Return New PollTally With {.TotalVotes = total, .OptionCounts = counts}
+    End Function
 
     Public Function IsVoteMessage(text As String) As Boolean
         Return If(String.IsNullOrEmpty(text), False, text.StartsWith("KHVOTE1:"))
@@ -268,6 +347,31 @@ Public Module ChatMedia
 
     Public Function EncodeVoteNote(pollId As String, note As String) As String
         Return "KHVOTE1:" & pollId & ":t:" & WireEncode(note)
+    End Function
+
+    Public Function TryParsePollOptions(text As String) As String()
+        Dim poll = TryParsePoll(text)
+        If poll Is Nothing Then Return Nothing
+        Return poll.Options
+    End Function
+
+    Public Function TryParseAppId(text As String) As String
+        Dim app = TryParseAppShare(text)
+        If app Is Nothing Then Return Nothing
+        Return app.ShareId
+    End Function
+
+    Public Function TryParseStoryLabel(text As String) As String
+        Dim story = TryParseStory(text)
+        If story Is Nothing Then Return Nothing
+        Return story.Setting
+    End Function
+
+    Public Function TryParseVoteSummary(text As String) As String
+        Dim v = ParseVote(text)
+        If v.PollId Is Nothing Then Return Nothing
+        Dim note = If(String.IsNullOrEmpty(v.Note), "", " (" & v.Note & ")")
+        Return "Poll " & v.PollId.Substring(0, Math.Min(8, v.PollId.Length)) & If(v.OptionIndex.HasValue, " opt " & v.OptionIndex.Value.ToString() & note, "")
     End Function
 
     ' ── KHSTK1 (sticker) ───────────────────────────────────────────────────────
@@ -327,6 +431,16 @@ Public Module ChatMedia
         Return id
     End Function
 
+    Public Function TryParseStickerPrompt(text As String) As String
+        Dim s = If(text, "")
+        If Not s.StartsWith("KHSTK1:", StringComparison.Ordinal) Then Return Nothing
+        Dim id = s.Substring(7).Trim()
+        EnsureStickersLoaded()
+        Dim entry As StickerEntry = Nothing
+        If Stickers.TryGetValue(id, entry) Then Return entry.Label
+        Return Nothing
+    End Function
+
     ' ── KHSTORY1 (AI story) ────────────────────────────────────────────────────
     ''' Wire: "KHSTORY1:" + btoa(unescape(encodeURIComponent(JSON.stringify({
     '''   s, h, l:[{r,t}] }))).
@@ -351,7 +465,7 @@ Public Module ChatMedia
         Dim obj = UnpackJson(s.Substring(9))
         If obj Is Nothing Then Return Nothing
         Dim logArr = obj("l")
-        If logArr Is Nothing OrElse logArr.GetValue(Of JsonValueKind)() <> JsonValueKind.Array Then Return Nothing
+        If logArr Is Nothing OrElse Not TypeOf logArr Is JsonArray Then Return Nothing
         Dim arr = logArr.AsArray()
         If arr.Count = 0 Then Return Nothing
         Dim log = New List(Of StoryLogEntry)()
@@ -415,7 +529,7 @@ Public Module ChatMedia
         Dim obj = UnpackJson(s.Substring(8))
         If obj Is Nothing Then Return Nothing
         Dim layersNode = obj("layers")
-        If layersNode Is Nothing OrElse layersNode.GetValue(Of JsonValueKind)() <> JsonValueKind.Array Then Return Nothing
+        If layersNode Is Nothing OrElse Not TypeOf layersNode Is JsonArray Then Return Nothing
         Dim layers = New List(Of DrawingLayer)()
         For Each l In layersNode.AsArray()
             layers.Add(New DrawingLayer With {

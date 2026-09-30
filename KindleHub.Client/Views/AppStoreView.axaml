@@ -1,10 +1,14 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:KindleHub.Client.ViewModels"
+             xmlns:conv="using:KindleHub.Client.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
              x:Class="KindleHub.Client.Views.AppStoreView">
+    <UserControl.Resources>
+        <conv:DataImageToBitmapConverter x:Key="Img"/>
+    </UserControl.Resources>
     <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16">
         <StackPanel Grid.Row="0" Orientation="Horizontal">
             <TextBlock Text="App Store" FontSize="28" FontWeight="Bold"/>
@@ -28,14 +32,17 @@
                             <Border Padding="14" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
                                 <Grid ColumnDefinitions="Auto,*,Auto">
                                     <Border Grid.Column="0" Width="46" Height="46" CornerRadius="8" Margin="0,0,14,0"
-                                            Background="{DynamicResource ControlFillColorDefault}">
-                                        <TextBlock Text="{Binding Initials}" FontSize="20" FontWeight="Bold"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            Background="{DynamicResource ControlFillColorDefault}" ClipToBounds="True">
+                                        <Panel>
+                                            <Image Source="{Binding IconArt, Converter={StaticResource Img}}"
+                                                   IsVisible="{Binding HasIcon}" Stretch="Uniform"/>
+                                            <TextBlock Text="{Binding Initials}" FontSize="20" FontWeight="Bold"
+                                                       IsVisible="{Binding ShowInitials}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Panel>
                                     </Border>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="16"/>
-                                        <TextBlock Text="{Binding Preview}" FontSize="12" Foreground="Gray"
-                                                   MaxWidth="460" TextTrimming="WordEllipsis"/>
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock FontSize="12" Foreground="Gray"><Run Text="by "/><Run Text="{Binding Author}"/></TextBlock>
                                             <TextBlock Text="{Binding Category}" FontSize="12" Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
@@ -52,21 +59,24 @@
                 </ListBox>
 
                 <!-- publish dialog (overlays the grid) -->
-                <Border Margin="30" CornerRadius="8" MaxWidth="480" Background="{DynamicResource SolidBackgroundFillColorBase}"
+                <Border Margin="30" CornerRadius="8" MaxWidth="480" Background="{DynamicResource ControlFillColorDefault}"
                         BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
                         IsVisible="{Binding PublishOpen}">
                     <StackPanel Spacing="10" Margin="18">
                         <TextBlock Text="Publish an app" FontSize="20" FontWeight="Bold"/>
                         <TextBlock Foreground="Gray" FontSize="12" TextWrapping="Wrap"
-                                   Text="Upload the app's single HTML file. The store reviews it first (same as the web client), then it appears for everyone."/>
+                                   Text="Upload the app's single HTML file, or paste it straight from the clipboard. The store reviews it first (same as the web client), then it appears for everyone."/>
                         <TextBox Text="{Binding PublishName}" Watermark="App name"/>
                         <ComboBox ItemsSource="{Binding Categories}" SelectedItem="{Binding PublishCategory}"
                                   MinWidth="150" HorizontalAlignment="Left"/>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-<Button Content="Choose HTML file…" Click="ChooseHtml_Click"/>
-                            <TextBlock Text="{Binding PublishHtmlPath}" VerticalAlignment="Center" FontSize="12"
-                                                           Foreground="Gray" MaxWidth="220" TextTrimming="WordEllipsis"/>
-                        </StackPanel>
+                        <WrapPanel Orientation="Horizontal">
+                            <Button Content="Choose HTML file…" Click="ChooseHtml_Click" Margin="0,0,8,0"/>
+                            <Button Content="Paste HTML" Click="PasteHtml_Click" Margin="0,0,8,0"/>
+                            <Button Content="Clear" Click="ClearHtml_Click"/>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding PublishSourceLabel}" VerticalAlignment="Center" FontSize="12"
+                                   Foreground="Gray" MaxWidth="380" TextTrimming="CharacterEllipsis"/>
                         <TextBlock Text="{Binding PublishSizeLabel}" FontSize="11" Foreground="Gray"/>
                         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
                             <Button Content="Publish" Command="{Binding PublishAppCommand}"/>

@@ -78,12 +78,56 @@ Public Interface IKindleHubApiClient
     ' Reply previews (batched id read) + store unpublish (owner_secret-gated delete)
     Function FetchMessagesByIdsAsync(ids As IEnumerable(Of String), groupCode As String, authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of Message))
     Function UnpublishAppAsync(appId As String, ownerSecret As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+
+    ' ── Mail ────────────────────────────────────────────────────────────────
+    ' One row per message in kh_mail. The server forces every read to the caller's
+    ' own mailbox (received OR sent), so the Inbox/Sent split is a client-side
+    ' view of a single fetch. Body is E2E-encrypted under SHA-256("khmsg::mail:"+id);
+    ' subject is deliberately plaintext so a list can render without any keys.
+    Function FetchMailAsync(authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of MailItem))
+    Function SendMailAsync(request As SendMailRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of MailItem)
+    ' Unsend: only the sending device can remove its own mail (owner_secret gate).
+    Function DeleteMailAsync(mailId As String, ownerSecret As String, cancellationToken As CancellationToken) As Task(Of Boolean)
 End Interface
+
+''' <summary>One mail row, body already decrypted.</summary>
+Public Class MailItem
+    Public Property Id As String
+    Public Property ToUser As String
+    Public Property FromUser As String
+    Public Property FromId As String
+    Public Property Subject As String
+    Public Property Body As String
+    Public Property Timestamp As DateTimeOffset
+    Public Property ReplyTo As String
+    ''' <summary>The auth token that owns this row, so Unsend can prove authorship.</summary>
+    Public Property OwnerSecret As String
+    Public ReadOnly Property IsMine As Boolean
+        Get
+            Return Not String.IsNullOrEmpty(FromId)
+        End Get
+    End Property
+    Public ReadOnly Property TimestampFormatted As String
+        Get
+            Return If(Timestamp = DateTimeOffset.MinValue, "", Timestamp.LocalDateTime.ToString("d MMM HH:mm"))
+        End Get
+    End Property
+End Class
+
+Public Class SendMailRequest
+    Public Property ToUser As String
+    Public Property Subject As String
+    Public Property Body As String
+    Public Property ReplyTo As String
+End Class
 
 Public Class KindleHubApiClient
     Implements IKindleHubApiClient
 
     Public Const GlobalGroupCode As String = "000000000000"
+    ''' <summary>Crosschat — the second global room the site exposes. Treated exactly
+    ''' like Global Chat for scroll-window sizing and the global-chat flag.</summary>
+    Public Const CrossChatGroupCode As String = "000000000001"
     Public Const OpenGamesLobby As String = "800000777777"
     Private ReadOnly Hex64 As New Regex("^[0-9a-fA-F]{64}$", RegexOptions.Compiled)
 
@@ -612,8 +656,95 @@ Public Class KindleHubApiClient
         Return results
     End Function
 
-    Public Async Function ListKnownGamesAsync(cancellationToken As CancellationToken) As Task(Of List(Of String)) Implements IKindleHubApiClient.ListKnownGamesAsync
-        ' Aggregate the games we already know about: recent scores (public) union the
+    ' ───────────────────── mail ─────────────────────
+    ''' <summary>The per-message key the website uses for a mail body. Subject stays
+    ''' plaintext on the server, so an inbox list renders without any keys.</summary>
+    Public Shared Function MailKeySuffix(mailId As String) As String
+        Return "mail:" & If(mailId, "")
+    End Function
+
+    Public Async Function FetchMailAsync(authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of MailItem)) Implements IKindleHubApiClient.FetchMailAsync
+        ' The worker forces the filter to the caller's own mail when the 64-hex
+        ' secret is present, so no username filter is sent from here.
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in to read your mail.")
+        Dim rows = Await GetRowsAsync("rest/v1/kh_mail?order=ts.desc&limit=200&select=id,to_user,from_user,from_id,subject,body,ts,reply_to,owner_secret",
+                                      authToken, cancellationToken)
+        Dim results As New List(Of MailItem)()
+        If rows Is Nothing Then Return results
+        For Each row In rows
+            Dim id = JsonStr(row, "id")
+            Dim cipher = JsonStr(row, "body")
+            Dim body = ""
+            If Not String.IsNullOrEmpty(cipher) Then
+                Try
+                    body = ChatEncryption.Decrypt(MailKeySuffix(id), cipher)
+                Catch ex As Exception
+                    ' A body we cannot open is still worth listing — show it as such
+                    ' rather than dropping the mail.
+                    body = "(This message could not be decrypted on this device.)"
+                End Try
+            End If
+            results.Add(New MailItem With {
+                .Id = id,
+                .ToUser = JsonStr(row, "to_user"),
+                .FromUser = JsonStr(row, "from_user"),
+                .FromId = JsonStr(row, "from_id"),
+                .Subject = JsonStr(row, "subject"),
+                .Body = body,
+                .Timestamp = JsonDate(row, "ts").GetValueOrDefault(DateTimeOffset.MinValue),
+                .ReplyTo = JsonStr(row, "reply_to"),
+                .OwnerSecret = JsonStr(row, "owner_secret")
+            })
+        Next
+        Return results
+    End Function
+
+    Public Async Function SendMailAsync(request As SendMailRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of MailItem) Implements IKindleHubApiClient.SendMailAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in to send mail.")
+        Dim toUser = TrimStr(If(request?.ToUser, ""), 40)
+        If String.IsNullOrEmpty(toUser) Then Throw New ArgumentException("Enter a recipient.", NameOf(request.ToUser))
+        Dim userId = authToken.Substring(0, 16).ToLowerInvariant()
+
+        ' The id has to exist BEFORE the body is encrypted, because it is part of
+        ' the key — the website does the same, which is what keeps the two clients
+        ' able to read each other's mail.
+        Dim id = "m_" & userId & "_" & DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() & "_" & Random.Shared.Next(100000)
+        Dim subject = TrimStr(If(request.Subject, ""), 200)
+        Dim body = If(request.Body, "")
+        If body.Length > 8000 Then body = body.Substring(0, 8000)
+
+        Dim payload = New With {
+            Key .id = id,
+            Key .to_user = toUser,
+            Key .from_user = "",                       ' resolved server-side from the secret
+            Key .from_id = userId,
+            Key .subject = subject,
+            Key .body = ChatEncryption.Encrypt(MailKeySuffix(id), body),
+            Key .ts = UtcIso(),
+            Key .reply_to = TrimStr(If(request.ReplyTo, ""), 120),
+            Key .owner_secret = authToken.ToLowerInvariant()
+        }
+        Await PostVoidAsync("rest/v1/kh_mail", payload, InsertHeaders(authToken), cancellationToken)
+
+        Return New MailItem With {
+            .Id = id,
+            .ToUser = toUser,
+            .FromId = userId,
+            .Subject = subject,
+            .Body = body,
+            .Timestamp = DateTimeOffset.UtcNow,
+            .ReplyTo = TrimStr(If(request.ReplyTo, ""), 120),
+            .OwnerSecret = authToken.ToLowerInvariant()
+        }
+    End Function
+
+    Public Async Function DeleteMailAsync(mailId As String, ownerSecret As String, cancellationToken As CancellationToken) As Task(Of Boolean) Implements IKindleHubApiClient.DeleteMailAsync
+        If Not Hex64.IsMatch(If(ownerSecret, "")) Then Return False
+        If String.IsNullOrEmpty(mailId) Then Return False
+        Return Await DeleteAsync("rest/v1/kh_mail?id=eq." & Uri.EscapeDataString(mailId), ownerSecret, cancellationToken)
+    End Function
+
+    Public Async Function ListKnownGamesAsync(cancellationToken As CancellationToken) As Task(Of List(Of String)) Implements IKindleHubApiClient.ListKnownGamesAsync        ' Aggregate the games we already know about: recent scores (public) union the
         ' games hosted right now in the open-games lobby (the lobby is chat: decode with its room key).
         Dim known As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
         Try

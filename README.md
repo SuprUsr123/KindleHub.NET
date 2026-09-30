@@ -181,4 +181,4 @@ Private Const BaseUrl As String = "https://your-api-endpoint.workers.dev/rest/v1
 
 ## License
 
-MIT License - see LICENSE file for details.
+GPL License - see LICENSE file for details. (why does the agent keep messing this up, why was it originally MIT)

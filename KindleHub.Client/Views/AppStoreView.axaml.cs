@@ -53,6 +53,34 @@ public partial class AppStoreView : UserControl
         }
     }
 
+    /// <summary>Publish straight from the clipboard — the HTML does not need to
+    /// exist as a file. Uses the TopLevel clipboard rather than a static one so
+    /// it works with whatever window has focus.</summary>
+    private async void PasteHtml_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not AppStoreViewModel vm) return;
+        var top = TopLevel.GetTopLevel(this);
+        var clipboard = top?.Clipboard;
+        if (clipboard is null) { vm.StatusText = "Couldn't reach the clipboard."; return; }
+        try
+        {
+            var text = await clipboard.GetTextAsync();
+            if (string.IsNullOrWhiteSpace(text)) { vm.StatusText = "The clipboard doesn't contain any text."; return; }
+            vm.NotifyHtmlChanged();
+            await vm.SetPublishHtmlTextAsync(text);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[KindleHub Debug] PasteHtml_Click failed: {ex}");
+            vm.StatusText = "Couldn't read the clipboard.";
+        }
+    }
+
+    private void ClearHtml_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is AppStoreViewModel vm) vm.ClearPublishHtml();
+    }
+
     private async void RunOwn_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: OwnAppItem item } && DataContext is AppStoreViewModel vm)

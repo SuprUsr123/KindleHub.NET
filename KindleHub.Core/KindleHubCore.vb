@@ -14,6 +14,7 @@ Public Class KindleHubCore
         Implements IDisposable
 
         Public Const GlobalGroupCode As String = KindleHubApiClient.GlobalGroupCode
+        Public Const CrossChatGroupCode As String = KindleHubApiClient.CrossChatGroupCode
         Public Const OpenGamesLobby As String = KindleHubApiClient.OpenGamesLobby
 
         Private ReadOnly _apiClient As IKindleHubApiClient
@@ -300,6 +301,28 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
                 .UserId = _currentProfile.UserId
             }
             Return Await _apiClient.SubmitScoreAsync(request, _currentProfile.AuthToken, cancellationToken)
+        End Function
+
+        ' ───────────────────── mail ─────────────────────
+        ''' <summary>Your whole mailbox — received and sent. The server returns both in
+        ''' one read; the client splits them into folders.</summary>
+        Public Async Function FetchMailAsync(cancellationToken As CancellationToken) As Task(Of List(Of MailItem))
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to read your mail.")
+            Return Await _apiClient.FetchMailAsync(_currentProfile.AuthToken, cancellationToken)
+        End Function
+
+        Public Async Function SendMailAsync(toUser As String, subject As String, body As String, replyTo As String, cancellationToken As CancellationToken) As Task(Of MailItem)
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to send mail.")
+            Dim request = New SendMailRequest With {
+                .ToUser = toUser, .Subject = subject, .Body = body, .ReplyTo = replyTo
+            }
+            Return Await _apiClient.SendMailAsync(request, _currentProfile.AuthToken, cancellationToken)
+        End Function
+
+        ''' <summary>Unsend. The server only lets the sending account remove its own mail.</summary>
+        Public Async Function UnsendMailAsync(mailId As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+            If Not IsAuthenticated Then Return False
+            Return Await _apiClient.DeleteMailAsync(mailId, _currentProfile.AuthToken, cancellationToken)
         End Function
 
         Public Async Function FetchLeaderboardAsync(game As String, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of LeaderboardEntry))

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless self-test for the ported arcade. The games are pure C# (they only
+       use Avalonia for brush colours), so every rule can be exercised without a
+       window. Run it from KindleHubClient with:
+         dotnet run project KindleHub.Client.Gametest config Release
+       It exits non-zero on any failure, so it works as a build gate. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>KindleHub.GameTest</AssemblyName>
+    <RootNamespace>KindleHub.GameTest</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\KindleHub.Client\KindleHub.Client.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+  </ItemGroup>
+</Project>

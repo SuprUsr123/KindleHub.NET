@@ -1,0 +1,238 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="760" d:DesignHeight="560"
+             x:Class="KindleHub.Client.Views.ArcadeView">
+    <UserControl.Styles>
+        <Style Selector="Button.play">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="12,8"/>
+        </Style>
+    </UserControl.Styles>
+
+    <UserControl.Resources>
+        <DataTemplate x:Key="GameCard">
+            <Border Width="280"
+                    MinHeight="196"
+                    Margin="0,0,14,14"
+                    Padding="14"
+                    HorizontalAlignment="Left"
+                    CornerRadius="14"
+                    Background="{DynamicResource ControlFillColorSecondary}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}"
+                    BorderThickness="1">
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto">
+                    <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,12">
+                        <Border Width="54" Height="54"
+                                CornerRadius="12"
+                                Background="{DynamicResource ControlFillColorDefault}"
+                                BorderBrush="{DynamicResource ControlBorderBrush}"
+                                BorderThickness="1">
+                            <TextBlock Text="{Binding Monogram}"
+                                       FontSize="18"
+                                       FontWeight="Bold"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
+                        </Border>
+
+                        <StackPanel Grid.Column="1" Margin="12,0,8,0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="{Binding Name}"
+                                       FontSize="16"
+                                       FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="/{Binding Slug}"
+                                       Foreground="Gray"
+                                       FontSize="11"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+
+                        <Border Grid.Column="2"
+                                Padding="7,3"
+                                CornerRadius="999"
+                                BorderBrush="{DynamicResource ControlBorderBrush}"
+                                BorderThickness="1"
+                                IsVisible="{Binding IsPorted}">
+                            <TextBlock Text="READY"
+                                       FontSize="9"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource SystemAccentColor}"/>
+                        </Border>
+                        <Border Grid.Column="2"
+                                Padding="7,3"
+                                CornerRadius="999"
+                                BorderBrush="{DynamicResource ControlBorderBrush}"
+                                BorderThickness="1"
+                                Background="{DynamicResource ControlFillColorDefault}"
+                                IsVisible="{Binding !IsPorted}">
+                            <TextBlock Text="SOON"
+                                       FontSize="9"
+                                       FontWeight="Bold"
+                                       Foreground="Gray"/>
+                        </Border>
+                    </Grid>
+
+                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                        <TextBlock Text="How to play"
+                                   FontSize="11"
+                                   Foreground="Gray"
+                                   VerticalAlignment="Center"/>
+                        <Button Grid.Column="1"
+                                Content="?"
+                                Padding="7,1"
+                                MinWidth="28"
+                                MinHeight="24"
+                                FontSize="11"
+                                IsVisible="{Binding HasDescription}"
+                                Command="{Binding $parent[UserControl].DataContext.ToggleHelpCommand}"
+                                CommandParameter="{Binding}"/>
+                    </Grid>
+
+                    <Border Grid.Row="2"
+                            Padding="9"
+                            CornerRadius="8"
+                            Background="{DynamicResource ControlFillColorDefault}"
+                            IsVisible="{Binding Catalog.IsDescriptionVisible}">
+                        <TextBlock Text="{Binding Description}"
+                                   FontSize="11"
+                                   Foreground="Gray"
+                                   TextWrapping="Wrap"
+                                   MaxLines="4"/>
+                    </Border>
+
+                    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+                        <Button Classes="play"
+                                Content="Play"
+                                IsEnabled="{Binding IsPorted}"
+                                Command="{Binding $parent[UserControl].DataContext.PlayCommand}"
+                                CommandParameter="{Binding}"/>
+                        <TextBlock Grid.Column="1"
+                                   Text="Not available yet"
+                                   FontSize="10"
+                                   Foreground="Gray"
+                                   VerticalAlignment="Center"
+                                   Margin="10,0,0,0"
+                                   IsVisible="{Binding !IsPorted}"/>
+                    </Grid>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="22" Margin="24,24,24,32" IsVisible="{Binding NotInGame}">
+            <Border Padding="20"
+                    CornerRadius="18"
+                    Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}"
+                    BorderThickness="1">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Arcade" FontSize="31" FontWeight="Bold"/>
+                        <TextBlock Text="A pocket-sized collection of games, puzzles, and time killers."
+                                   Foreground="Gray"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
+                        <StackPanel Spacing="1" HorizontalAlignment="Center">
+                            <TextBlock Text="{Binding PortedCount}" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="PLAYABLE" FontSize="9" Foreground="Gray" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                        <Border Width="1" Height="40" Background="{DynamicResource ControlBorderBrush}"/>
+                        <StackPanel Spacing="1" HorizontalAlignment="Center">
+                            <TextBlock Text="{Binding UnportedCount}" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Text="COMING SOON" FontSize="9" Foreground="Gray" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <TextBlock Grid.Row="1"
+                               Text="{Binding TotalCount, StringFormat='{}{0} games in the catalogue'}"
+                               Foreground="Gray"
+                               FontSize="11"
+                               Margin="0,12,0,0"/>
+                </Grid>
+            </Border>
+
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBox Text="{Binding SearchText}"
+                         MinHeight="38"
+                         Watermark="Search by name, slug, or description…"/>
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding FilterModes}"
+                          SelectedItem="{Binding FilterMode}"
+                          MinWidth="125"
+                          Margin="12,0,0,0"
+                          VerticalContentAlignment="Center"/>
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Showing" Foreground="Gray" FontSize="12" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding VisibleCount}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Text="games" Foreground="Gray" FontSize="12" VerticalAlignment="Center"/>
+                <TextBlock Text="·" Foreground="Gray" FontSize="12" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding FilterMode}" Foreground="Gray" FontSize="12" VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <Border Padding="14"
+                    CornerRadius="12"
+                    Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}"
+                    BorderThickness="1"
+                    IsVisible="{Binding NoMatches}">
+                <StackPanel Spacing="3">
+                    <TextBlock Text="No games found" FontSize="15" FontWeight="SemiBold"/>
+                    <TextBlock Text="Try a different search term or switch the filter back to All games."
+                               Foreground="Gray" FontSize="11"/>
+                </StackPanel>
+            </Border>
+
+            <StackPanel Spacing="10" IsVisible="{Binding HasPorted}">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock Text="Playable now" FontSize="21" FontWeight="SemiBold"/>
+                    <Border Padding="7,3" CornerRadius="999"
+                            Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}"
+                            BorderThickness="1">
+                        <TextBlock Text="{Binding PortedGames.Count, StringFormat='{}{0}'}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   Foreground="Gray"/>
+                    </Border>
+                </StackPanel>
+                <TextBlock Text="Games that run directly in the desktop client."
+                           Foreground="Gray" FontSize="11"/>
+                <ItemsControl ItemsSource="{Binding PortedGames}" ItemTemplate="{StaticResource GameCard}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+            </StackPanel>
+
+            <StackPanel Spacing="10" IsVisible="{Binding HasUnported}">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock Text="Coming soon" FontSize="21" FontWeight="SemiBold" Foreground="Gray"/>
+                    <Border Padding="7,3" CornerRadius="999"
+                            Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}"
+                            BorderThickness="1">
+                        <TextBlock Text="{Binding UnportedGames.Count, StringFormat='{}{0}'}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   Foreground="Gray"/>
+                    </Border>
+                </StackPanel>
+                <TextBlock Text="The catalogue already knows about these games; their desktop implementations are still to come."
+                           Foreground="Gray" FontSize="11" TextWrapping="Wrap"/>
+                <ItemsControl ItemsSource="{Binding UnportedGames}" ItemTemplate="{StaticResource GameCard}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

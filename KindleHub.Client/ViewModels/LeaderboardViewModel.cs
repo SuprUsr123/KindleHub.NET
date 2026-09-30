@@ -1,16 +1,21 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using KindleHub.Client.Models;
 using KindleHub.Core;
 using Microsoft.Extensions.Logging;
 
 namespace KindleHub.Client.ViewModels;
 
 /// <summary>
-/// Global leaderboards: read scores per game from kh_scores (the game list is the live
-/// union of recent scores and the multiplayer lobby, so it updates automatically). Also
-/// exposes the online-players panel from kh_presence heartbeats.
+/// Global leaderboards: read scores per game from kh_scores. The picker lists the
+/// whole official arcade (<see cref="GameCatalog"/>) so a leaderboard is reachable
+/// before anyone has posted to it, unioned with any game the server does know about
+/// that the catalog does not. Also exposes the online-players panel from kh_presence
+/// heartbeats.
 /// </summary>
 public class LeaderboardViewModel : ViewModelBase
 {
@@ -32,8 +37,20 @@ public class LeaderboardViewModel : ViewModelBase
 
     public bool IsLoading { get => _isLoading; set => SetProperty(ref _isLoading, value); }
 
-    private ObservableCollection<string> _availableGames = new();
-    public ObservableCollection<string> AvailableGames { get => _availableGames; set => SetProperty(ref _availableGames, value); }
+    private ObservableCollection<GameCatalogEntry> _availableGames = new();
+    public ObservableCollection<GameCatalogEntry> AvailableGames { get => _availableGames; set => SetProperty(ref _availableGames, value); }
+
+    /// <summary>The catalog row the picker has on, kept in step with <see cref="SelectedGame"/>.</summary>
+    private GameCatalogEntry? _selectedGameEntry;
+    public GameCatalogEntry? SelectedGameEntry
+    {
+        get => _selectedGameEntry;
+        set
+        {
+            if (SetProperty(ref _selectedGameEntry, value) && value != null)
+                SelectedGame = value.Slug;
+        }
+    }
 
     private ObservableCollection<PresenceEntry> _onlineNow = new();
     public ObservableCollection<PresenceEntry> OnlineNow { get => _onlineNow; set => SetProperty(ref _onlineNow, value); }
@@ -59,22 +76,34 @@ public class LeaderboardViewModel : ViewModelBase
 
     public async Task RefreshGamesAsync()
     {
+        // The catalog first, so every official game is pickable even with zero scores
+        // posted; then anything the server reports that the catalog doesn't know.
+        var ordered = new List<GameCatalogEntry>(GameCatalog.All);
+        var knownSlugs = new HashSet<string>(GameCatalog.All.Select(g => g.Slug), StringComparer.OrdinalIgnoreCase);
+
         try
         {
             var games = await _core.ListKnownGamesAsync(CancellationToken.None);
-            _availableGames.Clear();
-            foreach (var g in games) _availableGames.Add(g);
-            if (!games.Contains(SelectedGame) && _availableGames.Count > 0)
-                SelectedGame = games[0];
-            OnPropertyChanged(nameof(AvailableGames));
+            foreach (var g in games)
+            {
+                var slug = g?.Trim();
+                if (string.IsNullOrEmpty(slug) || !knownSlugs.Add(slug!)) continue;
+                ordered.Add(new GameCatalogEntry(slug!, GameCatalog.NameFor(slug!), ""));
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Game list failed");
-            _availableGames.Clear();
-            foreach (var g in new[] { "snake", "2048", "ttt", "memory", "wordle" }) _availableGames.Add(g);
-            OnPropertyChanged(nameof(AvailableGames));
+            // An unreachable API still leaves the full catalog on screen.
+            _logger.LogWarning(ex, "Game list failed; showing the catalog only");
         }
+
+        _availableGames.Clear();
+        foreach (var g in ordered) _availableGames.Add(g);
+        OnPropertyChanged(nameof(AvailableGames));
+
+        SelectedGameEntry = _availableGames.FirstOrDefault(g =>
+            string.Equals(g.Slug, SelectedGame, StringComparison.OrdinalIgnoreCase))
+            ?? _availableGames.FirstOrDefault();
     }
 
     public async Task LoadLeaderboardAsync()

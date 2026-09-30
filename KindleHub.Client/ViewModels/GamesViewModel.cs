@@ -10,11 +10,14 @@ using Microsoft.Extensions.Logging;
 namespace KindleHub.Client.ViewModels;
 
 /// <summary>
-/// Games: multiplayer Tic-Tac-Toe over the official encrypted relay (open-games lobby
-/// room 800000777777 announces OPEN events; each game room is 900000&lt;6 digits&gt; and
+/// Multiplayer Tic-Tac-Toe over the official encrypted relay (open-games lobby room
+/// 800000777777 announces OPEN events; each game room is 900000&lt;6 digits&gt; and
 /// carries MOVE_TTT / TTT_STATE / JOIN envelopes; wire format matches kh-games.js so
 /// desktop and Kindle players interoperate), plus a local vs-computer board whose wins
 /// post to the shared global leaderboard ("ttt").
+///
+/// The wider arcade — the games ported out of the official client — lives in
+/// <see cref="ArcadeViewModel"/> and is reached from the Arcade page.
 /// </summary>
 public class GamesViewModel : ViewModelBase, IDisposable
 {
@@ -47,6 +50,7 @@ public class GamesViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<OpenGameListing> OpenGames { get => _openGames; set => SetProperty(ref _openGames, value); }
     public ObservableCollection<string> KnownGames { get => _knownGames; set => SetProperty(ref _knownGames, value); }
+
     public string HostGameName { get => _hostGameName; set => SetProperty(ref _hostGameName, value); }
     public string JoinRoomShort { get => _joinRoomShort; set { if (SetProperty(ref _joinRoomShort, value)) JoinCommand.RaiseCanExecuteChanged(); } }
     public bool IsLoading { get => _isLoading; set => SetProperty(ref _isLoading, value); }
@@ -110,7 +114,6 @@ public class GamesViewModel : ViewModelBase, IDisposable
         LeaveCommand = new RelayCommand(async () => await LeaveAsync(), () => _matchLive);
         NewLocalGameCommand = new RelayCommand(() => StartLocalGame(), () => !_matchLive);
         CellCommand = new RelayCommand<TttCell>(async cell => await OnCellAsync(cell), _ => !_matchLive || true);
-
         _ = RefreshAsync();
     }
 
@@ -124,12 +127,12 @@ public class GamesViewModel : ViewModelBase, IDisposable
             _knownGames.Clear();
             foreach (var g in games) _knownGames.Add(g);
 
-            var lobby = await _core.PollLobbyForOpenGamesAsync("ttt", CancellationToken.None);
+            var lobby = await _core.PollLobbyForOpenGamesAsync(CancellationToken.None);
             _openGames.Clear();
             foreach (var o in lobby) _openGames.Add(o);
 
             StatusText = lobby.Count > 0
-                ? $"{lobby.Count} open tic-tac-toe room(s). Select one and Join, or Host your own."
+                ? $"{lobby.Count} open room(s). Select one and Join, or host your own tic-tac-toe."
                 : "No open rooms right now. Host one and share the code (or just play the computer).";
 
             // A light presence heartbeat so "online now" lists see us.
@@ -481,13 +484,15 @@ public class GamesViewModel : ViewModelBase, IDisposable
 
     private async void PostWinScoreIfNeeded(bool local, bool won, int moves)
     {
+        // Only a local game the player actually won posts a score; a relayed
+        // match would otherwise let a loss be recorded as a win.
         if (!local || !won) return;
         if (!_core.IsAuthenticated) return;
         try
         {
-            var s = Math.Clamp(9 - moves + 1, 1, 9);
-            await _core.SubmitScoreAsync("ttt", 9 + (9 - moves), CancellationToken.None);
-            StatusText = $"Score {9 + (9 - moves)} submitted to the Tic-Tac-Toe leaderboard.";
+            var score = 9 + (9 - moves);
+            await _core.SubmitScoreAsync("ttt", score, CancellationToken.None);
+            StatusText = $"Score {score} submitted to the Tic-Tac-Toe leaderboard.";
         }
         catch (Exception ex)
         {

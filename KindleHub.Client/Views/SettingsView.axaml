@@ -98,6 +98,9 @@
                     <TextBlock Text="About" FontSize="20" FontWeight="Bold"/>
                     <TextBlock Text="KindleHub Pro — desktop client for kindlehub.pro"/>
                     <TextBlock Text="Cross-platform (Windows · Linux · macOS), .NET 8 + Avalonia" Foreground="Gray"/>
+                    <TextBlock Text="By SuprUsr123, with &lt;/3" Foreground="Gray" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap"
+                               Text="Source: github.com/SuprUsr123/KindleHub.NET"/>
                 </StackPanel>
             </Border>
 

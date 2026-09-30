@@ -68,7 +68,22 @@ public class AppStoreViewModel : ViewModelBase
     public string PublishHtmlPath { get => _publishHtmlPath; set => SetProperty(ref _publishHtmlPath, value); }
     public int PublishHtmlSize { get => _publishHtmlSize; set => SetProperty(ref _publishHtmlSize, value); }
     public bool Publishing { get => _publishing; set => SetProperty(ref _publishing, value); }
-    public string PublishSizeLabel => PublishHtmlSize > 0 ? $"{PublishHtmlSize / 1024.0:0.#} KB" : "";
+    public string PublishSizeLabel => PublishHtmlSize > 0 ? $"{PublishHtmlSize / 1024.0:0.#} KB · {PublishHtmlSize:N0} chars" : "";
+
+    /// <summary>Describes where the pending HTML came from — a file, or the clipboard.</summary>
+    public string PublishSourceLabel
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(_pendingHtml)) return "No HTML loaded yet.";
+            if (!string.IsNullOrEmpty(PublishHtmlPath)) return System.IO.Path.GetFileName(PublishHtmlPath);
+            return "Pasted from clipboard";
+        }
+    }
+
+    /// <summary>True once we actually hold the HTML to publish. The payload is the
+    /// source of truth; a file on disk is no longer required.</summary>
+    public bool HasPublishHtml => !string.IsNullOrEmpty(_pendingHtml);
 
     public ObservableCollection<OwnAppItem> MyApps { get => _myApps; set => SetProperty(ref _myApps, value); }
     public bool HasMyApps => _myApps.Count > 0;
@@ -88,9 +103,13 @@ public class AppStoreViewModel : ViewModelBase
         _logger = logger;
         DownloadAndOpenCommand = new RelayCommand(async () => await DownloadAndOpenAsync(), () => SelectedApp != null);
         ShowPublishCommand = new RelayCommand(() => { if (!CanPublish) { StatusText = "Sign in to publish an app."; return; } PublishOpen = true; });
-        CancelPublishCommand = new RelayCommand(() => { PublishOpen = false; PublishName = ""; PublishHtmlPath = ""; PublishHtmlSize = 0; OnPropertyChanged(nameof(PublishSizeLabel)); });
+        CancelPublishCommand = new RelayCommand(() =>
+        {
+            PublishOpen = false;
+            ResetPublishForm();
+        });
         PublishAppCommand = new RelayCommand(async () => await PublishAsync(),
-            () => !Publishing && CanPublish && !string.IsNullOrWhiteSpace(PublishName) && File.Exists(PublishHtmlPath));
+            () => !Publishing && CanPublish && !string.IsNullOrWhiteSpace(PublishName) && HasPublishHtml);
         RefreshMyAppsCommand = new RelayCommand(() => RefreshMyApps());
         RemoveAppCommand = new RelayCommand<OwnAppItem>(async a => await RemoveOwnAppAsync(a));
         RunOwnAppCommand = new RelayCommand<OwnAppItem>(async a => await RunOwnAppAsync(a));
@@ -166,20 +185,13 @@ public class AppStoreViewModel : ViewModelBase
         return htmlPath;
     }
 
-    // ── publish from a single HTML file ────────────────────────────────────
+    // ── publish from a single HTML file, or straight from the clipboard ─────
     public async Task SetPublishFileAsync(string path, byte[] bytes)
     {
-        PublishHtmlPath = path;
-        PublishHtmlSize = bytes.Length;
-        OnPropertyChanged(nameof(PublishSizeLabel));
-        if (string.IsNullOrWhiteSpace(PublishName))
-            PublishName = Path.GetFileNameWithoutExtension(path);
-
         try
         {
             var html = System.Text.Encoding.UTF8.GetString(bytes);
-            _pendingHtml = html;
-            if (html.Length > 550000) StatusText = $"That file is {html.Length:N0} characters — the store cap is ~512 KB.";
+            AcceptPublishHtml(html, path, Path.GetFileNameWithoutExtension(path));
         }
         catch (Exception ex)
         {
@@ -191,12 +203,77 @@ public class AppStoreViewModel : ViewModelBase
         await Task.CompletedTask;
     }
 
+    /// <summary>Use HTML that came from the clipboard rather than a file. The
+    /// payload is what actually gets published, so a backing file is optional —
+    /// <paramref name="origin"/> is only a label describing where it came from.</summary>
+    public async Task SetPublishHtmlTextAsync(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            StatusText = "The clipboard doesn't contain any text.";
+            return;
+        }
+        AcceptPublishHtml(html, null, "pasted from clipboard");
+        PublishAppCommand.RaiseCanExecuteChanged();
+        await Task.CompletedTask;
+    }
+
+    private void AcceptPublishHtml(string html, string? path, string defaultName)
+    {
+        _pendingHtml = html;
+        PublishHtmlPath = path ?? "";
+        PublishHtmlSize = html.Length;
+        OnPropertyChanged(nameof(PublishSizeLabel));
+        OnPropertyChanged(nameof(PublishSourceLabel));
+        if (string.IsNullOrWhiteSpace(PublishName)) PublishName = defaultName;
+        if (html.Length > 550000) StatusText = $"That's {html.Length:N0} characters — the store cap is ~512 KB.";
+        else StatusText = $"Loaded {html.Length:N0} characters of HTML.";
+    }
+
     private string? _pendingHtml;
+
+    private void ResetPublishForm()
+    {
+        PublishName = "";
+        PublishHtmlPath = "";
+        PublishHtmlSize = 0;
+        _pendingHtml = null;
+        OnPropertyChanged(nameof(PublishSizeLabel));
+        OnPropertyChanged(nameof(PublishSourceLabel));
+        OnPropertyChanged(nameof(HasPublishHtml));
+        PublishAppCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Reads HTML straight off the system clipboard. Routed through the
+    /// view because only a TopLevel owns a clipboard.</summary>
+    public void SetPublishHtmlText(string html)
+    {
+        _ = SetPublishHtmlTextAsync(html);
+    }
+
+    public void NotifyHtmlChanged()
+    {
+        OnPropertyChanged(nameof(PublishSizeLabel));
+        OnPropertyChanged(nameof(PublishSourceLabel));
+        OnPropertyChanged(nameof(HasPublishHtml));
+        PublishAppCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Drop the pending HTML without closing the dialog, so the author can
+    /// load a different source.</summary>
+    public void ClearPublishHtml()
+    {
+        _pendingHtml = null;
+        PublishHtmlPath = "";
+        PublishHtmlSize = 0;
+        StatusText = "Cleared. Load a file or paste new HTML.";
+        NotifyHtmlChanged();
+    }
 
     private async Task PublishAsync()
     {
         if (!CanPublish) { StatusText = "Sign in to publish an app."; return; }
-        if (_pendingHtml == null || !File.Exists(PublishHtmlPath)) { StatusText = "Choose the app's HTML file first."; return; }
+        if (string.IsNullOrEmpty(_pendingHtml)) { StatusText = "Choose an HTML file or paste your HTML first."; return; }
         if (string.IsNullOrWhiteSpace(PublishName)) { StatusText = "Give the app a name."; return; }
         if (_pendingHtml.Length > 550000) { StatusText = "App exceeds the 512 KB store cap."; return; }
 
@@ -209,8 +286,7 @@ public class AppStoreViewModel : ViewModelBase
             StatusText = $"Published \"{result.Name}\". It stays pending until the store auto-reviewer approves it — then it appears in the catalogue for everyone.";
             RefreshMyApps();
             PublishOpen = false;
-            PublishName = ""; PublishHtmlPath = ""; PublishHtmlSize = 0; _pendingHtml = null;
-            OnPropertyChanged(nameof(PublishSizeLabel));
+            ResetPublishForm();
             await SearchAppsAsync();
         }
         catch (Exception ex)

@@ -3,6 +3,8 @@ Imports System.Security.Cryptography
 ''' <summary>Mirrors the official _khRoomDigits (random digit string of given length).</summary>
 Public Module RoomCodes
     Public Const GlobalGroupCode As String = "000000000000"
+    ''' <summary>Crosschat — the second global room the site exposes.</summary>
+    Public Const CrossChatGroupCode As String = "000000000001"
 
     Public Function GenerateDigits(count As Integer) As String
         Dim sb As New System.Text.StringBuilder(count)

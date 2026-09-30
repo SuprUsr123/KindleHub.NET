@@ -7,6 +7,7 @@
              x:Class="KindleHub.Client.Views.MessagesView">
     <UserControl.Resources>
         <conv:DataImageToBitmapConverter x:Key="Img"/>
+        <conv:FlipbookPreviewConverter x:Key="Flip"/>
     </UserControl.Resources>
     <Grid RowDefinitions="Auto,*" Margin="16">
         <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,10">
@@ -22,29 +23,60 @@
         </StackPanel>
 
         <Grid Grid.Row="1" ColumnDefinitions="240,*">
-            <!-- Rooms -->
-            <Border Grid.Column="0" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
-                    CornerRadius="6" Margin="0,0,12,0">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="Rooms" FontWeight="Bold" Padding="12,10"/>
-                    <ListBox ItemsSource="{Binding Groups}" SelectedItem="{Binding SelectedGroup}">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Margin="2,6">
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
-                                    <TextBlock Text="{Binding Code}" FontSize="11" Foreground="Gray"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </DockPanel>
-            </Border>
+            <TabControl Grid.Column="0" Margin="0,0,12,0">
+                <TabItem Header="Rooms">
+                    <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                            CornerRadius="6">
+                        <DockPanel>
+                            <ListBox ItemsSource="{Binding Groups}" SelectedItem="{Binding SelectedGroup}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="2,6">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding Code}" FontSize="11" Foreground="Gray"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+                </TabItem>
+                <TabItem Header="Polls">
+                    <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                            CornerRadius="6">
+                        <ScrollViewer>
+                            <ItemsControl ItemsSource="{Binding ActivePolls}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="8,4" Margin="4" CornerRadius="4"
+                                                Background="{DynamicResource ControlFillColorSecondary}"
+                                                PointerPressed="Bubble_PointerPressed">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12"/>
+                                                <TextBlock Text="{Binding DisplayText}" FontSize="11" Foreground="Gray"
+                                                           TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+                </TabItem>
+            </TabControl>
 
             <!-- Chat column -->
-            <Grid Grid.Column="1" RowDefinitions="*,Auto,Auto,Auto">
+            <Grid Grid.Column="1" RowDefinitions="*,Auto,Auto,Auto,Auto">
 
-                <Border Grid.Row="0" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="6">
-                    <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto">
+                <Panel Grid.Row="0">
+                    <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="6">
+                        <!-- IsDeferredScrollingEnabled/IsScrollInertiaEnabled are turned off
+                         deliberately: with Avalonia's defaults (both true) the viewport
+                         animates toward the bottom every time content grows, which reads
+                         as a slow drift and overrides the follow-on-bottom logic. -->
+                    <ScrollViewer x:Name="ChatScroll" VerticalScrollBarVisibility="Auto"
+                                  IsDeferredScrollingEnabled="False"
+                                  IsScrollInertiaEnabled="False">
                         <ItemsControl x:Name="ChatList" ItemsSource="{Binding Messages}" Margin="10">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
@@ -69,7 +101,77 @@
                                                 </StackPanel>
                                                 <Image Source="{Binding ImageDataUri, Converter={StaticResource Img}}"
                                                        IsVisible="{Binding IsImage}" MaxWidth="300" Stretch="Uniform" Margin="0,4"/>
-                                                <TextBlock IsVisible="{Binding NotImage}" Text="{Binding Text}" TextWrapping="Wrap"/>
+                                                <TextBlock IsVisible="{Binding ShowPlainText}" Text="{Binding DisplayText}" TextWrapping="Wrap"/>
+
+                                                <!-- Shared app: tappable card. The HTML travels in the
+                                                     message, so opening it needs no download. -->
+                                                <Border IsVisible="{Binding IsAppShare}" Padding="8" CornerRadius="6"
+                                                        Background="{DynamicResource ControlFillColorSecondary}" Margin="0,4"
+                                                        PointerPressed="AppShare_Click">
+                                                    <StackPanel Spacing="2">
+                                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                                            <TextBlock Text="🧩" FontSize="14"/>
+                                                            <TextBlock Text="{Binding AppLabel}" FontSize="13"
+                                                                       FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding AppSizeLabel}" FontSize="11" Foreground="Gray"/>
+                                                        <TextBlock Text="Click to open in your browser" FontSize="11"
+                                                                   Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                                                    </StackPanel>
+                                                </Border>
+<ItemsControl ItemsSource="{Binding PollOptionItems}" IsVisible="{Binding HasPollOptions}"
+                              Margin="0,4">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Spacing="3"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Padding="6,4" CornerRadius="4"
+                                            Background="{DynamicResource ControlFillColorSecondary}"
+                                            PointerPressed="PollOption_PointerPressed">
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBlock Grid.Column="0" Text="{Binding Text}" FontSize="12"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Votes}" FontSize="11" Foreground="Gray" Margin="6,0,0,0"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                                                <!-- Flipbook: real first-frame preview plus a way to play it. -->
+                                                <Border IsVisible="{Binding IsFlipbook}" Padding="6" CornerRadius="6"
+                                                        Background="{DynamicResource ControlFillColorSecondary}" Margin="0,4"
+                                                        PointerPressed="ViewFlipbook_Click">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <Image Source="{Binding Converter={StaticResource Flip}}"
+                                                               Width="72" Height="72" Stretch="Uniform"/>
+                                                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                                                            <TextBlock Text="🎞 Click here to view the flipbook"
+                                                                       FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                                            <TextBlock FontSize="11" Foreground="Gray">
+                                                                <TextBlock.Text>
+                                                                    <MultiBinding StringFormat="{}{0} frames">
+                                                                        <Binding Path="FlipbookFrameCount"/>
+                                                                    </MultiBinding>
+                                                                </TextBlock.Text>
+                                                            </TextBlock>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                                <!-- Story: opening it reveals the log. -->
+                                                <Border IsVisible="{Binding IsStory}" Padding="6,4" CornerRadius="6"
+                                                        Background="{DynamicResource ControlFillColorSecondary}" Margin="0,4"
+                                                        PointerPressed="ViewStory_Click">
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <TextBlock Text="📖" FontSize="14"/>
+                                                        <TextBlock Text="{Binding StoryLabel}" FontSize="12"
+                                                                   TextTrimming="WordEllipsis" MaxWidth="280"/>
+                                                        <TextBlock Text="— click to read" FontSize="11" Foreground="Gray"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <TextBlock Text="{Binding VoteSummary}" FontSize="12"
+                                                           Foreground="Gray" IsVisible="{Binding VoteSummary}" Margin="0,2"/>
                                                 <TextBlock Text="{Binding ReactionsText}" FontSize="12" Foreground="Gray"
                                                            IsVisible="{Binding HasReactions}"/>
                                             </StackPanel>
@@ -80,6 +182,25 @@
                         </ItemsControl>
                     </ScrollViewer>
                 </Border>
+
+                    <!-- Discord-style "Jump to present": only shown once the reader
+                         has broken the bottom anchor. Floats over the transcript so
+                         it never moves the messages themselves. -->
+                    <Border x:Name="JumpLatest" IsVisible="False"
+                            HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                            Margin="0,0,0,16" CornerRadius="16"
+                            Background="{DynamicResource ControlFillColorSecondary}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                            Padding="14,7">
+                        <Button Background="Transparent" BorderThickness="0" Padding="0" Click="JumpLatest_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="↓" FontSize="13" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="JumpLatestLabel" Text="Jump to present"
+                                           FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </Border>
+                </Panel>
 
                 <!-- selected-message action bar (official per-message menu) -->
                 <Border Grid.Row="1" CornerRadius="6" Margin="0,8,0,0" Padding="10,8"
@@ -113,6 +234,19 @@
                                     Command="{Binding ReportNameCommand}" CommandParameter="{Binding ActiveMessage}"/>
                             <Button Content="Close" Command="{Binding DeselectCommand}"/>
                         </WrapPanel>
+                        <!-- poll vote buttons -->
+                        <ItemsControl ItemsSource="{Binding ActiveMessage.PollOptions}" IsVisible="{Binding ActiveMessage.PollOptions}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding}" Margin="0,0,6,4" Padding="10,2"
+                                            Command="{Binding DataContext.VoteCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                            CommandParameter="{Binding}"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <!-- quick reactions (official set: +1 -1 lol ? ! <3 ♥ ★ ✓ ☺) -->
                         <ItemsControl ItemsSource="{Binding QuickReactionsList}">
                             <ItemsControl.ItemsPanel>
@@ -164,13 +298,108 @@
                     </StackPanel>
                 </Border>
 
+                <!-- media send panel (sticker / poll / flipbook / story / app) -->
+                <Border Grid.Row="3" CornerRadius="6" Margin="0,4,0,0" Padding="8"
+                        Background="{DynamicResource ControlFillColorDefault}" IsVisible="{Binding MediaSendOpen}">
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto">
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding MediaSendTitle}" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" Margin="0,0,8,4"/>
+                        <ScrollViewer Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" MaxHeight="180"
+                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                            <StackPanel Spacing="6">
+                                <!-- Stickers -->
+                                <ItemsControl ItemsSource="{Binding StickerEntries}" IsVisible="{Binding IsStickerMode}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Content="{Binding Label}" Padding="8,4" Margin="0,0,4,4"
+                                                    FontSize="12"
+                                                    Command="{Binding DataContext.SendStickerCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding Id}"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <!-- Poll composer -->
+                                <StackPanel IsVisible="{Binding IsPollMode}" Spacing="4">
+                                    <TextBox Text="{Binding PollQuestion}" Watermark="Question" FontSize="12"/>
+                                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto">
+                                        <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding PollOption1}" Watermark="Option 1" FontSize="12"/>
+                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PollOption2}" Watermark="Option 2" FontSize="12"/>
+                                        <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding PollOption3}" Watermark="Option 3" FontSize="12"/>
+                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PollOption4}" Watermark="Option 4" FontSize="12"/>
+                                        <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Content="Open poll" IsChecked="{Binding PollIsOpen}" FontSize="12"/>
+                                    </Grid>
+                                    <Button Content="Send poll" Command="{Binding SendPollCommand}" Padding="16,4" HorizontalAlignment="Right"/>
+                                </StackPanel>
+                                <!-- Flipbook creator -->
+                                <StackPanel IsVisible="{Binding IsFlipbookMode}" Spacing="4">
+                                    <TextBox Text="{Binding FlipbookName}" Watermark="Name (max 40)" FontSize="12"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Border Width="64" Height="64" CornerRadius="4"
+                                                Background="White" BorderBrush="Gray" BorderThickness="1">
+                                            <Image Source="{Binding FlipbookPreview}" Stretch="Uniform"/>
+                                        </Border>
+                                        <TextBlock Text="{Binding FlipbookFrameCountText}" FontSize="12"
+                                                   Foreground="Gray" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Button Content="Draw flipbook" Click="OpenFlipbookEditor_Click" Padding="12,4" FontSize="12"/>
+                                        <Button Content="Send" Command="{Binding SendFlipbookCommand}" Padding="12,4" FontSize="12"/>
+                                    </StackPanel>
+                                </StackPanel>
+                                <!-- Story composer -->
+                                <StackPanel IsVisible="{Binding IsStoryMode}" Spacing="4">
+                                    <TextBox Text="{Binding StorySetting}" Watermark="Setting (max 60)" FontSize="12"/>
+                                    <TextBox Text="{Binding StoryTheme}" Watermark="Theme (max 40)" FontSize="12"/>
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBox Grid.Column="0" Text="{Binding StoryLogText}" Watermark="Story line…" AcceptsReturn="True" Height="48" FontSize="12"/>
+                                        <Button Grid.Column="1" Content="Add" Click="AddStoryLine_Click" VerticalAlignment="Bottom" Margin="4,0,0,0" Padding="12,4"/>
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding StoryLog}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><StackPanel Spacing="2"/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}" FontSize="11" Foreground="Gray"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <Button Content="Send story" Command="{Binding SendStoryCommand}" Padding="16,4" HorizontalAlignment="Right" FontSize="12"/>
+                                </StackPanel>
+                                <!-- App share composer -->
+                                <StackPanel IsVisible="{Binding IsAppMode}" Spacing="4">
+                                    <TextBox Text="{Binding AppLabel}" Watermark="Label (max 40)" FontSize="12"/>
+                                    <WrapPanel Orientation="Horizontal">
+                                        <Button Content="Choose HTML file…" Click="ShareAppFile_Click" Padding="10,3" FontSize="11" Margin="0,0,6,0"/>
+                                        <Button Content="Paste" Click="PasteAppHtml_Click" Padding="10,3" FontSize="11"/>
+                                    </WrapPanel>
+                                    <TextBox Text="{Binding AppHtml}" Watermark="Paste your HTML here (max 512 KB)"
+                                             AcceptsReturn="True" Height="120" FontSize="12"
+                                             TextWrapping="NoWrap"/>
+                                    <TextBlock Text="{Binding AppHtmlSizeLabel}" FontSize="11" Foreground="Gray"/>
+                                    <Button Content="Send app" Command="{Binding SendAppCommand}" Padding="16,4" HorizontalAlignment="Right" FontSize="12"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                        <Button Grid.Row="0" Grid.Column="2" Content="✕" Command="{Binding CloseMediaSendCommand}" Width="28" Height="28"
+                                VerticalAlignment="Top" Margin="0,0,0,4"/>
+                    </Grid>
+                </Border>
+
                 <!-- composer -->
-                <Grid Grid.Row="3" Margin="0,8,0,0" ColumnDefinitions="3*,Auto,Auto">
+                <Grid Grid.Row="4" Margin="0,4,0,0" ColumnDefinitions="3*,Auto,Auto,Auto,Auto,Auto,Auto">
                     <TextBox Grid.Column="0" x:Name="ComposerBox" Text="{Binding NewMessageText}"
                              Watermark="Message…  (start your line with ! to mark it important)"
                              KeyDown="Composer_KeyDown"/>
-                    <Button Grid.Column="1" Margin="8,0,0,0" Content="Photo" Click="Attach_Click"/>
-                    <Button Grid.Column="2" Margin="8,0,0,0" Content="Send" Command="{Binding SendCommand}"/>
+                    <Button Grid.Column="1" Margin="4,0,0,0" Content="📷" ToolTip.Tip="Photo" Click="Attach_Click"/>
+                    <Button Grid.Column="2" Margin="4,0,0,0" Content="😊" ToolTip.Tip="Sticker" Command="{Binding ToggleStickerPanelCommand}"/>
+                    <Button Grid.Column="3" Margin="4,0,0,0" Content="📊" ToolTip.Tip="Poll" Command="{Binding TogglePollPanelCommand}"/>
+                    <Button Grid.Column="4" Margin="4,0,0,0" Content="🎞" ToolTip.Tip="Flipbook" Command="{Binding ToggleFlipbookPanelCommand}"/>
+                    <Button Grid.Column="5" Margin="4,0,0,0" Content="📖" ToolTip.Tip="Story" Command="{Binding ToggleStoryPanelCommand}"/>
+                    <Button Grid.Column="6" Margin="4,0,0,0" Content="🧩" ToolTip.Tip="App" Command="{Binding ToggleAppPanelCommand}"/>
                 </Grid>
             </Grid>
         </Grid>

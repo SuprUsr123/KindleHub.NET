@@ -1,6 +1,7 @@
 Imports System.ComponentModel
 Imports System.Runtime.CompilerServices
 Imports System.Linq
+Imports System.Collections.Generic
 Imports System.Text.RegularExpressions
 
 Public Enum UserTier
@@ -256,11 +257,195 @@ Public Class Message
         End Get
     End Property
 
-    ''' <summary>The text shown in the chat line (a "[photo]" label instead of the raw base64 blob).</summary>
+    ''' <summary>Whether the plain text line should be shown. Messages that render a
+    ''' dedicated card (app share, story, flipbook) or an image suppress it, so the
+    ''' row never shows both "[App]" and the card describing the same thing.</summary>
+    Public ReadOnly Property ShowPlainText As Boolean
+        Get
+            Return Not IsImage AndAlso ChatMedia.TryParseAppShare(Text) Is Nothing AndAlso ChatMedia.TryParseStory(Text) Is Nothing AndAlso ChatMedia.TryParseFlipbook(Text) Is Nothing
+        End Get
+    End Property
+
+    ''' <summary>The text shown in the chat line. For encoded KH_ messages this returns
+    ''' a human label ("[photo]", "[App]", "[Poll] …") instead of the raw wire blob.</summary>
     Public ReadOnly Property DisplayText As String
         Get
             If IsImage Then Return "[photo]"
+            If ChatMedia.IsEncodedMsg(Text) Then Return ChatMedia.DescribeForChat(Text)
             Return Text
+        End Get
+    End Property
+
+    ''' <summary>Parsed sticker URL for KHSTK1, or Nothing.</summary>
+    Public ReadOnly Property StickerUrl As String
+        Get
+            Return ChatMedia.TryParseSticker(Text)
+        End Get
+    End Property
+
+    ''' <summary>Parsed sticker prompt for KHSTK1, or Nothing.</summary>
+    Public ReadOnly Property StickerPrompt As String
+        Get
+            Return ChatMedia.TryParseStickerPrompt(Text)
+        End Get
+    End Property
+
+    ''' <summary>Parsed poll options (up to 4) for KHPOLL1, or Nothing.</summary>
+    Public ReadOnly Property PollOptions As String()
+        Get
+            Return ChatMedia.TryParsePollOptions(Text)
+        End Get
+    End Property
+
+    ''' <summary>True when this message is a poll with options to render.</summary>
+    Public ReadOnly Property HasPollOptions As Boolean
+        Get
+            Return PollOptions IsNot Nothing AndAlso PollOptions.Length > 0
+        End Get
+    End Property
+
+    Private _pollVoteCounts As Integer()
+    Public Property PollVoteCounts As Integer()
+        Get
+            Return _pollVoteCounts
+        End Get
+        Set(value As Integer())
+            _pollVoteCounts = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(PollVoteCounts)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(PollTotalVotes)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(PollOptionItems)))
+        End Set
+    End Property
+
+    Public ReadOnly Property PollTotalVotes As Integer
+        Get
+            If _pollVoteCounts Is Nothing Then Return 0
+            Dim sum = 0
+            For Each c In _pollVoteCounts
+                sum += c
+            Next
+            Return sum
+        End Get
+    End Property
+
+    Public ReadOnly Property PollOptionItems As Object()
+        Get
+            If PollOptions Is Nothing OrElse PollOptions.Length = 0 Then Return Array.Empty(Of Object)()
+            Dim list = New List(Of PollOptionItem)()
+            For i = 0 To PollOptions.Length - 1
+                Dim count = If(_pollVoteCounts IsNot Nothing AndAlso i < _pollVoteCounts.Length, _pollVoteCounts(i), 0)
+                list.Add(New PollOptionItem With {.Text = PollOptions(i), .Votes = count, .Index = i})
+            Next
+            Return list.ToArray()
+        End Get
+    End Property
+
+    Public Class PollOptionItem
+        Public Property Text As String
+        Public Property Votes As Integer
+        Public Property Index As Integer
+    End Class
+
+    ''' <summary>True when this message is a KHFLIP1 flipbook (as opposed to a drawing).</summary>
+    Public ReadOnly Property IsFlipbook As Boolean
+        Get
+            Return ChatMedia.TryParseFlipbook(Text) IsNot Nothing
+        End Get
+    End Property
+
+    ''' <summary>Number of frames in a flipbook message, or 0.</summary>
+    Public ReadOnly Property FlipbookFrameCount As Integer
+        Get
+            Dim fb = ChatMedia.TryParseFlipbook(Text)
+            If fb Is Nothing OrElse fb.Frames Is Nothing Then Return 0
+            Return fb.Frames.Length
+        End Get
+    End Property
+
+    ''' <summary>Author-supplied flipbook name, or Nothing.</summary>
+    Public ReadOnly Property FlipbookName As String
+        Get
+            Dim fb = ChatMedia.TryParseFlipbook(Text)
+            If fb Is Nothing Then Return Nothing
+            Return If(String.IsNullOrWhiteSpace(fb.Name), Nothing, fb.Name)
+        End Get
+    End Property
+
+    ''' <summary>True when this message is a KHSTORY1 story, so the row can offer to open it.</summary>
+    Public ReadOnly Property IsStory As Boolean
+        Get
+            Return ChatMedia.TryParseStory(Text) IsNot Nothing
+        End Get
+    End Property
+
+    ''' <summary>True when this message is a KHSTK1 sticker, so the row can draw its glyph.</summary>
+    Public ReadOnly Property IsSticker As Boolean
+        Get
+            Return ChatMedia.IsStickerMessage(Text)
+        End Get
+    End Property
+
+    ''' <summary>Parsed app identifier for KHAPP1, or Nothing.</summary>
+    Public ReadOnly Property AppId As String
+        Get
+            Return ChatMedia.TryParseAppId(Text)
+        End Get
+    End Property
+
+    ''' <summary>The full app share carried by a KHAPP1 message, or Nothing.</summary>
+    Public ReadOnly Property AppShare As ChatMedia.AppShare
+        Get
+            Return ChatMedia.TryParseAppShare(Text)
+        End Get
+    End Property
+
+    ''' <summary>True when this message is a KHAPP1 app share, so the row can offer to open it.</summary>
+    Public ReadOnly Property IsAppShare As Boolean
+        Get
+            Return ChatMedia.TryParseAppShare(Text) IsNot Nothing
+        End Get
+    End Property
+
+    ''' <summary>Inverse of <see cref="IsAppShare"/> — used to hide the plain
+    ''' "[App]" text row when the tappable card is showing instead.</summary>
+    Public ReadOnly Property NotAppShare As Boolean
+        Get
+            Return ChatMedia.TryParseAppShare(Text) Is Nothing
+        End Get
+    End Property
+
+    ''' <summary>Display name of a shared app, falling back to a generic label.</summary>
+    Public ReadOnly Property AppLabel As String
+        Get
+            Dim app = ChatMedia.TryParseAppShare(Text)
+            If app Is Nothing Then Return ""
+            Dim lbl = If(app.Label, "").Trim()
+            Return If(lbl.Length = 0, "Shared app", lbl)
+        End Get
+    End Property
+
+    ''' <summary>Size of the shared app's HTML, for the card's subtitle.</summary>
+    Public ReadOnly Property AppSizeLabel As String
+        Get
+            Dim app = ChatMedia.TryParseAppShare(Text)
+            If app Is Nothing Then Return ""
+            Dim n = If(app.Html, "").Length
+            If n <= 0 Then Return "empty"
+            Return If(n < 1024, $"{n:N0} characters", $"{n / 1024.0:0.#} KB of HTML")
+        End Get
+    End Property
+
+    ''' <summary>Parsed story label for KHSTORY1, or Nothing.</summary>
+    Public ReadOnly Property StoryLabel As String
+        Get
+            Return ChatMedia.TryParseStoryLabel(Text)
+        End Get
+    End Property
+
+    ''' <summary>Parsed vote counts/state for KHVOTE1, or Nothing.</summary>
+    Public ReadOnly Property VoteSummary As String
+        Get
+            Return ChatMedia.TryParseVoteSummary(Text)
         End Get
     End Property
 
@@ -367,6 +552,22 @@ Public Class AppCatalog
     Public ReadOnly Property TitleWithCategory As String
         Get
             Return Name & " · " & Category
+        End Get
+    End Property
+
+    ''' <summary>Icon art is stored as a data: URI (see _khIconArtValid in the
+    ''' web client), so it can go straight to an image converter.</summary>
+    Public ReadOnly Property HasIcon As Boolean
+        Get
+            Return Not String.IsNullOrWhiteSpace(IconArt) AndAlso
+                   IconArt.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase)
+        End Get
+    End Property
+
+    ''' <summary>True when there is no icon, so the initials placeholder should show.</summary>
+    Public ReadOnly Property ShowInitials As Boolean
+        Get
+            Return Not HasIcon
         End Get
     End Property
 
