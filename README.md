@@ -174,7 +174,7 @@ sudo pacman -S gtk3
 
 The client connects to: `https://kindlehub-api.arancool3000.workers.dev` (Supabase `/rest/v1/`)
 
-To use a different backend, modify `KindleHub.Core/Api/KindleHubApiClient.vb` ([Host your own build by heading to the archival of the latest and last open-source version before it became closed-sourced due to owner having Stripe integration and had no idea how to make the app open-source properly](https://github.com/SuprUsr123/KindleHub-Pro-Full-Archive)):
+To use a different backend, modify `KindleHub.Core/Api/KindleHubApiClient.vb` ([Host your own build by heading to the archival of the latest and last open-source version before it became closed-sourced due to owner having Stripe integration and had no idea how to make the app open-source properly, how peculiar and unprofessional of @arancool3000](https://github.com/SuprUsr123/KindleHub-Pro-Full-Archive)):
 ```vb
 Private Const BaseUrl As String = "https://your-api-endpoint.workers.dev/rest/v1/"
 ```

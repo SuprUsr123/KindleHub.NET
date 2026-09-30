@@ -257,12 +257,20 @@ bool ShortGuessRefused()
 // Nim
     {
         var n = new NimGame(); n.Reset();
+        // 3^4^5 = 2: a winning position for whoever moves first, so the player
+        // wins against a perfect opponent. Random starts can also be losing, in
+        // which case the opponent is supposed to win — so fix the position.
+        n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
         Ok("nim: 3 rows of 8", n.Cells.Count == 24);
         Ok("nim: a game starts with the player to move", n.StatusText.Contains("take any"));
         Ok("nim: the player is X-equivalent (first to move)", true);
 
         // Play a perfect game: always leave a position whose piles XOR to zero,
         // which is the winning strategy, and check the player actually wins.
+        // 3^4^5 = 2, so this is a winning position for whoever moves first — the
+        // player. Random starts can also be losing, in which case a perfect
+        // opponent is supposed to win, so fix the position to be sure.
+        n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
         int guard = 0;
         while (n.ResultText == null && guard++ < 60)
         {
@@ -903,7 +911,11 @@ bool FullColumnRefused()
        WordleGame.BackspaceCell >= 0 && WordleGame.BackspaceCell < w.Cells.Count);
 
     // Nim: the computer is beatable, and TakeAll clears a whole pile.
+    // 3^4^5 = 2, so this is a winning position for whoever moves first — the
+    // player. Random starts can also be losing, in which case a perfect opponent
+    // is supposed to win, so fix the position to make the expectation sure.
     var n = new NimGame(); n.Reset();
+    n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
     int guard = 0;
     while (n.ResultText == null && guard++ < 60)
     {
@@ -1050,6 +1062,10 @@ static void MoveHanoi(HanoiGame g, int n, int from, int to, int spare)
 static bool SolvesNim()
     {
         var n = new NimGame(); n.Reset();
+        // 3^4^5 = 2: a winning position for whoever moves first, so the player
+        // wins against a perfect opponent. Random starts can be losing, in which
+        // case the opponent is supposed to win — so fix the position to be sure.
+        n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
         int guard = 0;
         while (n.ResultText == null && guard++ < 60)
         {

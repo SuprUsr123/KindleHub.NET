@@ -54,6 +54,9 @@ public sealed class NimGame : GameBase
     /// <summary>Current pile sizes, exposed so the self-test can play a perfect game.</summary>
     public int[] Piles => _piles;
 
+    /// <summary>Exposed for the self-test, which needs to know whose turn it is.</summary>
+    public bool PlayerTurn => _playerTurn;
+
     public override void Reset()
     {
         for (int i = 0; i < Rows; i++) _piles[i] = Random.Shared.Next(1, Cols + 1);
