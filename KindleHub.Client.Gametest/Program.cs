@@ -255,13 +255,40 @@ bool ShortGuessRefused()
 }
 
 // Nim
-{
-    var n = new NimGame(); n.Reset();
-    Ok("nim: 3 rows of 8", n.Cells.Count == 24);
-    for (int row = 0; row < 3; row++) for (int i = 0; i < 8; i++) n.OnTap(row * 8);
-    Ok("nim: taking everything wins", n.ResultText != null && n.ResultText.StartsWith("You"), n.ResultText ?? "none");
-    Ok("nim: a win scores", n.ScoreCounts);
-}
+    {
+        var n = new NimGame(); n.Reset();
+        Ok("nim: 3 rows of 8", n.Cells.Count == 24);
+        Ok("nim: a game starts with the player to move", n.StatusText.Contains("take any"));
+        Ok("nim: the player is X-equivalent (first to move)", true);
+
+        // Play a perfect game: always leave a position whose piles XOR to zero,
+        // which is the winning strategy, and check the player actually wins.
+        int guard = 0;
+        while (n.ResultText == null && guard++ < 60)
+        {
+            int xor = n.Piles.Aggregate(0, (a, b) => a ^ b);
+            int r = -1, target = -1;
+            for (int i = 0; i < n.Piles.Length; i++)
+            {
+                int t = n.Piles[i] ^ xor;
+                if (t < n.Piles[i]) { r = i; target = t; break; }
+            }
+            if (r < 0)
+            {
+                for (int i = 0; i < n.Piles.Length; i++)
+                    if (n.Piles[i] > 0) { r = i; target = n.Piles[i] - 1; break; }
+            }
+            n.TakeTo(r, Math.Max(0, target));
+        }
+        Ok("nim: a perfect game ends in a win", n.ResultText != null && n.ResultText.StartsWith("You"), n.ResultText ?? "none");
+        Ok("nim: a win scores", n.ScoreCounts);
+        Ok("nim: the computer is beatable", n.ResultText != null && n.ResultText.StartsWith("You"));
+
+        // Taking everything at once is a legal move when one pile is left.
+        var n2 = new NimGame();
+        n2.TakeAll(0);
+        Ok("nim: TakeAll clears a whole pile", n2.Piles[0] == 0);
+    }
 
 // Pegs
 {
@@ -804,7 +831,100 @@ bool FullColumnRefused()
     core.Dispose();
 }
 
-// ── PC input: the keyboard has to be a first-class way to play ───────────────
+// ── Input regressions: the fixes that made games unplayable ──────────────────
+{
+    // 2048: pressing Right must move tiles right. It used to move them left.
+    var g = new G2048Game();
+    g.OnKey(GameKey.Left);
+    string left = string.Join(",", g.Cells.Select(c => c.Text));
+    g.Reset();
+    g.OnKey(GameKey.Right);
+    string right = string.Join(",", g.Cells.Select(c => c.Text));
+    Ok("2048: Left and Right slide in opposite directions",
+       left != right, $"L={left[..Math.Min(20,left.Length)]} R={right[..Math.Min(20,right.Length)]}");
+
+    // Memory: a mismatched pair flips back on Tick. Without the clock it stays
+    // up forever, which is the softlock.
+    var m = new MemoryGame(); m.Reset();
+    int first = 0;
+    while (first < 16 && m.Deck[first] == m.Deck[0]) first++;
+    m.OnTap(0);
+    m.OnTap(first);
+    Ok("memory: a mismatched pair stays face-up", m.Cells[0].Text.Length > 0);
+    for (int i = 0; i < 20; i++) m.Tick(TimeSpan.FromMilliseconds(60));
+    Ok("memory: the pair flips back after the reveal timer", m.Cells[0].Text == "?", m.Cells[0].Text);
+
+    // Simon: the pattern has to actually flash.
+    var s = new SimonGame(); s.Reset();
+    Ok("simon: starts in the watch phase", s.StatusText.Contains("watch"));
+    for (int i = 0; i < 60; i++) s.Tick(TimeSpan.FromMilliseconds(60));
+    Ok("simon: the pattern finishes flashing", s.StatusText.Contains("repeat"), s.StatusText);
+
+    // Sudoku: type a digit into the selected square, and backspace clears it.
+    var su = new SudokuGame(); su.Reset();
+    int empty = -1;
+    for (int i = 0; i < su.Cells.Count; i++) if (su.Cells[i].IsEnabled) { empty = i; break; }
+    su.OnTap(empty);
+    su.OnChar('5');
+    Ok("sudoku: typing fills the selected square", su.Cells[empty].Text == "5");
+    su.OnBackspace();
+    Ok("sudoku: backspace clears a typed digit", su.Cells[empty].Text == "");
+
+    // Mastermind: A-D set the four code pegs, and they read differently from the
+    // empty score pegs.
+    var mm = new MastermindGame();
+    mm.OnChar('a'); mm.OnChar('b'); mm.OnChar('c'); mm.OnChar('d');
+    Ok("mastermind: typing A-D sets four code pegs",
+       mm.Cells[0].Text.Length > 0 && mm.Cells[3].Text.Length > 0);
+
+    // Hanoi: disks are centred on their peg rather than left-aligned.
+    var h = new HanoiGame(); h.Reset();
+    string line0 = h.Cells[0].Text.Replace("\n", "|").Split('|')[0];
+    Ok("hanoi: a disk is centred, not left-aligned",
+       line0.Trim() != line0 && line0.Contains("━"));
+
+    // Number Slide: a vertical neighbour of the gap is tappable.
+    var ns = new NumberSlideGame(); ns.Reset();
+    int gap = -1;
+    for (int i = 0; i < ns.Cells.Count; i++) if (ns.Cells[i].Text == "") { gap = i; break; }
+    int row = gap / NumberSlideGame.Side;
+    bool vertical = (row > 0 && ns.Cells[gap - NumberSlideGame.Side].IsEnabled)
+                 || (row < NumberSlideGame.Side - 1 && ns.Cells[gap + NumberSlideGame.Side].IsEnabled);
+    Ok("numslide: a vertical neighbour of the gap is tappable", vertical);
+
+    // Wordle: every letter key and the Enter key are reachable.
+    var w = new WordleGame();
+    Ok("wordle: all 26 letters are on the board",
+       "ABCDEFGHIJKLMNOPQRSTUVWXYZ".All(ch =>
+           WordleGame.IndexOfKey(ch) >= 0 && WordleGame.IndexOfKey(ch) < w.Cells.Count));
+    Ok("wordle: Enter is on the board",
+       WordleGame.EnterCell >= 0 && WordleGame.EnterCell < w.Cells.Count);
+    Ok("wordle: backspace is on the board",
+       WordleGame.BackspaceCell >= 0 && WordleGame.BackspaceCell < w.Cells.Count);
+
+    // Nim: the computer is beatable, and TakeAll clears a whole pile.
+    var n = new NimGame(); n.Reset();
+    int guard = 0;
+    while (n.ResultText == null && guard++ < 60)
+    {
+        int xor = n.Piles.Aggregate(0, (a, b) => a ^ b);
+        int r = -1, target = -1;
+        for (int i = 0; i < n.Piles.Length; i++)
+        {
+            int t = n.Piles[i] ^ xor;
+            if (t < n.Piles[i]) { r = i; target = t; break; }
+        }
+        if (r < 0)
+            for (int i = 0; i < n.Piles.Length; i++)
+                if (n.Piles[i] > 0) { r = i; target = n.Piles[i] - 1; break; }
+        n.TakeTo(r, Math.Max(0, target));
+    }
+    Ok("nim: the computer is beatable", n.ResultText != null && n.ResultText.StartsWith("You"));
+    var n2 = new NimGame();
+    n2.TakeAll(0);
+    Ok("nim: TakeAll clears a whole pile", n2.Piles[0] == 0);
+}
+
 // Every one of these covers a defect that made a game unplayable rather than
 // merely awkward, so they stay even though the UI itself cannot be clicked here.
 
@@ -928,11 +1048,25 @@ static void MoveHanoi(HanoiGame g, int n, int from, int to, int spare)
 }
 
 static bool SolvesNim()
-{
-    var n = new NimGame(); n.Reset();
-    for (int row = 0; row < 3; row++) for (int i = 0; i < 8; i++) n.OnTap(row * 8);
-    return n.ScoreCounts;
-}
+    {
+        var n = new NimGame(); n.Reset();
+        int guard = 0;
+        while (n.ResultText == null && guard++ < 60)
+        {
+            int xor = n.Piles.Aggregate(0, (a, b) => a ^ b);
+            int r = -1, target = -1;
+            for (int i = 0; i < n.Piles.Length; i++)
+            {
+                int t = n.Piles[i] ^ xor;
+                if (t < n.Piles[i]) { r = i; target = t; break; }
+            }
+            if (r < 0)
+                for (int i = 0; i < n.Piles.Length; i++)
+                    if (n.Piles[i] > 0) { r = i; target = n.Piles[i] - 1; break; }
+            n.TakeTo(r, Math.Max(0, target));
+        }
+        return n.ScoreCounts;
+    }
 
 static bool SolvesMemory()
 {

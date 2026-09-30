@@ -62,16 +62,21 @@ public sealed class G2048Game : GameBase
         if (_over) return false;
         // Sliding "left" collapses each row from the left, so we walk rows left→right.
         // Sliding "up" does the same down each column, so columns walk top→bottom.
-        (int[] order, bool horizontal) = key switch
+        // Collapse always slides toward index 0, so Left/Up work directly and
+        // Right/Down need the line reversed first — that is the whole of the
+        // direction handling. The previous version reversed the *walk order*
+        // instead, which kept collapsing to the left and made pressing Right
+        // move the board left.
+        (int[] order, bool horizontal, bool towardEnd) = key switch
         {
-            GameKey.Left => (new[] { 0, 1, 2, 3 }, true),
-            GameKey.Right => (new[] { 3, 2, 1, 0 }, true),
-            GameKey.Up => (new[] { 0, 1, 2, 3 }, false),
-            GameKey.Down => (new[] { 3, 2, 1, 0 }, false),
-            _ => (Array.Empty<int>(), true),
+            GameKey.Left => (new[] { 0, 1, 2, 3 }, true, false),
+            GameKey.Right => (new[] { 0, 1, 2, 3 }, true, true),
+            GameKey.Up => (new[] { 0, 1, 2, 3 }, false, false),
+            GameKey.Down => (new[] { 0, 1, 2, 3 }, false, true),
+            _ => (Array.Empty<int>(), true, false),
         };
         if (order.Length == 0) return false;
-        if (!Move(order, horizontal)) return true;
+        if (!Move(order, horizontal, towardEnd)) return true;
 
         Redraw();
         if (_board.Cast<int>().Max() >= 2048) { _won = true; ScoreCounts = true; }
@@ -79,7 +84,7 @@ public sealed class G2048Game : GameBase
         return true;
     }
 
-    private bool Move(int[] order, bool horizontal)
+    private bool Move(int[] order, bool horizontal, bool towardEnd)
     {
         bool moved = false;
         foreach (var line in order)
@@ -88,7 +93,10 @@ public sealed class G2048Game : GameBase
             for (int k = 0; k < N; k++)
                 before[k] = horizontal ? _board[line, k] : _board[k, line];
 
+            // Collapse slides toward index 0, so Right/Down read the line backwards.
+            if (towardEnd) Array.Reverse(before);
             var (merged, gained) = Collapse(before);
+            if (towardEnd) Array.Reverse(merged);
             for (int k = 0; k < N; k++)
             {
                 if (horizontal) _board[line, k] = merged[k]; else _board[k, line] = merged[k];

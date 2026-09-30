@@ -17,6 +17,14 @@ public abstract class GameBase : IGame
     protected static readonly IBrush Cell = new SolidColorBrush(Color.Parse("#fbfbfd"));
 
     /// <summary>
+    /// An empty slot waiting for input. Brighter than <see cref="Cell"/> so a
+    /// fillable square reads as fillable — in Wordle the alternative was the same
+    /// #fbfbfd as the padding around the board, which is why the two were
+    /// indistinguishable.
+    /// </summary>
+    protected static readonly IBrush Slot = new SolidColorBrush(Color.Parse("#ffffff"));
+
+    /// <summary>
     /// A revealed/dug square. This has to be a real step away from <see cref="Cell"/>,
     /// not a few percent of lightness: Minesweeper originally reused
     /// <see cref="Board"/> here, which is only ~4% darker than an untouched square

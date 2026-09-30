@@ -48,7 +48,7 @@ public sealed class SnakeGame : GameBase
         _score = 0;
         _dead = false;
         ScoreCounts = false;
-        _step = TimeSpan.FromMilliseconds(130);
+        _step = TimeSpan.FromMilliseconds(150);
         _sinceMove = TimeSpan.Zero;
         PlaceFood();
         Redraw();

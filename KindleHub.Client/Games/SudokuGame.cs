@@ -126,13 +126,48 @@ public sealed class SudokuGame : GameBase
     // ─── input ───────────────────────────────────────────────────────────────
     private int _selected = -1;
 
-    /// <summary>Cycle the selected square through 1-9 and back to blank, no keyboard needed.</summary>
     public override bool OnTap(int index)
     {
         if (index < 0 || index >= _values.Length || _given[index] != 0) return false;
-        _selected = index;
-        _values[index] = _values[index] % 9 + 1;
-        if (_values[index] > 9) _values[index] = 0;
+        if (index == _selected)
+        {
+            // Second tap on the same square cycles the value — the touch scheme.
+            _values[index] = _values[index] % 9 + 1;
+            if (_values[index] > 9) _values[index] = 0;
+            _filled = _values.Count(v => v != 0);
+            if (Solved) ScoreCounts = true;
+        }
+        else
+        {
+            // First tap selects and leaves the value alone, so on a PC you can tap
+            // a square and then type the digit. The status line already says
+            // "tap a square, then a number" — this makes it true.
+            _selected = index;
+        }
+        Redraw();
+        return true;
+    }
+
+    /// <summary>Clears the selected square, so a mistyped digit can be undone.</summary>
+    public override bool OnBackspace()
+    {
+        if (_selected < 0 || _given[_selected] != 0) return false;
+        _values[_selected] = 0;
+        _filled = _values.Count(v => v != 0);
+        Redraw();
+        return true;
+    }
+
+    /// <summary>
+    /// Type a digit into the selected square — tap a square, then press 1-9, with
+    /// 0 clearing it. This is the PC control scheme; tapping alone cycles the
+    /// value, which is what a touch screen needs.
+    /// </summary>
+    public override bool OnChar(char c)
+    {
+        if (!char.IsDigit(c) || _selected < 0) return false;
+        if (_given[_selected] != 0) return false;
+        _values[_selected] = c - '0';
         _filled = _values.Count(v => v != 0);
         if (Solved) ScoreCounts = true;
         Redraw();
@@ -151,7 +186,7 @@ public sealed class SudokuGame : GameBase
             c.FontSize = 20;
             c.Bold = true;
             c.Foreground = given ? Ink : Accent;
-            c.Background = i == _selected ? Tiles4[1] : Cell;
+            c.Background = i == _selected ? Tiles4[1] : Slot;
         }
     }
 

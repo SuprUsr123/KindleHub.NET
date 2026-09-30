@@ -84,6 +84,30 @@ public sealed class MastermindGame : GameBase
         return true;
     }
 
+    /// <summary>
+    /// Type a code peg with A–F (1–6), same as tapping it. The code row is
+    /// otherwise indistinguishable from the score pegs — both are plain empty
+    /// squares — so on a PC you had to hunt for the four you were meant to set.
+    /// </summary>
+    public override bool OnChar(char c)
+    {
+        char up = char.ToUpperInvariant(c);
+        if (up < 'A' || up > 'F') return false;
+        int col = up - 'A';
+        if (col >= Pegs) return false;
+        _guess[col] = _guess[col] >= Colours ? 0 : _guess[col] + 1;
+        if (_guess.All(v => v > 0)) Commit();
+        else Redraw();
+        return true;
+    }
+
+    public override bool OnBackspace()
+    {
+        // Nothing to delete — Mastermind is a fixed-length code. Returning false
+        // lets the window leave the key unhandled rather than clearing a peg.
+        return false;
+    }
+
     private void Commit()
     {
         int exact = 0;
@@ -128,7 +152,7 @@ public sealed class MastermindGame : GameBase
             {
                 int v = row < liveRow ? _history[row].Pegs[col] : live ? _guess[col] : 0;
                 c.Text = v == 0 ? "" : v.ToString();
-                c.Background = v == 0 ? Cell : Tiles4[3];
+                c.Background = v == 0 ? Slot : Tiles4[3];
                 c.Foreground = Ink;
                 c.IsEnabled = live;
                 c.Bold = v != 0;

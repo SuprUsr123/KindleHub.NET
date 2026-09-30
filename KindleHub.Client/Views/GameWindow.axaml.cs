@@ -59,11 +59,16 @@ public partial class GameWindow : Window
         if (e.PropertyName == nameof(ArcadeViewModel.InGame) && _vm is { InGame: false }) Close();
     }
 
-    /// <summary>Only real-time games need a clock, so an idle window costs nothing.</summary>
-    private void StartClock()
+    /// <summary>
+/// Runs the game's Tick. Memory and Simon advance a phase machine on it (flip
+/// two mismatched cards back, flash the next pad) even though they are not
+/// real-time, so gating this on IsRealTime left Memory softlocked with its
+/// cards face-up and Simon never showing a pattern.
+/// </summary>
+private void StartClock()
     {
         StopClock();
-        if (_vm is not { InGame: true, IsRealTime: true }) return;
+        if (_vm is not { InGame: true }) return;
         _clock = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
         _clock.Tick += OnClock;
         _lastTick = Stopwatch.GetTimestamp();

@@ -101,14 +101,17 @@ public sealed class HanoiGame : GameBase
             {
                 if (row < firstDiskRow)
                 {
-                    lines[row] = "    │";
+                    // The peg itself, centred — it used to sit at column 4, which is
+                    // why every tower leaned left of where it looked like it should be.
+                    lines[row] = new string(' ', 9) + "│" + new string(' ', 9);
                     continue;
                 }
 
                 int stackIndex = stack.Count - 1 - (row - firstDiskRow);
                 int disk = stack[stackIndex];
                 int width = 3 + disk * 2;
-                lines[row] = new string('━', width);
+                int pad = (19 - width) / 2;
+                lines[row] = new string(' ', pad) + new string('━', width) + new string(' ', 19 - pad - width);
             }
             lines[Disks] = "━━━━━━━━━━━━━━━━";
             c.Text = string.Join("\n", lines);

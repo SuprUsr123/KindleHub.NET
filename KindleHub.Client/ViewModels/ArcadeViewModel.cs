@@ -594,13 +594,37 @@ public class ArcadeViewModel : ViewModelBase
     }
 
     /// <summary>Advances a real-time game. Called by the view's clock.</summary>
-    public void Tick(TimeSpan elapsed)
+public void Tick(TimeSpan elapsed)
     {
-        if (_game == null || !_isRealTime) return;
-        _game.Tick(elapsed);
-        _cells = new ObservableCollection<GameCell>(_game.Cells);
-        OnPropertyChanged(nameof(Cells));
+        if (_game == null && _connect4 == null) return;
+        // Not gated on IsRealTime: Memory and Simon advance a phase machine on
+        // Tick (flipping two cards back, flashing the next pad), and without it
+        // Memory softlocks with its mismatched cards face-up.
+        if (_game != null) _game.Tick(elapsed);
+        _cells = new ObservableCollection<GameCell>(BuildCells());
         Refresh();
+    }
+
+    private IEnumerable<GameCell> BuildCells()
+    {
+        if (_connect4 != null)
+        {
+            for (int i = 0; i < _connect4.Grid.Count; i++)
+            {
+                bool empty = _connect4.Grid[i] == C4Rules.Empty;
+                yield return new GameCell
+                {
+                    Text = empty ? "" : "●",
+                    Background = empty ? CellSurface : _connect4.Grid[i] == C4Rules.Red ? PieceRed : PieceYellow,
+                    Foreground = empty ? MutedInk : PieceInk,
+                    IsEnabled = _connect4.IsMyTurn && empty,
+                    FontSize = 26,
+                    Bold = true,
+                };
+            }
+            yield break;
+        }
+        foreach (var c in _game!.Cells) yield return c;
     }
 
     /// <summary>Posts the finished game's score to the shared leaderboard, once.</summary>

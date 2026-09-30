@@ -249,7 +249,6 @@ public sealed class WordleGame : GameBase, IWordEntry
                 if (cc < 0 || cc >= Cols) continue;   // centring padding beside the board
                 char ch = _board[r, cc];
                 var m = _marks[r, cc];
-                bool live = r == _row && ch != '\0';
                 c.Text = ch == '\0' ? "" : ch.ToString();
                 c.FontSize = 22;
                 switch (m)
@@ -258,8 +257,13 @@ public sealed class WordleGame : GameBase, IWordEntry
                     case Mark.Present: c.Background = Warn; c.Foreground = Cell; break;
                     case Mark.Absent: c.Background = Board; c.Foreground = Muted; break;
                     default:
-                        c.Background = live ? Cell : Board;
-                        c.Foreground = live ? Ink : Muted;
+                        // An empty square on the current row is the one you can type
+                        // into, so it reads as fillable. "live" alone meant "has a
+                        // letter in it", which left the row you're meant to fill
+                        // the same colour as the padding around the board.
+                        bool fillable = r == _row && !_won && _row < Rows;
+                        c.Background = fillable ? Slot : Board;
+                        c.Foreground = fillable ? Ink : Muted;
                         break;
                 }
                 continue;
@@ -277,7 +281,7 @@ public sealed class WordleGame : GameBase, IWordEntry
             var st = _keyState.TryGetValue(key, out var s) ? s : Mark.None;
             c.Background = st switch
             {
-                Mark.Correct => Good, Mark.Present => Warn, Mark.Absent => Board, _ => Cell,
+                Mark.Correct => Good, Mark.Present => Warn, Mark.Absent => Board, _ => Slot,
             };
             c.Foreground = st == Mark.None ? Ink : st == Mark.Absent ? Muted : Cell;
             c.IsEnabled = !_won && _row < Rows;
