@@ -18,6 +18,7 @@ public sealed class SnakeGame : GameBase
     private TimeSpan _step;
     private int _score;
     private bool _dead;
+    private bool _won;
 
     public SnakeGame()
     {
@@ -27,11 +28,12 @@ public sealed class SnakeGame : GameBase
 
     public override string Slug => "snake";
     public override string Name => "Snake";
-    public override bool UsesArrowKeys => true;
     public override int Columns => Size;
     public override IReadOnlyList<GameCell> Cells => _cells;
     public override bool IsRealTime => true;
-    public override string? ResultText => _dead ? $"Game over — {Score} points." : null;
+    public override string? ResultText => _won
+        ? $"Board filled — {Score} points."
+        : _dead ? $"Game over — {Score} points." : null;
 
     public override int Score => _score;
 
@@ -47,34 +49,40 @@ public sealed class SnakeGame : GameBase
         _queue.Clear();
         _score = 0;
         _dead = false;
+        _won = false;
         ScoreCounts = false;
-        _step = TimeSpan.FromMilliseconds(150);
+        _step = TimeSpan.FromMilliseconds(130);
         _sinceMove = TimeSpan.Zero;
         PlaceFood();
         Redraw();
     }
 
-    private void PlaceFood()
+    private bool PlaceFood()
     {
         var free = new List<(int x, int y)>();
         for (int y = 0; y < Size; y++)
             for (int x = 0; x < Size; x++)
                 if (!_snake.Contains((x, y))) free.Add((x, y));
-        _food = free.Count == 0 ? (0, 0) : free[Random.Shared.Next(free.Count)];
+        if (free.Count == 0) return false;
+        _food = free[Random.Shared.Next(free.Count)];
+        return true;
     }
 
-    public override void Tick(TimeSpan elapsed)
+    public override bool Tick(TimeSpan elapsed)
     {
-        if (_dead) return;
+        if (_dead || _won) return false;
         _sinceMove += elapsed;
         // Catch up at most a few steps so a slow frame can't teleport the snake.
         int guard = 0;
+        bool changed = false;
         while (_sinceMove >= _step && guard++ < 4)
         {
             _sinceMove -= _step;
             Step();
-            if (_dead) return;
+            changed = true;
+            if (_dead || _won) return true;
         }
+        return changed;
     }
 
     private void Step()
@@ -101,7 +109,13 @@ public sealed class SnakeGame : GameBase
             // Speed up gradually, same shape the web game uses.
             var ms = Math.Max(65, 130 - _score / 5);
             _step = TimeSpan.FromMilliseconds(ms);
-            PlaceFood();
+            if (!PlaceFood())
+            {
+                _won = true;
+                ScoreCounts = true;
+                Redraw();
+                return;
+            }
         }
         else
         {
@@ -112,7 +126,7 @@ public sealed class SnakeGame : GameBase
 
     public override bool OnKey(GameKey key)
     {
-        if (_dead) return false;
+        if (_dead || _won) return false;
         var (dx, dy) = key switch
         {
             GameKey.Up => (0, -1),
@@ -123,17 +137,19 @@ public sealed class SnakeGame : GameBase
         };
         if ((dx, dy) == (0, 0)) return false;
 
-        // Reject a reversal outright, and coalesce a double-press in one frame.
+        // Nokia-style turns are buffered one at a time and applied on the next
+        // grid step; this avoids two queued turns making the snake feel twitchy.
         (int dx, int dy) last = _queue.Count > 0 ? _queue[^1] : _dir;
         if ((dx, dy) == (-last.dx, -last.dy)) return true;
         if ((dx, dy) == last) return true;
-        if (_queue.Count < 2) _queue.Add((dx, dy));
+        if (_queue.Count == 0) _queue.Add((dx, dy));
         return true;
     }
 
     public override bool OnTap(int index)
     {
         // Tapping the board steers toward that cell — handy on a touch screen.
+        if (_dead || _won || index < 0 || index >= _cells.Count) return false;
         var (hx, hy) = _snake[0];
         int cx = index % Size, cy = index / Size;
         int vx = cx - hx, vy = cy - hy;
@@ -144,10 +160,23 @@ public sealed class SnakeGame : GameBase
 
     public override void Redraw()
     {
-        for (int i = 0; i < _cells.Count; i++) _cells[i] = Blank();
-        var food = _food.y * Size + _food.x;
-        _cells[food].Background = Bad;
-        _cells[food].IsEnabled = false;
+        for (int i = 0; i < _cells.Count; i++)
+        {
+            var c = _cells[i];
+            c.Text = "";
+            c.Background = Board;
+            c.Foreground = Ink;
+            c.IsEnabled = !_dead && !_won;
+            c.FontSize = 16;
+            c.Bold = false;
+        }
+
+        if (!_won)
+        {
+            var food = _food.y * Size + _food.x;
+            _cells[food].Background = Bad;
+        }
+
         for (int i = 0; i < _snake.Count; i++)
         {
             var (x, y) = _snake[i];

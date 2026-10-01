@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Avalonia.Controls;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using KindleHub.Client.ViewModels;
@@ -27,20 +29,40 @@ public partial class AppStoreView : UserControl
     private async void ChooseHtml_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not AppStoreViewModel vm) return;
-        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
-        if (storage is null) return;
-        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+        string? path;
+        if (OperatingSystem.IsLinux() && LinuxFilePicker.IsAvailable)
         {
-            Title = "Choose the app's HTML file",
-            AllowMultiple = false,
-            FileTypeFilter = new[]
+            path = await LinuxFilePicker.OpenAsync("Choose the app's HTML file", "HTML files", "*.html", "*.htm");
+            if (path is null) return;
+        }
+        else
+        {
+            var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+            if (storage is null) return;
+            IReadOnlyList<IStorageFile> files;
+            try
             {
-                new FilePickerFileType("HTML file") { Patterns = new[] { "*.html", "*.htm" } },
-                new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Choose the app's HTML file",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("HTML file") { Patterns = new[] { "*.html", "*.htm" } },
+                        new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                    }
+                });
             }
-        });
-        if (files.Count == 0) return;
-        var path = files[0].Path.LocalPath;
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[KindleHub Debug] Open HTML picker failed: {ex}");
+                vm.StatusText = "Couldn't open the file picker. Install kdialog, zenity, or yad.";
+                return;
+            }
+            if (files.Count == 0) return;
+            path = files[0].Path.LocalPath;
+        }
+
         try
         {
             var bytes = await File.ReadAllBytesAsync(path);
@@ -64,7 +86,7 @@ public partial class AppStoreView : UserControl
         if (clipboard is null) { vm.StatusText = "Couldn't reach the clipboard."; return; }
         try
         {
-            var text = await clipboard.GetTextAsync();
+            var text = await clipboard.TryGetTextAsync();
             if (string.IsNullOrWhiteSpace(text)) { vm.StatusText = "The clipboard doesn't contain any text."; return; }
             vm.NotifyHtmlChanged();
             await vm.SetPublishHtmlTextAsync(text);

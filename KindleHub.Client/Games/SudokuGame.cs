@@ -33,9 +33,56 @@ public sealed class SudokuGame : GameBase
     public override string? ResultText => Solved ? "Solved — every row, column and box has 1-9." : null;
     public override string StatusText => Solved
         ? "Solved."
-        : $"{_filled}/{Side * Side} filled · tap a square, then a number";
+        : $"{_filled}/{Side * Side} filled · tap an empty square to cycle 1–9, then blank";
 
-    private bool Solved => Enumerable.Range(0, Side * Side).All(i => _values[i] != 0);
+    private bool Solved
+    {
+        get
+        {
+            var grid = new int[Side * Side];
+            for (int i = 0; i < grid.Length; i++)
+                grid[i] = _given[i] != 0 ? _given[i] : _values[i];
+
+            if (grid.Any(v => v == 0)) return false;
+
+            for (int row = 0; row < Side; row++)
+            {
+                var seen = new bool[Side + 1];
+                for (int col = 0; col < Side; col++)
+                {
+                    int v = grid[row * Side + col];
+                    if (v < 1 || v > Side || seen[v]) return false;
+                    seen[v] = true;
+                }
+            }
+
+            for (int col = 0; col < Side; col++)
+            {
+                var seen = new bool[Side + 1];
+                for (int row = 0; row < Side; row++)
+                {
+                    int v = grid[row * Side + col];
+                    if (v < 1 || v > Side || seen[v]) return false;
+                    seen[v] = true;
+                }
+            }
+
+            for (int br = 0; br < Side; br += 3)
+                for (int bc = 0; bc < Side; bc += 3)
+                {
+                    var seen = new bool[Side + 1];
+                    for (int y = 0; y < 3; y++)
+                        for (int x = 0; x < 3; x++)
+                        {
+                            int v = grid[(br + y) * Side + bc + x];
+                            if (v < 1 || v > Side || seen[v]) return false;
+                            seen[v] = true;
+                        }
+                }
+
+            return true;
+        }
+    }
 
     public override void Reset()
     {
@@ -56,7 +103,7 @@ public sealed class SudokuGame : GameBase
 
         Array.Copy(puzzle, _given, Side * Side);
         Array.Clear(_values, 0, _values.Length);
-        _filled = puzzle.Count(v => v != 0);
+        _filled = _given.Count(v => v != 0);
         ScoreCounts = false;
         Redraw();
     }
@@ -126,49 +173,13 @@ public sealed class SudokuGame : GameBase
     // ─── input ───────────────────────────────────────────────────────────────
     private int _selected = -1;
 
+    /// <summary>Cycle the selected square through 1-9 and back to blank, no keyboard needed.</summary>
     public override bool OnTap(int index)
     {
         if (index < 0 || index >= _values.Length || _given[index] != 0) return false;
-        if (index == _selected)
-        {
-            // Second tap on the same square cycles the value — the touch scheme.
-            _values[index] = _values[index] % 9 + 1;
-            if (_values[index] > 9) _values[index] = 0;
-            _filled = _values.Count(v => v != 0);
-            if (Solved) ScoreCounts = true;
-        }
-        else
-        {
-            // First tap selects and leaves the value alone, so on a PC you can tap
-            // a square and then type the digit. The status line already says
-            // "tap a square, then a number" — this makes it true.
-            _selected = index;
-        }
-        Redraw();
-        return true;
-    }
-
-    /// <summary>Clears the selected square, so a mistyped digit can be undone.</summary>
-    public override bool OnBackspace()
-    {
-        if (_selected < 0 || _given[_selected] != 0) return false;
-        _values[_selected] = 0;
-        _filled = _values.Count(v => v != 0);
-        Redraw();
-        return true;
-    }
-
-    /// <summary>
-    /// Type a digit into the selected square — tap a square, then press 1-9, with
-    /// 0 clearing it. This is the PC control scheme; tapping alone cycles the
-    /// value, which is what a touch screen needs.
-    /// </summary>
-    public override bool OnChar(char c)
-    {
-        if (!char.IsDigit(c) || _selected < 0) return false;
-        if (_given[_selected] != 0) return false;
-        _values[_selected] = c - '0';
-        _filled = _values.Count(v => v != 0);
+        _selected = index;
+        _values[index] = (_values[index] + 1) % 10;
+        _filled = _given.Count(v => v != 0) + _values.Count(v => v != 0);
         if (Solved) ScoreCounts = true;
         Redraw();
         return true;
@@ -186,7 +197,14 @@ public sealed class SudokuGame : GameBase
             c.FontSize = 20;
             c.Bold = true;
             c.Foreground = given ? Ink : Accent;
-            c.Background = i == _selected ? Tiles4[1] : Slot;
+            c.Background = i == _selected ? Tiles4[1] : Cell;
+            int row = i / Side, col = i % Side;
+            c.BorderBrush = Board;
+            c.BorderThickness = new Avalonia.Thickness(
+                col % 3 == 0 ? 2 : 0.5,
+                row % 3 == 0 ? 2 : 0.5,
+                col == Side - 1 ? 2 : 0,
+                row == Side - 1 ? 2 : 0);
         }
     }
 

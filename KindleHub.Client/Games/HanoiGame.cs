@@ -18,6 +18,7 @@ public sealed class HanoiGame : GameBase
     private readonly List<GameCell> _cells = new();
     private readonly List<int>[] _pegs = { new(), new(), new() };
     private int _lifted = -1;
+    private int _liftedFrom = -1;
     private int _moves;
 
     public HanoiGame()
@@ -51,6 +52,7 @@ public sealed class HanoiGame : GameBase
         // Largest at the bottom of peg 0.
         for (int d = Disks; d >= 1; d--) _pegs[0].Add(d);
         _lifted = -1;
+        _liftedFrom = -1;
         _moves = 0;
         ScoreCounts = false;
         Redraw();
@@ -64,7 +66,18 @@ public sealed class HanoiGame : GameBase
         {
             if (_pegs[index].Count == 0) return true;
             _lifted = _pegs[index][^1];
+            _liftedFrom = index;
             _pegs[index].RemoveAt(_pegs[index].Count - 1);
+            Redraw();
+            return true;
+        }
+
+        // Tapping the same peg simply puts the held disk back. It is not a move.
+        if (index == _liftedFrom)
+        {
+            _pegs[index].Add(_lifted);
+            _lifted = -1;
+            _liftedFrom = -1;
             Redraw();
             return true;
         }
@@ -73,6 +86,7 @@ public sealed class HanoiGame : GameBase
         if (_pegs[index].Count > 0 && _pegs[index][^1] < _lifted) return true;
         _pegs[index].Add(_lifted);
         _lifted = -1;
+        _liftedFrom = -1;
         _moves++;
         if (Solved) ScoreCounts = true;
         Redraw();
@@ -101,17 +115,14 @@ public sealed class HanoiGame : GameBase
             {
                 if (row < firstDiskRow)
                 {
-                    // The peg itself, centred — it used to sit at column 4, which is
-                    // why every tower leaned left of where it looked like it should be.
-                    lines[row] = new string(' ', 9) + "│" + new string(' ', 9);
+                    lines[row] = "    │";
                     continue;
                 }
 
                 int stackIndex = stack.Count - 1 - (row - firstDiskRow);
                 int disk = stack[stackIndex];
                 int width = 3 + disk * 2;
-                int pad = (19 - width) / 2;
-                lines[row] = new string(' ', pad) + new string('━', width) + new string(' ', 19 - pad - width);
+                lines[row] = new string('━', width);
             }
             lines[Disks] = "━━━━━━━━━━━━━━━━";
             c.Text = string.Join("\n", lines);

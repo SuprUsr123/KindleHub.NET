@@ -119,11 +119,6 @@ public sealed class NumberSlideGame : GameBase
 
     public override void Redraw()
     {
-        // Which squares can move: the edge-adjacent neighbours of the gap. This
-        // used to be _gap ± 1 only, which is just the horizontal ones — so you
-        // could never slide a tile up or down, which is the whole point of a
-        // sliding puzzle. Computing it once per frame instead of per cell.
-        var movable = new HashSet<int>(Neighbours(_gap));
         for (int i = 0; i < _cells.Count; i++)
         {
             var c = _cells[i];
@@ -132,7 +127,7 @@ public sealed class NumberSlideGame : GameBase
             c.Text = gap ? "" : v.ToString();
             c.Background = gap ? Board : Tiles4[Math.Clamp((int)Math.Log2(v) - 1, 0, Tiles4.Length - 1)];
             c.Foreground = gap ? Muted : v >= 64 ? Cell : Ink;
-            c.IsEnabled = !gap && movable.Contains(i);
+            c.IsEnabled = !gap && Neighbours(_gap).Contains(i);
             c.FontSize = 24;
             c.Bold = true;
         }

@@ -21,7 +21,7 @@
             <Button Content="Host online" Command="{Binding HostCommand}"/>
             <Button Content="Play the computer" Command="{Binding NewLocalGameCommand}"/>
             <Button Content="Refresh lobby" Command="{Binding RefreshCommand}"/>
-            <TextBox Text="{Binding JoinRoomShort}" Width="140" Watermark="6-digit room code"
+            <TextBox Text="{Binding JoinRoomShort}" Width="140" PlaceholderText="6-digit room code"
                      VerticalAlignment="Center"/>
             <Button Content="Join" Command="{Binding JoinCommand}" VerticalAlignment="Center"/>
         </StackPanel>
@@ -65,10 +65,12 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Button Click="Cell_Click" Padding="0" Margin="4"
+                                    BorderBrush="{DynamicResource ControlBorderBrush}"
+                                    BorderThickness="2" CornerRadius="8"
                                     Background="{Binding WinBrush}"
                                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-                                <Border Width="104" Height="104"
-                                        Background="{DynamicResource ControlFillColorDefault}">
+                                <Border Width="104" Height="104" CornerRadius="6"
+                                        Background="{DynamicResource ControlFillColorSecondary}">
                                     <TextBlock Text="{Binding Display}" FontSize="60" FontWeight="Bold"
                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Border>

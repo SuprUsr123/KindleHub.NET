@@ -30,6 +30,7 @@ public sealed class MemoryGame : GameBase
     public override string Slug => "memory";
     public override string Name => "Memory";
     public override int Columns => Side;
+    public override bool NeedsTicks => true;
     public override IReadOnlyList<GameCell> Cells => _cells;
     public override int Score => _moves;
     public override string? ResultText => _matched == Pairs ? $"Board cleared in {_moves} moves." : null;
@@ -65,14 +66,15 @@ public sealed class MemoryGame : GameBase
         Redraw();
     }
 
-    public override void Tick(TimeSpan elapsed)
+    public override bool Tick(TimeSpan elapsed)
     {
-        if (_pendingA < 0) return;
+        if (_pendingA < 0) return false;
         _pendingFor -= elapsed;
-        if (_pendingFor > TimeSpan.Zero) return;
+        if (_pendingFor > TimeSpan.Zero) return false;
         _up[_pendingA] = _up[_pendingB] = false;
         _pendingA = _pendingB = -1;
         Redraw();
+        return true;
     }
 
     public override bool OnTap(int index)

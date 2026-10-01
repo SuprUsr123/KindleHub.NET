@@ -35,6 +35,7 @@ public sealed class PegsGame : GameBase
     private readonly Dictionary<(int, int), int> _index = new();
     private readonly bool[] _occupied = new bool[Holes.Length];
     private int _moves;
+    private bool _stuck;
 
     public PegsGame()
     {
@@ -51,17 +52,27 @@ public sealed class PegsGame : GameBase
     public override int Columns => Side;
     public override IReadOnlyList<GameCell> Cells => _cells;
 
-    public override string? ResultText => PegsLeft switch
+    public override string? ResultText
     {
-        1 => $"One peg left — a perfect game in {_moves} jumps.",
-        0 => $"Cleared the board in {_moves} jumps.",
-        _ => null,
-    };
+        get
+        {
+            if (PegsLeft == 1)
+            {
+                int last = Array.FindIndex(_occupied, o => o);
+                return last == _index[Start]
+                    ? $"One peg left in the centre — a perfect game in {_moves} jumps."
+                    : $"One peg left — {_moves} jumps.";
+            }
+            if (PegsLeft == 0) return $"Cleared the board in {_moves} jumps.";
+            return _stuck ? $"No legal moves left — {PegsLeft} pegs remain." : null;
+        }
+    }
 
     public override string StatusText
     {
         get
         {
+            if (_stuck) return $"No legal jumps remain · {_moves} jumps";
             if (_selected is null) return $"{PegsLeft} pegs left · {_moves} jumps · tap a peg";
             return $"{PegsLeft} pegs left · tap a highlighted hole to jump into";
         }
@@ -77,6 +88,7 @@ public sealed class PegsGame : GameBase
         _occupied[_index[Start]] = false;
         _selected = null;
         _moves = 0;
+        _stuck = false;
         ScoreCounts = false;
         Redraw();
     }
@@ -97,7 +109,7 @@ public sealed class PegsGame : GameBase
 
     public override bool OnTap(int index)
     {
-        if (index < 0 || index >= _cells.Count) return false;
+        if (_stuck || PegsLeft <= 1 || index < 0 || index >= _cells.Count) return false;
         var at = (X: index % Side, Y: index / Side);
         if (!_index.ContainsKey(at)) return false;   // not a hole — ignore
 
@@ -119,10 +131,19 @@ public sealed class PegsGame : GameBase
             _occupied[i] = true;
             _moves++;
             if (PegsLeft <= 1) ScoreCounts = true;
+            else if (!HasAnyLegalMove()) _stuck = true;
         }
         _selected = null;   // either way the selection is spent
         Redraw();
         return true;
+    }
+
+
+    private bool HasAnyLegalMove()
+    {
+        for (int i = 0; i < Holes.Length; i++)
+            if (_occupied[i] && JumpsFrom(Holes[i]).Any()) return true;
+        return false;
     }
 
     public override void Redraw()
@@ -147,7 +168,7 @@ public sealed class PegsGame : GameBase
             c.Text = peg ? "●" : isTarget ? "○" : "";
             c.Foreground = peg ? Ink : isTarget ? Accent : Muted;
             c.Background = isSel ? Tiles4[2] : Board;
-            c.IsEnabled = peg || isTarget;
+            c.IsEnabled = !_stuck && (peg || isTarget);
             c.FontSize = 22;
             c.Bold = false;
         }

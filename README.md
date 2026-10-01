@@ -16,7 +16,7 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 
 ## Prerequisites
 
-- **.NET 8.0 SDK** or later ([download](https://dotnet.microsoft.com/download))
+- **.NET 9.0.300 SDK** or later ([download](https://dotnet.microsoft.com/download)). The app still targets .NET 8; the newer SDK is required by Avalonia 12's XAML compiler.
 - **Git** (for cloning)
 
 ### Platform-specific notes
@@ -24,7 +24,7 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 | Platform | Notes |
 |----------|-------|
 | **Windows** | Use PowerShell script (`build.ps1`). Requires Windows 10/11 x64 or ARM64. |
-| **Linux** | Use bash script (`build.sh`). Tested on Ubuntu 22.04+, Debian 12+, Fedora 38+. Requires GTK3 libraries. |
+| **Linux** | Use bash script (`build.sh`). Supports X11 and native Wayland sessions. Tested on Ubuntu 22.04+, Debian 12+, Fedora 38+. |
 | **macOS** | Use bash script (`build.sh`). Requires macOS 12+ (Monterey). Works on Intel and Apple Silicon. |
 
 ## Quick Start
@@ -174,7 +174,7 @@ sudo pacman -S gtk3
 
 The client connects to: `https://kindlehub-api.arancool3000.workers.dev` (Supabase `/rest/v1/`)
 
-To use a different backend, modify `KindleHub.Core/Api/KindleHubApiClient.vb` ([Host your own build by heading to the archival of the latest and last open-source version before it became closed-sourced due to owner having Stripe integration and had no idea how to make the app open-source properly, how peculiar and unprofessional of @arancool3000](https://github.com/SuprUsr123/KindleHub-Pro-Full-Archive)):
+To use a different backend, modify `KindleHub.Core/Api/KindleHubApiClient.vb`:
 ```vb
 Private Const BaseUrl As String = "https://your-api-endpoint.workers.dev/rest/v1/"
 ```

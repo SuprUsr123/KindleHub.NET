@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -263,21 +265,40 @@ public partial class MessagesView : UserControl
     private async void Attach_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not MessagesViewModel vm) return;
-        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
-        if (storage is null) return;
-        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+        string? path;
+        if (OperatingSystem.IsLinux() && LinuxFilePicker.IsAvailable)
         {
-            Title = "Attach a photo",
-            AllowMultiple = false,
-            FileTypeFilter = new[]
+            path = await LinuxFilePicker.OpenAsync("Attach a photo", "Images", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp");
+            if (path is null) return;
+        }
+        else
+        {
+            var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+            if (storage is null) return;
+            IReadOnlyList<IStorageFile> files;
+            try
             {
-                new FilePickerFileType("Images") { Patterns = new[] { "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp" } }
+                files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Attach a photo",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("Images") { Patterns = new[] { "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp" } }
+                    }
+                });
             }
-        });
-        if (files.Count == 0) return;
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[KindleHub Debug] Open image picker failed: {ex}");
+                vm.StatusText = "Couldn't open the file picker.";
+                return;
+            }
+            if (files.Count == 0) return;
+            path = files[0].Path.LocalPath;
+        }
         try
         {
-            var path = files[0].Path.LocalPath;
             var bytes = await System.IO.File.ReadAllBytesAsync(path);
             await vm.SendImageDataAsync(path, bytes);
         }
@@ -293,7 +314,7 @@ public partial class MessagesView : UserControl
         if (clipboard is null) { vm.StatusText = "Couldn't reach the clipboard."; return; }
         try
         {
-            var text = await clipboard.GetTextAsync();
+            var text = await clipboard.TryGetTextAsync();
             if (string.IsNullOrWhiteSpace(text)) { vm.StatusText = "The clipboard doesn't contain any text."; return; }
             vm.SetAppHtmlText(text);
         }
@@ -309,22 +330,41 @@ public partial class MessagesView : UserControl
     private async void ShareAppFile_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not MessagesViewModel vm) return;
-        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
-        if (storage is null) return;
-        var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+        string? path;
+        if (OperatingSystem.IsLinux() && LinuxFilePicker.IsAvailable)
         {
-            Title = "Choose an app's HTML file",
-            AllowMultiple = false,
-            FileTypeFilter = new[]
+            path = await LinuxFilePicker.OpenAsync("Choose an app's HTML file", "HTML files", "*.html", "*.htm");
+            if (path is null) return;
+        }
+        else
+        {
+            var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+            if (storage is null) return;
+            IReadOnlyList<IStorageFile> files;
+            try
             {
-                new FilePickerFileType("HTML file") { Patterns = new[] { "*.html", "*.htm" } },
-                new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Choose an app's HTML file",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("HTML file") { Patterns = new[] { "*.html", "*.htm" } },
+                        new FilePickerFileType("All files") { Patterns = new[] { "*" } }
+                    }
+                });
             }
-        });
-        if (files.Count == 0) return;
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[KindleHub Debug] Open app-share picker failed: {ex}");
+                vm.StatusText = "Couldn't open the file picker.";
+                return;
+            }
+            if (files.Count == 0) return;
+            path = files[0].Path.LocalPath;
+        }
         try
         {
-            var path = files[0].Path.LocalPath;
             var bytes = await System.IO.File.ReadAllBytesAsync(path);
             await vm.LoadAppHtmlFileAsync(path, bytes);
         }

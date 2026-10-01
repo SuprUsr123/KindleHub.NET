@@ -23,7 +23,6 @@ public sealed class G2048Game : GameBase
 
     public override string Slug => "g2048";
     public override string Name => "2048";
-    public override bool UsesArrowKeys => true;
     public override int Columns => N;
     public override IReadOnlyList<GameCell> Cells => _cells;
     public override int Score => _score;
@@ -60,23 +59,19 @@ public sealed class G2048Game : GameBase
     public override bool OnKey(GameKey key)
     {
         if (_over) return false;
-        // Sliding "left" collapses each row from the left, so we walk rows left→right.
-        // Sliding "up" does the same down each column, so columns walk top→bottom.
-        // Collapse always slides toward index 0, so Left/Up work directly and
-        // Right/Down need the line reversed first — that is the whole of the
-        // direction handling. The previous version reversed the *walk order*
-        // instead, which kept collapsing to the left and made pressing Right
-        // move the board left.
-        (int[] order, bool horizontal, bool towardEnd) = key switch
+
+        bool horizontal;
+        bool reverse;
+        switch (key)
         {
-            GameKey.Left => (new[] { 0, 1, 2, 3 }, true, false),
-            GameKey.Right => (new[] { 0, 1, 2, 3 }, true, true),
-            GameKey.Up => (new[] { 0, 1, 2, 3 }, false, false),
-            GameKey.Down => (new[] { 0, 1, 2, 3 }, false, true),
-            _ => (Array.Empty<int>(), true, false),
-        };
-        if (order.Length == 0) return false;
-        if (!Move(order, horizontal, towardEnd)) return true;
+            case GameKey.Left:  horizontal = true;  reverse = false; break;
+            case GameKey.Right: horizontal = true;  reverse = true;  break;
+            case GameKey.Up:    horizontal = false; reverse = false; break;
+            case GameKey.Down:  horizontal = false; reverse = true;  break;
+            default: return false;
+        }
+
+        if (!Move(horizontal, reverse)) return true;
 
         Redraw();
         if (_board.Cast<int>().Max() >= 2048) { _won = true; ScoreCounts = true; }
@@ -84,63 +79,73 @@ public sealed class G2048Game : GameBase
         return true;
     }
 
-    private bool Move(int[] order, bool horizontal, bool towardEnd)
+    // 2048 is controlled with directional keys; tapping an individual tile has
+    // no game action, but GameBase requires every game to define tap behavior.
+    public override bool OnTap(int index) => false;
+
+    private bool Move(bool horizontal, bool reverse)
     {
         bool moved = false;
-        foreach (var line in order)
+        for (int line = 0; line < N; line++)
         {
             var before = new int[N];
             for (int k = 0; k < N; k++)
-                before[k] = horizontal ? _board[line, k] : _board[k, line];
+                before[k] = horizontal ? _board[k, line] : _board[line, k];
 
-            // Collapse slides toward index 0, so Right/Down read the line backwards.
-            if (towardEnd) Array.Reverse(before);
+            if (reverse) Array.Reverse(before);
             var (merged, gained) = Collapse(before);
-            if (towardEnd) Array.Reverse(merged);
+            if (reverse) Array.Reverse(merged);
+
             for (int k = 0; k < N; k++)
             {
-                if (horizontal) _board[line, k] = merged[k]; else _board[k, line] = merged[k];
+                if (horizontal) _board[k, line] = merged[k];
+                else _board[line, k] = merged[k];
                 if (before[k] != merged[k]) moved = true;
             }
             _score += gained;
         }
+
         if (moved) Spawn();
         return moved;
     }
 
     private static (int[] merged, int gained) Collapse(int[] line)
     {
-        var vals = line.Where(v => v != 0).ToList();
-        var outv = new List<int>();
+        var values = line.Where(value => value != 0).ToList();
+        var result = new List<int>();
         int gained = 0;
-        for (int i = 0; i < vals.Count; i++)
+
+        for (int i = 0; i < values.Count; i++)
         {
-            if (i + 1 < vals.Count && vals[i] == vals[i + 1])
+            if (i + 1 < values.Count && values[i] == values[i + 1])
             {
-                outv.Add(vals[i] * 2);
-                gained += vals[i] * 2;
+                int merged = values[i] * 2;
+                result.Add(merged);
+                gained += merged;
                 i++;
             }
-            else outv.Add(vals[i]);
+            else
+            {
+                result.Add(values[i]);
+            }
         }
-        while (outv.Count < line.Length) outv.Add(0);
-        return (outv.ToArray(), gained);
+
+        while (result.Count < line.Length) result.Add(0);
+        return (result.ToArray(), gained);
     }
 
     private bool HasMoves()
     {
         for (int x = 0; x < N; x++)
-            for (int y = 0; y < N; y++)
-            {
-                if (_board[x, y] == 0) return true;
-                if (x + 1 < N && _board[x, y] == _board[x + 1, y]) return true;
-                if (y + 1 < N && _board[x, y] == _board[x, y + 1]) return true;
-            }
+        for (int y = 0; y < N; y++)
+        {
+            if (_board[x, y] == 0) return true;
+            if (x + 1 < N && _board[x, y] == _board[x + 1, y]) return true;
+            if (y + 1 < N && _board[x, y] == _board[x, y + 1]) return true;
+        }
+
         return false;
     }
-
-    /// <summary>2048 is played entirely from the arrow keys, so the board isn't tappable.</summary>
-    public override bool OnTap(int index) => false;
 
     public override void Redraw()    {
         for (int y = 0; y < N; y++)

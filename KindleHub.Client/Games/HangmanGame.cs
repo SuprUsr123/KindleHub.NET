@@ -45,8 +45,8 @@ public sealed class HangmanGame : GameBase
         Reset();
     }
 
-    /// <summary>First alphabet cell, past the word row and its gutter.</summary>
-    public static int AlphabetOffset => 2 * AlphabetCols;
+    /// <summary>First alphabet cell, after the word row and four drawing rows.</summary>
+    public static int AlphabetOffset => 5 * AlphabetCols;
 
     public override string Slug => "hangman";
     public override string Name => "Hangman";
@@ -68,7 +68,7 @@ public sealed class HangmanGame : GameBase
         {
             if (_won) return "Solved. New game deals a new word.";
             if (_lost) return "Out of lives. New game deals a new word.";
-            return $"{_lives} lives · {_revealed}/{WordLength} letters found · tap a letter";
+            return $"{_lives} lives · {_revealed}/{WordLength} letters found · type A–Z or tap a letter";
         }
     }
 
@@ -84,31 +84,27 @@ public sealed class HangmanGame : GameBase
         Redraw();
     }
 
+    public override bool OnLetter(char letter)
+    {
+        letter = char.ToUpperInvariant(letter);
+        if (letter < 'A' || letter > 'Z') return false;
+        return GuessLetter(letter - 'A');
+    }
+
     public override bool OnTap(int index)
     {
-        // Cells are laid out as [word row][gutter][alphabet], so the cell index has
-        // to be shifted down to a letter — otherwise the word row is read as A–Z.
+        // Cells are laid out as [word row][gutter][alphabet].
         int letter = index - AlphabetOffset;
         if (letter < 0 || letter >= 26) return false;
-        return Guess(letter);
+        return GuessLetter(letter);
     }
 
-    /// <summary>
-    /// Guesses a letter from the physical keyboard, so the on-screen alphabet is
-    /// a fallback rather than the only way to play.
-    /// </summary>
-    public override bool OnChar(char c)
-    {
-        char up = char.ToUpperInvariant(c);
-        return char.IsAsciiLetterUpper(up) && Guess(up - 'A');
-    }
-
-    private bool Guess(int letter)
+    private bool GuessLetter(int letter)
     {
         if (_won || _lost || letter < 0 || letter >= 26) return false;
         if (_used[letter]) return true;
-        _used[letter] = true;
 
+        _used[letter] = true;
         bool hit = false;
         for (int i = 0; i < WordLength; i++)
         {
@@ -144,7 +140,7 @@ public sealed class HangmanGame : GameBase
         {
             var c = _cells[start + i];
             bool shown = _slots[i] != '\0';
-            c.Text = shown ? _slots[i].ToString() : "";
+            c.Text = shown ? _slots[i].ToString() : "＿";
             c.Background = Cell;
             c.Foreground = shown ? Ink : Muted;
             c.FontSize = 26;
@@ -156,7 +152,26 @@ public sealed class HangmanGame : GameBase
             if (_won || _lost) _cells[start + i].Text = _word[i].ToString();
         }
 
-        // Row 2: the alphabet.
+        // Four clear drawing rows give the game a visual progress cue while
+        // leaving two generous rows for the clickable alphabet.
+        DrawArt(1, 4, "┌", Muted);
+        for (int col = 5; col <= 8; col++) DrawArt(1, col, "─", Muted);
+        DrawArt(1, 9, "┐", Muted);
+        DrawArt(2, 4, "│", Muted);
+        DrawArt(2, 9, "│", Muted);
+        DrawArt(3, 4, "│", Muted);
+        DrawArt(3, 9, "│", Muted);
+        for (int col = 2; col <= 11; col++) DrawArt(4, col, "━", Muted);
+
+        int misses = 6 - _lives;
+        if (misses >= 1) DrawArt(2, 9, "●", Bad);
+        if (misses >= 2) DrawArt(3, 9, "│", Bad);
+        if (misses >= 3) DrawArt(3, 8, "╱", Bad);
+        if (misses >= 4) DrawArt(3, 10, "╲", Bad);
+        if (misses >= 5) DrawArt(4, 8, "╱", Bad);
+        if (misses >= 6) DrawArt(4, 10, "╲", Bad);
+
+        // Rows 5 and 6: the alphabet.
         int alphaBase = AlphabetOffset;
         for (int i = 0; i < 26; i++)
         {
@@ -176,5 +191,15 @@ public sealed class HangmanGame : GameBase
                 c.Background = Board;
             }
         }
+    }
+
+    private void DrawArt(int row, int col, string text, Avalonia.Media.IBrush foreground)
+    {
+        var cell = _cells[row * AlphabetCols + col];
+        cell.Text = text;
+        cell.Foreground = foreground;
+        cell.Background = Board;
+        cell.FontSize = 23;
+        cell.Bold = true;
     }
 }

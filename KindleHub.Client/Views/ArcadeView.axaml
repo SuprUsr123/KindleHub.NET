@@ -156,7 +156,7 @@
             <Grid ColumnDefinitions="*,Auto">
                 <TextBox Text="{Binding SearchText}"
                          MinHeight="38"
-                         Watermark="Search by name, slug, or description…"/>
+                         PlaceholderText="Search by name, slug, or description…"/>
                 <ComboBox Grid.Column="1"
                           ItemsSource="{Binding FilterModes}"
                           SelectedItem="{Binding FilterMode}"

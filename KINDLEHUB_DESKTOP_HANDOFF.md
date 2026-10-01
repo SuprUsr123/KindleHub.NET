@@ -912,3 +912,19 @@ than debugging the state machine further.
 - The chat takes a while to load because of the auth handshake; a stale
   `KindleHub.Client` process from a previous run can hold a lock and make the
   new one appear hung. `pkill -f KindleHub.Client` before each run.
+
+### (NEW) Games fix:
+
+- Sudoku validation + proper 1–9 → blank cycling
+- Nim multi-counter moves + correct computer strategy
+- Lights Out guaranteed-solvable boards
+- Minesweeper proper flagging/right-click behavior + full mine reveal on loss
+- Reversi forced-pass handling + legal-move highlighting
+- Peg Solitaire deadlock detection + correct “perfect” finish
+- Hanoi same-peg cancellation
+- Number Slide adjacency UI
+- 2048 directional movement
+- Snake redraw/touch/full-board handling
+- Mastermind feedback counts
+- Wordle invalid-guess rejection
+- Shared secondary/right-click input support

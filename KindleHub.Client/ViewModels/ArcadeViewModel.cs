@@ -106,6 +106,7 @@ public class ArcadeViewModel : ViewModelBase
             : PortedGames.Concat(UnportedGames).ToList();
 
     public IReadOnlyList<GameCell> Cells => _cells;
+    public IGame? CurrentGame => _game;
     public string GameName => _game?.Name ?? (_connect4 != null ? "Connect 4" : "");
     public string Slug => _game?.Slug ?? (_connect4 != null ? "connect4" : "");
 
@@ -152,14 +153,8 @@ public class ArcadeViewModel : ViewModelBase
     public bool InGame => _game != null || _connect4 != null;
     public bool NotInGame => !InGame;
     public bool IsRealTime => _isRealTime;
-
-    /// <summary>
-    /// True when the current game is played from the arrow keys, so the window
-    /// shows the on-screen D-pad. 2048 is the case that matters: it is not
-    /// real-time, so the D-pad used to be hidden and the arrow keys were the only
-    /// input, which left it unplayable if the window lacked keyboard focus.
-    /// </summary>
-    public bool IsArrowKeyGame => _game?.UsesArrowKeys ?? false;
+    public bool NeedsTicks => _game?.NeedsTicks ?? false;
+    public bool CanSubmitMastermind => _game is MastermindGame mastermind && mastermind.CanSubmit;
 
     public bool CanGoLeft { get => _canGoLeft; private set => SetProperty(ref _canGoLeft, value); }
     public bool CanGoRight { get => _canGoRight; private set => SetProperty(ref _canGoRight, value); }
@@ -231,6 +226,7 @@ public class ArcadeViewModel : ViewModelBase
     public RelayCommand UpCommand { get; }
     public RelayCommand DownCommand { get; }
     public RelayCommand RightCommand { get; }
+    public RelayCommand ConfirmCommand { get; }
 
     public ArcadeViewModel(KindleHubCore core, ILogger<ArcadeViewModel> logger,
                            System.Action<string>? navigate = null)
@@ -316,6 +312,7 @@ public class ArcadeViewModel : ViewModelBase
         UpCommand = new RelayCommand(() => Press(GameKey.Up));
         DownCommand = new RelayCommand(() => Press(GameKey.Down));
         RightCommand = new RelayCommand(() => Press(GameKey.Right));
+        ConfirmCommand = new RelayCommand(() => Press(GameKey.Confirm));
     }
 
     /// <summary>Feeds a key to the game and lets the view notice a finished score.</summary>
@@ -326,31 +323,28 @@ public class ArcadeViewModel : ViewModelBase
         Refresh();
     }
 
-    /// <summary>Feeds a typed character to the game (Hangman, Wordle).</summary>
-    public bool Type(char c)
+    public bool PressLetter(char letter)
     {
-        if (_game == null || !_game.OnChar(c)) return false;
-        Refresh();
-        return true;
+        if (_game == null) return false;
+        bool handled = _game.OnLetter(letter);
+        if (handled) Refresh();
+        return handled;
     }
 
-    /// <summary>Feeds a backspace to the game.</summary>
-    public bool Backspace()
+    public bool PressBackspace()
     {
-        if (_game == null || !_game.OnBackspace()) return false;
-        Refresh();
-        return true;
+        if (_game == null) return false;
+        bool handled = _game.OnBackspace();
+        if (handled) Refresh();
+        return handled;
     }
 
-    /// <summary>
-    /// Submits the current row from the keyboard (Wordle's Enter). Games that have
-    /// nothing to submit return false so the key is left unhandled.
-    /// </summary>
-    public bool SubmitTyped()
+    public bool SecondaryTap(int index)
     {
-        if (_game is not IWordEntry entry || !entry.OnSubmit()) return false;
-        Refresh();
-        return true;
+        if (_game == null) return false;
+        bool handled = _game.OnSecondaryTap(index);
+        if (handled) Refresh();
+        return handled;
     }
 
     /// <summary>
@@ -551,7 +545,8 @@ public class ArcadeViewModel : ViewModelBase
             OnPropertyChanged(nameof(BoardWidth));
             OnPropertyChanged(nameof(BoardHeight));
             OnPropertyChanged(nameof(IsRealTime));
-            OnPropertyChanged(nameof(IsArrowKeyGame));
+            OnPropertyChanged(nameof(NeedsTicks));
+            OnPropertyChanged(nameof(CanSubmitMastermind));
             return;
         }
 
@@ -590,41 +585,15 @@ public class ArcadeViewModel : ViewModelBase
         OnPropertyChanged(nameof(BoardWidth));
         OnPropertyChanged(nameof(BoardHeight));
         OnPropertyChanged(nameof(IsRealTime));
-            OnPropertyChanged(nameof(IsArrowKeyGame));
+        OnPropertyChanged(nameof(NeedsTicks));
+        OnPropertyChanged(nameof(CanSubmitMastermind));
     }
 
     /// <summary>Advances a real-time game. Called by the view's clock.</summary>
-public void Tick(TimeSpan elapsed)
+    public void Tick(TimeSpan elapsed)
     {
-        if (_game == null && _connect4 == null) return;
-        // Not gated on IsRealTime: Memory and Simon advance a phase machine on
-        // Tick (flipping two cards back, flashing the next pad), and without it
-        // Memory softlocks with its mismatched cards face-up.
-        if (_game != null) _game.Tick(elapsed);
-        _cells = new ObservableCollection<GameCell>(BuildCells());
-        Refresh();
-    }
-
-    private IEnumerable<GameCell> BuildCells()
-    {
-        if (_connect4 != null)
-        {
-            for (int i = 0; i < _connect4.Grid.Count; i++)
-            {
-                bool empty = _connect4.Grid[i] == C4Rules.Empty;
-                yield return new GameCell
-                {
-                    Text = empty ? "" : "●",
-                    Background = empty ? CellSurface : _connect4.Grid[i] == C4Rules.Red ? PieceRed : PieceYellow,
-                    Foreground = empty ? MutedInk : PieceInk,
-                    IsEnabled = _connect4.IsMyTurn && empty,
-                    FontSize = 26,
-                    Bold = true,
-                };
-            }
-            yield break;
-        }
-        foreach (var c in _game!.Cells) yield return c;
+        if (_game == null || !_game.NeedsTicks) return;
+        if (_game.Tick(elapsed)) Refresh();
     }
 
     /// <summary>Posts the finished game's score to the shared leaderboard, once.</summary>

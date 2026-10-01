@@ -69,20 +69,45 @@ public sealed class ReversiGame : GameBase
         foreach (var (fx, fy) in flips) _board[fx, fy] = Dark;
         Tally();
         _turn = Light;
-        ComputerMove();
+        AdvanceTurns();
         Redraw();
         return true;
     }
 
-    private void ComputerMove()
+    private void AdvanceTurns()
     {
-        var moves = LegalMoves(Light);
-        if (moves.Count == 0)
+        while (!_over)
         {
-            if (LegalMoves(Dark).Count == 0) { _over = true; Tally(); return; }
-            _turn = Dark;   // computer has to pass
-            return;
+            var darkMoves = LegalMoves(Dark);
+            var lightMoves = LegalMoves(Light);
+            if (darkMoves.Count == 0 && lightMoves.Count == 0)
+            {
+                _over = true;
+                Tally();
+                ScoreCounts = true;
+                return;
+            }
+
+            if (_turn == Dark)
+            {
+                if (darkMoves.Count > 0) return;
+                _turn = Light; // human has no legal move, so pass
+                continue;
+            }
+
+            if (lightMoves.Count == 0)
+            {
+                _turn = Dark; // computer passes
+                continue;
+            }
+
+            MakeComputerMove(lightMoves);
+            _turn = Dark;
         }
+    }
+
+    private void MakeComputerMove(List<(int X, int Y)> moves)
+    {
 
         // Greedy: take the move that flips the most discs, breaking ties toward corners.
         (int X, int Y) best = moves[0];
@@ -99,15 +124,8 @@ public sealed class ReversiGame : GameBase
         foreach (var (fx, fy) in FlipsFor(best.X, best.Y, Light)) _board[fx, fy] = Light;
         Tally();
 
-        // Every finished game posts its disc count, so a partial board still scores.
-        if (LegalMoves(Dark).Count == 0 && LegalMoves(Light).Count == 0)
-        {
-            _over = true;
-            Tally();
-            ScoreCounts = true;
-            return;
-        }
-        _turn = Dark;
+        // Turn advancement is handled by AdvanceTurns so passes on either side
+        // cannot strand the board with no clickable legal move.
     }
 
     /// <summary>Discs of <paramref name="who"/> that a move at (x,y) would flip.</summary>
@@ -158,15 +176,20 @@ public sealed class ReversiGame : GameBase
 
     public override void Redraw()
     {
+        var legal = !_over && _turn == Dark
+            ? LegalMoves(Dark).ToHashSet()
+            : new HashSet<(int X, int Y)>();
+
         for (int y = 0; y < Side; y++)
         for (int x = 0; x < Side; x++)
         {
             var c = _cells[y * Side + x];
             int v = _board[x, y];
-            c.Text = v == Empty ? "" : "●";
-            c.Background = v == Dark ? Ink : v == Light ? Cell : Good;
-            c.Foreground = v == Light ? Ink : Cell;
-            c.IsEnabled = v == Empty && _turn == Dark && !_over;
+            bool isLegal = legal.Contains((x, y));
+            c.Text = v == Empty ? (isLegal ? "·" : "") : "●";
+            c.Background = isLegal ? Tiles4[1] : v == Dark ? Ink : v == Light ? Cell : Good;
+            c.Foreground = v == Light ? Ink : isLegal ? Ink : Cell;
+            c.IsEnabled = isLegal;
             c.FontSize = 26;
             c.Bold = true;
         }

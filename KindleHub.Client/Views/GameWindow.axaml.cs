@@ -28,13 +28,11 @@ public partial class GameWindow : Window
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         Closed += (_, _) => StopClock();
         Opened += (_, _) =>
         {
             StartClock();
-            // Nothing on the board is focusable — the cells are Borders, not
-            // buttons — so without this the window never becomes the keyboard
-            // target and arrow keys silently do nothing. 2048 has no other input.
             Focus();
         };
     }
@@ -59,16 +57,11 @@ public partial class GameWindow : Window
         if (e.PropertyName == nameof(ArcadeViewModel.InGame) && _vm is { InGame: false }) Close();
     }
 
-    /// <summary>
-/// Runs the game's Tick. Memory and Simon advance a phase machine on it (flip
-/// two mismatched cards back, flash the next pad) even though they are not
-/// real-time, so gating this on IsRealTime left Memory softlocked with its
-/// cards face-up and Simon never showing a pattern.
-/// </summary>
-private void StartClock()
+    /// <summary>Only real-time games need a clock, so an idle window costs nothing.</summary>
+    private void StartClock()
     {
         StopClock();
-        if (_vm is not { InGame: true }) return;
+        if (_vm is not { InGame: true, NeedsTicks: true }) return;
         _clock = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
         _clock.Tick += OnClock;
         _lastTick = Stopwatch.GetTimestamp();
@@ -89,39 +82,61 @@ private void StartClock()
     {
         if (_vm is not { InGame: true }) return;
 
-        // Letters first: Hangman and Wordle are typed, not tapped. Matching on
-        // e.Key covers A–Z on any layout and doesn't depend on Shift being held,
-        // so both cases work without an explicit shift check.
-        if (e.Key is >= Key.A and <= Key.Z)
+        // Wordle/Hangman own A-Z. Try the letter path first so A/D/S/W do not
+        // accidentally become movement when one of those games is open.
+        string keyName = e.Key.ToString();
+        if (keyName.Length == 1 && keyName[0] >= 'A' && keyName[0] <= 'Z')
         {
-            if (_vm.Type((char)e.Key)) e.Handled = true;
-            return;
-        }
-
-        switch (e.Key)
-        {
-            case Key.Back:
-            case Key.Delete:
-                if (_vm.Backspace()) e.Handled = true;
+            if (_vm.PressLetter(keyName[0]))
+            {
+                e.Handled = true;
                 return;
-            // Key.Enter and Key.Return are the same value in Avalonia 11, and
-            // listing both is a compile error, so this covers the numpad too.
-            case Key.Enter:
-                if (_vm.SubmitTyped()) e.Handled = true;
-                return;
+            }
         }
 
         var key = e.Key switch
         {
-            Key.Left or Key.A => GameKey.Left,
-            Key.Right or Key.D => GameKey.Right,
-            Key.Up or Key.W => GameKey.Up,
-            Key.Down or Key.S => GameKey.Down,
+            Key.Left => GameKey.Left,
+            Key.Right => GameKey.Right,
+            Key.Up => GameKey.Up,
+            Key.Down => GameKey.Down,
+            Key.W => GameKey.Up,
+            Key.A => GameKey.Left,
+            Key.S => GameKey.Down,
+            Key.D => GameKey.Right,
+            Key.Enter => GameKey.Confirm,
+            Key.Back => GameKey.Backspace,
             _ => GameKey.None,
         };
-        if (key == GameKey.None) return;
-        _vm.Press(key);
-        e.Handled = true;
+
+        if (key != GameKey.None)
+        {
+            if (key == GameKey.Backspace && _vm.PressBackspace())
+            {
+                e.Handled = true;
+                return;
+            }
+            if (key != GameKey.Backspace)
+            {
+                _vm.Press(key);
+                e.Handled = true;
+            }
+        }
+    }
+
+
+    private void OnBoardPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_vm is null || e.GetCurrentPoint(this).Properties.PointerUpdateKind != PointerUpdateKind.RightButtonPressed) return;
+        if (e.Source is not Control c || c.DataContext is not GameCell cell) return;
+
+        var cells = _vm.Cells;
+        for (int i = 0; i < cells.Count; i++)
+        {
+            if (!ReferenceEquals(cells[i], cell)) continue;
+            if (_vm.SecondaryTap(i)) e.Handled = true;
+            return;
+        }
     }
 
     /// <summary>Cell taps arrive from the board, which carries the GameCell.</summary>

@@ -9,7 +9,7 @@
             <TextBlock Text="Community · Topics" FontSize="32" FontWeight="Bold"/>
             <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="13"/>
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBox Text="{Binding SearchText}" Width="240" Watermark="Filter topics…"/>
+                <TextBox Text="{Binding SearchText}" Width="240" PlaceholderText="Filter topics…"/>
                 <ComboBox ItemsSource="{Binding AllCategories}" SelectedItem="{Binding SelectedCategory}" Width="150"/>
                 <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
                 <Button Content="New Topic" Command="{Binding ShowCreateCommand}" FontWeight="Bold"/>
@@ -43,14 +43,14 @@
             <StackPanel IsVisible="{Binding ShowCreate}">
                 <TextBlock Text="Create a topic" FontWeight="Bold" Margin="0,0,0,8"/>
                 <Grid ColumnDefinitions="2*,*,*,Auto,Auto">
-                    <TextBox Grid.Column="0" Text="{Binding NewTitle}" Watermark="Topic title" Margin="0,0,8,0"/>
-                    <TextBox Grid.Column="1" Text="{Binding NewBlurb}" Watermark="Blurb (optional)" Margin="0,0,8,0"/>
+                    <TextBox Grid.Column="0" Text="{Binding NewTitle}" PlaceholderText="Topic title" Margin="0,0,8,0"/>
+                    <TextBox Grid.Column="1" Text="{Binding NewBlurb}" PlaceholderText="Blurb (optional)" Margin="0,0,8,0"/>
                     <ComboBox Grid.Column="2" ItemsSource="{Binding AllCategories}" SelectedItem="{Binding NewCategory}" Margin="0,0,8,0"/>
                     <Button Grid.Column="3" Content="Create &amp; open" Command="{Binding CreateCommand}"/>
                     <Button Grid.Column="4" Content="Cancel" Command="{Binding CancelCreateCommand}" Margin="8,0,0,0"/>
                 </Grid>
                 <StackPanel Margin="0,6,0,0" Orientation="Horizontal" Spacing="8">
-                    <TextBox Text="{Binding JoinCode}" Width="180" Watermark="…or join by code"/>
+                    <TextBox Text="{Binding JoinCode}" Width="180" PlaceholderText="…or join by code"/>
                     <Button Content="Join" Command="{Binding JoinCommand}"/>
                 </StackPanel>
             </StackPanel>

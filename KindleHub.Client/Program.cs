@@ -1,4 +1,6 @@
 ﻿using Avalonia;
+using Avalonia.X11;
+using Avalonia.Wayland;
 using System;
 
 namespace KindleHub.Client;
@@ -14,8 +16,30 @@ class Program
 
     // Avalonia configuration, don't remove; also used by visual designer.
     public static AppBuilder BuildAvaloniaApp()
-        => AppBuilder.Configure<App>()
+    {
+        var builder = AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont()
-            .LogToTrace();
+            .WithInterFont();
+
+        // Avalonia's native Wayland backend is opt-in. Keep the normal platform
+        // detector for other operating systems, and select Wayland only when the
+        // desktop session exposes a Wayland display. Linux X11 sessions retain
+        // the X11 backend and avoid its shutdown-prone D-Bus integrations.
+        if (OperatingSystem.IsLinux())
+        {
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")))
+                builder.UseWayland();
+            else
+            {
+                builder.UseX11();
+                builder.With(new X11PlatformOptions
+                {
+                    UseDBusMenu = false,
+                    UseDBusFilePicker = false,
+                });
+            }
+        }
+
+        return builder.LogToTrace();
+    }
 }

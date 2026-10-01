@@ -51,6 +51,7 @@ public sealed class SimonGame : GameBase
     public override string Slug => "simon";
     public override string Name => "Simon";
     public override int Columns => TotalColumns;
+    public override bool NeedsTicks => true;
     public override IReadOnlyList<GameCell> Cells => _cells;
 
     public override string? ResultText => _dead ? $"You reached round {_round}." : null;
@@ -86,11 +87,11 @@ public sealed class SimonGame : GameBase
         _phaseFor = LeadIn;
     }
 
-    public override void Tick(TimeSpan elapsed)
+    public override bool Tick(TimeSpan elapsed)
     {
-        if (_phase == Phase.Input || _phase == Phase.Dead) return;
+        if (_phase == Phase.Input || _phase == Phase.Dead) return false;
         _phaseFor -= elapsed;
-        if (_phaseFor > TimeSpan.Zero) return;
+        if (_phaseFor > TimeSpan.Zero) return false;
 
         switch (_phase)
         {
@@ -119,6 +120,7 @@ public sealed class SimonGame : GameBase
                 break;
         }
         Redraw();
+        return true;
     }
 
     public override bool OnTap(int index)

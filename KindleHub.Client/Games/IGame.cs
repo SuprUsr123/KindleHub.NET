@@ -6,7 +6,7 @@ namespace KindleHub.Client.Games;
 /// <summary>
 /// A game ported from the official KindleHub client and playable in-process.
 ///
-/// The contract is deliberately small — a grid of cells plus three input methods —
+/// The contract is deliberately small — a grid of cells plus keyboard and tap input —
 /// because nearly every game in the arcade (Snake, 2048, Memory, Sudoku, Wordle,
 /// Simon, …) is just those three things. Games hold their own state, mutate
 /// <see cref="Cells"/> in place and let the view re-read it each frame, so there is
@@ -40,12 +40,8 @@ public interface IGame
     /// <summary>True for games that advance on a timer (Snake, Tetris) rather than on input.</summary>
     bool IsRealTime { get; }
 
-    /// <summary>
-    /// True when the game is played from the arrow keys or WASD. The window uses
-    /// this to decide whether to show the on-screen D-pad, because a game that
-    /// needs keys has to stay playable without one — 2048 has no other input at all.
-    /// </summary>
-    bool UsesArrowKeys { get; }
+    /// <summary>True when the game needs periodic Tick calls, including animations.</summary>
+    bool NeedsTicks { get; }
 
     /// <summary>Starts a fresh game. Must fully reset state — the view calls this for "New game".</summary>
     void Reset();
@@ -55,7 +51,7 @@ public interface IGame
     /// game, not just real-time ones, so animations that need to settle (Memory's
     /// flip-back) are timer-driven rather than spawning threads.
     /// </summary>
-    void Tick(TimeSpan elapsed);
+    bool Tick(TimeSpan elapsed);
 
     /// <summary>Repaints <see cref="Cells"/> from the game's current state.</summary>
     void Redraw();
@@ -63,26 +59,15 @@ public interface IGame
     /// <summary>Handles a key press. Return true if the game consumed it.</summary>
     bool OnKey(GameKey key);
 
-    /// <summary>
-    /// Handles a printable character typed on a physical keyboard. Games that only
-    /// expose an on-screen keyboard (Hangman, Wordle) override this so they don't
-    /// force the player to click letters that already have keys under their fingers.
-    /// Return true if the game consumed it.
-    /// </summary>
-    bool OnChar(char c);
+    /// <summary>Handles a desktop letter key, for keyboard-driven games.</summary>
+    bool OnLetter(char letter);
 
-    /// <summary>Handles a backspace from a physical keyboard.</summary>
+    /// <summary>Handles Backspace in a text-entry game.</summary>
     bool OnBackspace();
 
-    /// <summary>Handles a tick on the cell at <paramref name="index"/> in <see cref="Cells"/>.</summary>
+    /// <summary>Handles a tap on the cell at <paramref name="index"/> in <see cref="Cells"/>.</summary>
     bool OnTap(int index);
-}
 
-/// <summary>
-/// A game with a typed row that can be submitted from the keyboard, so Enter does
-/// something without having to find the on-screen ↵.
-/// </summary>
-public interface IWordEntry
-{
-    bool OnSubmit();
+    /// <summary>Handles a secondary/right-click action, used by games such as Minesweeper.</summary>
+    bool OnSecondaryTap(int index);
 }

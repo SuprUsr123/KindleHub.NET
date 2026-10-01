@@ -51,31 +51,51 @@ echo "Self-contained: $SELF_CONTAINED"
 [[ -n "$RUNTIME" ]] && echo "Runtime: $RUNTIME"
 echo "=========================================="
 
-# Check for .NET SDK
+# Avalonia 12's XAML source generators require the newer Roslyn compiler
+# shipped with .NET SDK 9.0.300 or later. Prefer the user-local SDK when the
+# system dotnet is older (common on Linux distributions).
 if ! command -v dotnet &> /dev/null; then
-    echo "Error: .NET SDK not found. Install .NET 8.0+ from https://dotnet.microsoft.com/download"
+    echo "Error: .NET SDK 9.0.300+ not found. Install it from https://dotnet.microsoft.com/download"
     exit 1
 fi
 
-DOTNET_VERSION=$(dotnet --version | cut -d. -f1)
-if [[ "$DOTNET_VERSION" -lt 8 ]]; then
-    echo "Error: .NET 8.0+ required (found $DOTNET_VERSION)"
+DOTNET_CMD="$(command -v dotnet)"
+DOTNET_VERSION="$(dotnet --version 2>/dev/null || true)"
+sdk_is_new_enough() {
+    local sdk_version="$1"
+    [[ "$sdk_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
+    local sdk_major="${BASH_REMATCH[1]}"
+    local sdk_minor="${BASH_REMATCH[2]}"
+    local sdk_patch="${BASH_REMATCH[3]}"
+    (( sdk_major > 9 || (sdk_major == 9 && (sdk_minor > 0 || (sdk_minor == 0 && sdk_patch >= 300))) ))
+}
+if [[ -x "$HOME/.dotnet/dotnet" ]]; then
+    USER_DOTNET_VERSION="$("$HOME/.dotnet/dotnet" --version 2>/dev/null || true)"
+    if sdk_is_new_enough "$USER_DOTNET_VERSION"; then
+        DOTNET_CMD="$HOME/.dotnet/dotnet"
+        DOTNET_VERSION="$USER_DOTNET_VERSION"
+    fi
+fi
+
+if ! sdk_is_new_enough "$DOTNET_VERSION"; then
+    echo "Error: Avalonia 12 requires .NET SDK 9.0.300 or later (found ${DOTNET_VERSION:-none})."
+    echo "Install a newer SDK or put it earlier in PATH."
     exit 1
 fi
 
-echo "Using .NET $(dotnet --version)"
+echo "Using .NET $DOTNET_VERSION ($DOTNET_CMD)"
 
 # Restore dependencies
 echo "Restoring dependencies..."
-dotnet restore "$SOLUTION_FILE"
+"$DOTNET_CMD" restore "$SOLUTION_FILE"
 
 # Build core library first
 echo "Building KindleHub.Core..."
-dotnet build "$SCRIPT_DIR/KindleHub.Core/KindleHub.Core.vbproj" --configuration "$CONFIGURATION" --no-restore
+"$DOTNET_CMD" build "$SCRIPT_DIR/KindleHub.Core/KindleHub.Core.vbproj" --configuration "$CONFIGURATION" --no-restore
 
 # Build client (must build from project dir for XAML compilation)
 echo "Building KindleHub.Client..."
-(cd "$SCRIPT_DIR/KindleHub.Client" && dotnet build "KindleHub.Client.csproj" --configuration "$CONFIGURATION" --no-restore)
+(cd "$SCRIPT_DIR/KindleHub.Client" && "$DOTNET_CMD" build "KindleHub.Client.csproj" --configuration "$CONFIGURATION" --no-restore)
 
 # Publish if requested
 if [[ "$PUBLISH" == "true" ]]; then
@@ -97,7 +117,7 @@ if [[ "$PUBLISH" == "true" ]]; then
         PUBLISH_ARGS+=("--no-build")
     fi
     
-    (cd "$SCRIPT_DIR/KindleHub.Client" && dotnet "${PUBLISH_ARGS[@]}")
+    (cd "$SCRIPT_DIR/KindleHub.Client" && "$DOTNET_CMD" "${PUBLISH_ARGS[@]}")
     
     echo ""
     echo "Published to: $SCRIPT_DIR/artifacts/$CONFIGURATION/$(uname -s | tr '[:upper:]' '[:lower:]')"

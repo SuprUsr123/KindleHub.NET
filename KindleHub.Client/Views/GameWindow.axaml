@@ -5,12 +5,11 @@
         mc:Ignorable="d" d:DesignWidth="680" d:DesignHeight="760"
         x:Class="KindleHub.Client.Views.GameWindow"
         Title="KindleHub Pro — Game"
-        KeyDown="OnKeyDown"
-        Focusable="True"
         Width="680" Height="760"
         MinWidth="460" MinHeight="500"
         WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource AppWindowBackground}">
+        Background="{DynamicResource AppWindowBackground}"
+        Focusable="True">
 
     <Window.Styles>
         <Style Selector="Button.game-action">
@@ -91,7 +90,10 @@
                             <Border Margin="2"
                                     CornerRadius="5"
                                     Background="{Binding Background}"
-                                    IsEnabled="{Binding IsEnabled}">
+                                    BorderBrush="{Binding BorderBrush}"
+                                    BorderThickness="{Binding BorderThickness}"
+                                    IsEnabled="{Binding IsEnabled}"
+                                    PointerPressed="OnBoardPointerPressed">
                                 <TextBlock Text="{Binding Text}"
                                            Foreground="{Binding Foreground}"
                                            FontSize="{Binding FontSize}"
@@ -99,6 +101,7 @@
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center"
                                            TextAlignment="Center"
+                                           FontFamily="Consolas, monospace"
                                            TextWrapping="NoWrap"/>
                             </Border>
                         </DataTemplate>
@@ -108,17 +111,18 @@
         </Grid>
 
         <StackPanel Grid.Row="3" Spacing="10" Margin="0,14,0,0">
-            <!-- Shown for arrow-key games, not just real-time ones: 2048 is not
-                 real-time and has no tap input, so hiding this left it unplayable. -->
             <StackPanel Orientation="Horizontal"
                         Spacing="8"
                         HorizontalAlignment="Center"
-                        IsVisible="{Binding IsArrowKeyGame}">
+                        IsVisible="{Binding IsRealTime}">
                 <Button Classes="game-key" Content="←" Command="{Binding LeftCommand}" FontSize="17"/>
                 <Button Classes="game-key" Content="↑" Command="{Binding UpCommand}" FontSize="17"/>
                 <Button Classes="game-key" Content="↓" Command="{Binding DownCommand}" FontSize="17"/>
                 <Button Classes="game-key" Content="→" Command="{Binding RightCommand}" FontSize="17"/>
             </StackPanel>
+
+            <Button Classes="game-action" Content="Submit guess" Command="{Binding ConfirmCommand}"
+                    HorizontalAlignment="Center" IsVisible="{Binding CanSubmitMastermind}"/>
 
             <StackPanel Orientation="Horizontal"
                         Spacing="8"

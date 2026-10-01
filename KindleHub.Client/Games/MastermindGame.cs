@@ -37,6 +37,7 @@ public sealed class MastermindGame : GameBase
     public override string Name => "Mastermind";
     public override int Columns => BoardColumns;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public bool CanSubmit => !_won && _history.Count < Rows && _guess.All(v => v > 0);
 
     public override string? ResultText
     {
@@ -54,7 +55,7 @@ public sealed class MastermindGame : GameBase
             if (_won) return "Solved. New game deals a fresh code.";
             if (_history.Count >= Rows) return "Out of guesses. New game deals a fresh code.";
             var set = _guess.Count(v => v > 0);
-            return $"Row {_history.Count + 1}/{Rows} · {set}/{Pegs} pegs set · tap a peg to cycle it";
+            return $"Row {_history.Count + 1}/{Rows} · {set}/{Pegs} set · Submit when ready · green = right place, gold = right colour";
         }
     }
 
@@ -79,33 +80,15 @@ public sealed class MastermindGame : GameBase
         // empty → 1…6 → empty
         _guess[col] = _guess[col] >= Colours ? 0 : _guess[col] + 1;
 
-        if (_guess.All(v => v > 0)) Commit();
-        else Redraw();
+        Redraw();
         return true;
     }
 
-    /// <summary>
-    /// Type a code peg with A–F (1–6), same as tapping it. The code row is
-    /// otherwise indistinguishable from the score pegs — both are plain empty
-    /// squares — so on a PC you had to hunt for the four you were meant to set.
-    /// </summary>
-    public override bool OnChar(char c)
+    public override bool OnKey(GameKey key)
     {
-        char up = char.ToUpperInvariant(c);
-        if (up < 'A' || up > 'F') return false;
-        int col = up - 'A';
-        if (col >= Pegs) return false;
-        _guess[col] = _guess[col] >= Colours ? 0 : _guess[col] + 1;
-        if (_guess.All(v => v > 0)) Commit();
-        else Redraw();
+        if (key != GameKey.Confirm || !CanSubmit) return false;
+        Commit();
         return true;
-    }
-
-    public override bool OnBackspace()
-    {
-        // Nothing to delete — Mastermind is a fixed-length code. Returning false
-        // lets the window leave the key unhandled rather than clearing a peg.
-        return false;
     }
 
     private void Commit()
@@ -152,20 +135,24 @@ public sealed class MastermindGame : GameBase
             {
                 int v = row < liveRow ? _history[row].Pegs[col] : live ? _guess[col] : 0;
                 c.Text = v == 0 ? "" : v.ToString();
-                c.Background = v == 0 ? Slot : Tiles4[3];
+                c.Background = v == 0 ? (live ? Board : Cell) : Tiles4[v - 1];
                 c.Foreground = Ink;
+                c.BorderBrush = live ? Accent : Board;
+                c.BorderThickness = live ? new Avalonia.Thickness(2) : new Avalonia.Thickness(0);
                 c.IsEnabled = live;
                 c.Bold = v != 0;
                 continue;
             }
 
-            if (col == Pegs) { c.Text = ""; c.Background = Board; c.IsEnabled = false; c.Foreground = Ink; continue; }
+            if (col == Pegs) { c.Text = "│"; c.Background = Board; c.IsEnabled = false; c.Foreground = Muted; c.FontSize = 22; continue; }
 
             bool exactPeg = col == BoardColumns - 2;
             int n = row < liveRow ? (exactPeg ? _history[row].Exact : _history[row].Loose) : 0;
-            c.Text = n > 0 ? "●" : "";
-            c.Background = n > 0 ? (exactPeg ? Good : Warn) : Cell;
+            c.Text = n == 0 ? "" : n.ToString();
+            c.Background = n > 0 ? (exactPeg ? Good : Warn) : Board;
             c.Foreground = Cell;
+            c.BorderBrush = exactPeg ? Good : Warn;
+            c.BorderThickness = new Avalonia.Thickness(1);
             c.FontSize = 15;
             c.IsEnabled = false;
         }

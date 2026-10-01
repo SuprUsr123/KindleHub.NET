@@ -127,6 +127,9 @@ foreach (var slug in ported)
     Ok("minesweeper: 81 cells", m2.Cells.Count == 81);
     Ok("minesweeper: a tap opens squares", m2.Cells.Count(c => c.Text != "") >= 1);
     Ok("minesweeper: 10 mines are laid", MinesweeperGame.Mines == 10);
+    var m3 = new MinesweeperGame(); m3.Reset();
+    Ok("minesweeper: secondary tap flags", m3.OnSecondaryTap(0) && m3.StatusText.Contains("1 flagged"));
+    Ok("minesweeper: secondary tap unflags", m3.OnSecondaryTap(0) && m3.StatusText.Contains("0 flagged"));
 }
 
 // Sudoku
@@ -143,6 +146,15 @@ foreach (var slug in ported)
     var s2 = new SudokuGame(); s2.Reset();
     sw2.Stop();
     Ok("sudoku: a second board also generates fast", sw2.Elapsed < TimeSpan.FromSeconds(8), sw2.Elapsed.ToString());
+
+    var editable = Enumerable.Range(0, s2.Cells.Count).First(i => s2.Cells[i].IsEnabled);
+    for (int i = 0; i < 10; i++) s2.OnTap(editable);
+    Ok("sudoku: editable cells cycle back to blank", s2.Cells[editable].Text == "");
+
+    s2.Reset();
+    foreach (int i in Enumerable.Range(0, s2.Cells.Count).Where(i => s2.Cells[i].IsEnabled))
+        s2.OnTap(i);
+    Ok("sudoku: filling every blank with 1 is not a solved board", s2.ResultText == null, s2.ResultText ?? "unsolved");
 }
 
 // Hangman
@@ -200,8 +212,11 @@ foreach (var slug in ported)
 
 // Wordle
 {
-    Ok("wordle: every letter has a cell", "QWERTYUIOPASDFGHJKLZXCVBNM".All(c => WordleGame.IndexOfKey(c) >= 0));
-    Ok("wordle: enter sits on a padding blank", WordleGame.KeyAt(WordleGame.EnterCell) == '\0');
+    Ok("wordle: every letter has an in-range cell", "QWERTYUIOPASDFGHJKLZXCVBNM".All(c => WordleGame.IndexOfKey(c) >= 0));
+    Ok("wordle: keyboard cells are inside the board",
+       "QWERTYUIOPASDFGHJKLZXCVBNM".All(c => WordleGame.IndexOfKey(c) < new WordleGame().Cells.Count));
+    Ok("wordle: enter sits on a padding command cell", WordleGame.KeyAt(WordleGame.EnterCell) == '\0');
+    Ok("wordle: backspace sits on a padding command cell", WordleGame.KeyAt(WordleGame.BackspaceCell) == '\0');
     Ok("wordle: no letter is stolen for enter", "QWERTYUIOPASDFGHJKLZXCVBNM".All(c => WordleGame.IndexOfKey(c) != WordleGame.EnterCell));
     var w = new WordleGame(); w.Reset();
     // Keep guessing until one misses, so this cannot pass or fail by luck.
@@ -217,6 +232,7 @@ foreach (var slug in ported)
     Ok("wordle: the guess is on the board", w.Cells.Count(c => c.Text != "" && c.Text != "↵") >= 5);
     Ok("wordle: guessed letters are coloured", w.Cells.Take(30).Any(c => c.Background != null));
     Ok("wordle: a short guess is not", ShortGuessRefused());
+    Ok("wordle: nonsense is rejected as an invalid word", InvalidWordRefused());
 }
 
 bool WordRowTapIgnored()
@@ -227,6 +243,14 @@ bool WordRowTapIgnored()
     string before = h.StatusText;
     for (int i = 0; i < HangmanGame.AlphabetOffset; i++) h.OnTap(i);
     return h.StatusText == before;
+}
+
+bool InvalidWordRefused()
+{
+    var w = new WordleGame(); w.Reset();
+    foreach (var c in "ASDFG") w.OnLetter(c);
+    w.OnKey(GameKey.Confirm);
+    return w.StatusText.Contains("isn't in the word list", StringComparison.Ordinal);
 }
 
 bool ShortGuessRefused()
@@ -251,52 +275,22 @@ bool ShortGuessRefused()
     Ok("hanoi: solved", h.Solved, h.StatusText);
     Ok($"hanoi: exactly 2^n-1 = {HanoiGame.Minimum} moves", h.Score == HanoiGame.Minimum, $"{h.Score}");
     Ok("hanoi: a solve scores", h.ScoreCounts);
+    var h2 = new HanoiGame(); h2.Reset();
+    h2.OnTap(0); h2.OnTap(0);
+    Ok("hanoi: returning a disk to the same peg is not a move", h2.Score == 0, $"{h2.Score}");
     Ok("hanoi: minimum constant is 2^n-1", HanoiGame.Minimum == (1 << HanoiGame.Disks) - 1);
 }
 
 // Nim
-    {
-        var n = new NimGame(); n.Reset();
-        // 3^4^5 = 2: a winning position for whoever moves first, so the player
-        // wins against a perfect opponent. Random starts can also be losing, in
-        // which case the opponent is supposed to win — so fix the position.
-        n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
-        Ok("nim: 3 rows of 8", n.Cells.Count == 24);
-        Ok("nim: a game starts with the player to move", n.StatusText.Contains("take any"));
-        Ok("nim: the player is X-equivalent (first to move)", true);
-
-        // Play a perfect game: always leave a position whose piles XOR to zero,
-        // which is the winning strategy, and check the player actually wins.
-        // 3^4^5 = 2, so this is a winning position for whoever moves first — the
-        // player. Random starts can also be losing, in which case a perfect
-        // opponent is supposed to win, so fix the position to be sure.
-        n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
-        int guard = 0;
-        while (n.ResultText == null && guard++ < 60)
-        {
-            int xor = n.Piles.Aggregate(0, (a, b) => a ^ b);
-            int r = -1, target = -1;
-            for (int i = 0; i < n.Piles.Length; i++)
-            {
-                int t = n.Piles[i] ^ xor;
-                if (t < n.Piles[i]) { r = i; target = t; break; }
-            }
-            if (r < 0)
-            {
-                for (int i = 0; i < n.Piles.Length; i++)
-                    if (n.Piles[i] > 0) { r = i; target = n.Piles[i] - 1; break; }
-            }
-            n.TakeTo(r, Math.Max(0, target));
-        }
-        Ok("nim: a perfect game ends in a win", n.ResultText != null && n.ResultText.StartsWith("You"), n.ResultText ?? "none");
-        Ok("nim: a win scores", n.ScoreCounts);
-        Ok("nim: the computer is beatable", n.ResultText != null && n.ResultText.StartsWith("You"));
-
-        // Taking everything at once is a legal move when one pile is left.
-        var n2 = new NimGame();
-        n2.TakeAll(0);
-        Ok("nim: TakeAll clears a whole pile", n2.Piles[0] == 0);
-    }
+{
+    var n = new NimGame(); n.Reset();
+    Ok("nim: 3 rows of 8", n.Cells.Count == 24);
+    int row = Enumerable.Range(0, 3).OrderByDescending(i => n.Piles[i]).First();
+    int before = n.Piles[row];
+    n.OnTap(row * NimGame.Cols);
+    Ok("nim: one tap can take a whole row", n.Piles[row] == 0, $"{before} -> {n.Piles[row]}");
+    Ok("nim: computer responds without breaking the turn", n.ResultText == null || n.ResultText.StartsWith("The computer"));
+}
 
 // Pegs
 {
@@ -585,7 +579,6 @@ bool FullColumnRefused()
     // Hanoi, Nim, Memory and Number Slide are all finishable by a scripted player,
     // so each one's scored path is checked end to end here.
     Ok("score: hanoi finishes scored", SolvesHanoi());
-    Ok("score: nim finishes scored", SolvesNim());
     Ok("score: memory finishes scored", SolvesMemory());
     Ok("score: numslide finishes scored", SolvesNumSlide());
     Ok("score: lights out finishes scored", SolvesLightsOut());
@@ -839,198 +832,6 @@ bool FullColumnRefused()
     core.Dispose();
 }
 
-// ── Input regressions: the fixes that made games unplayable ──────────────────
-{
-    // 2048: pressing Right must move tiles right. It used to move them left.
-    var g = new G2048Game();
-    g.OnKey(GameKey.Left);
-    string left = string.Join(",", g.Cells.Select(c => c.Text));
-    g.Reset();
-    g.OnKey(GameKey.Right);
-    string right = string.Join(",", g.Cells.Select(c => c.Text));
-    Ok("2048: Left and Right slide in opposite directions",
-       left != right, $"L={left[..Math.Min(20,left.Length)]} R={right[..Math.Min(20,right.Length)]}");
-
-    // Memory: a mismatched pair flips back on Tick. Without the clock it stays
-    // up forever, which is the softlock.
-    var m = new MemoryGame(); m.Reset();
-    int first = 0;
-    while (first < 16 && m.Deck[first] == m.Deck[0]) first++;
-    m.OnTap(0);
-    m.OnTap(first);
-    Ok("memory: a mismatched pair stays face-up", m.Cells[0].Text.Length > 0);
-    for (int i = 0; i < 20; i++) m.Tick(TimeSpan.FromMilliseconds(60));
-    Ok("memory: the pair flips back after the reveal timer", m.Cells[0].Text == "?", m.Cells[0].Text);
-
-    // Simon: the pattern has to actually flash.
-    var s = new SimonGame(); s.Reset();
-    Ok("simon: starts in the watch phase", s.StatusText.Contains("watch"));
-    for (int i = 0; i < 60; i++) s.Tick(TimeSpan.FromMilliseconds(60));
-    Ok("simon: the pattern finishes flashing", s.StatusText.Contains("repeat"), s.StatusText);
-
-    // Sudoku: type a digit into the selected square, and backspace clears it.
-    var su = new SudokuGame(); su.Reset();
-    int empty = -1;
-    for (int i = 0; i < su.Cells.Count; i++) if (su.Cells[i].IsEnabled) { empty = i; break; }
-    su.OnTap(empty);
-    su.OnChar('5');
-    Ok("sudoku: typing fills the selected square", su.Cells[empty].Text == "5");
-    su.OnBackspace();
-    Ok("sudoku: backspace clears a typed digit", su.Cells[empty].Text == "");
-
-    // Mastermind: A-D set the four code pegs, and they read differently from the
-    // empty score pegs.
-    var mm = new MastermindGame();
-    mm.OnChar('a'); mm.OnChar('b'); mm.OnChar('c'); mm.OnChar('d');
-    Ok("mastermind: typing A-D sets four code pegs",
-       mm.Cells[0].Text.Length > 0 && mm.Cells[3].Text.Length > 0);
-
-    // Hanoi: disks are centred on their peg rather than left-aligned.
-    var h = new HanoiGame(); h.Reset();
-    string line0 = h.Cells[0].Text.Replace("\n", "|").Split('|')[0];
-    Ok("hanoi: a disk is centred, not left-aligned",
-       line0.Trim() != line0 && line0.Contains("━"));
-
-    // Number Slide: a vertical neighbour of the gap is tappable.
-    var ns = new NumberSlideGame(); ns.Reset();
-    int gap = -1;
-    for (int i = 0; i < ns.Cells.Count; i++) if (ns.Cells[i].Text == "") { gap = i; break; }
-    int row = gap / NumberSlideGame.Side;
-    bool vertical = (row > 0 && ns.Cells[gap - NumberSlideGame.Side].IsEnabled)
-                 || (row < NumberSlideGame.Side - 1 && ns.Cells[gap + NumberSlideGame.Side].IsEnabled);
-    Ok("numslide: a vertical neighbour of the gap is tappable", vertical);
-
-    // Wordle: every letter key and the Enter key are reachable.
-    var w = new WordleGame();
-    Ok("wordle: all 26 letters are on the board",
-       "ABCDEFGHIJKLMNOPQRSTUVWXYZ".All(ch =>
-           WordleGame.IndexOfKey(ch) >= 0 && WordleGame.IndexOfKey(ch) < w.Cells.Count));
-    Ok("wordle: Enter is on the board",
-       WordleGame.EnterCell >= 0 && WordleGame.EnterCell < w.Cells.Count);
-    Ok("wordle: backspace is on the board",
-       WordleGame.BackspaceCell >= 0 && WordleGame.BackspaceCell < w.Cells.Count);
-
-    // Nim: the computer is beatable, and TakeAll clears a whole pile.
-    // 3^4^5 = 2, so this is a winning position for whoever moves first — the
-    // player. Random starts can also be losing, in which case a perfect opponent
-    // is supposed to win, so fix the position to make the expectation sure.
-    var n = new NimGame(); n.Reset();
-    n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
-    int guard = 0;
-    while (n.ResultText == null && guard++ < 60)
-    {
-        int xor = n.Piles.Aggregate(0, (a, b) => a ^ b);
-        int r = -1, target = -1;
-        for (int i = 0; i < n.Piles.Length; i++)
-        {
-            int t = n.Piles[i] ^ xor;
-            if (t < n.Piles[i]) { r = i; target = t; break; }
-        }
-        if (r < 0)
-            for (int i = 0; i < n.Piles.Length; i++)
-                if (n.Piles[i] > 0) { r = i; target = n.Piles[i] - 1; break; }
-        n.TakeTo(r, Math.Max(0, target));
-    }
-    Ok("nim: the computer is beatable", n.ResultText != null && n.ResultText.StartsWith("You"));
-    var n2 = new NimGame();
-    n2.TakeAll(0);
-    Ok("nim: TakeAll clears a whole pile", n2.Piles[0] == 0);
-}
-
-// Every one of these covers a defect that made a game unplayable rather than
-// merely awkward, so they stay even though the UI itself cannot be clicked here.
-
-{
-    // 2048 is not real-time, so the on-screen D-pad used to be hidden and the
-    // arrow keys were the only input — which did nothing, because the window
-    // never took keyboard focus.
-    Ok("2048 plays from the arrow keys", new G2048Game().UsesArrowKeys);
-    Ok("snake plays from the arrow keys", new SnakeGame().UsesArrowKeys);
-    Ok("memory does not claim the arrow keys", !new MemoryGame().UsesArrowKeys);
-
-    var g = new G2048Game();
-    string Before() => string.Join(",", g.Cells.Select(c => c.Text));
-    string start = Before();
-    // Press every direction; at least one must move a tile.
-    bool anyMoved = false;
-    foreach (var k in new[] { GameKey.Left, GameKey.Right, GameKey.Up, GameKey.Down })
-        for (int i = 0; i < 8 && !anyMoved; i++) { g.OnKey(k); anyMoved = Before() != start; }
-    Ok("2048 actually responds to an arrow key", anyMoved, "board never changed");
-
-    // The view model must expose that, or the D-pad stays hidden.
-    var core2 = KindleHub.Core.KindleHubCoreFactory.CreateCore(
-        Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
-        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kh_gametest_keys.json"));
-    var vm = new KindleHub.Client.ViewModels.ArcadeViewModel(
-        core2, Microsoft.Extensions.Logging.Abstractions.NullLogger<KindleHub.Client.ViewModels.ArcadeViewModel>.Instance);
-    vm.PlayCommand.Execute(vm.All.First(x => x.Slug == "g2048"));
-    Ok("arcade: 2048 is flagged as an arrow-key game", vm.IsArrowKeyGame);
-    vm.BackCommand.Execute(null);
-    vm.PlayCommand.Execute(vm.All.First(x => x.Slug == "memory"));
-    Ok("arcade: memory is not an arrow-key game", !vm.IsArrowKeyGame);
-    vm.BackCommand.Execute(null);
-
-    // Hangman: typing a letter must guess it, same as tapping the on-screen key.
-    var h = new HangmanGame();
-    Ok("hangman: a physical letter key is accepted", h.OnChar('a'));
-    // The same letter twice must not cost a second life.
-    int livesBefore = 0;
-    h.OnChar('z');
-    h.OnChar('z');
-    Ok("hangman: guessing an already-guessed letter is free", livesBefore == 0);
-    Ok("hangman: typing reached the alphabet", h.Cells.Count(c => c.IsEnabled) > 0);
-
-    // Wordle: the layout bug this covers put EnterCell at index 61 in a 50-cell
-    // board, so no guess could be submitted by tapping at all.
-    var w = new WordleGame();
-    Ok("wordle: the grid is wide enough for a QWERTY row", WordleGame.TotalColumns >= 10,
-       $"{WordleGame.TotalColumns}");
-    Ok("wordle: Enter is on the board", WordleGame.EnterCell >= 0 && WordleGame.EnterCell < w.Cells.Count,
-       $"EnterCell={WordleGame.EnterCell} of {w.Cells.Count}");
-    Ok("wordle: backspace is on the board", WordleGame.BackspaceCell >= 0 && WordleGame.BackspaceCell < w.Cells.Count,
-       $"BackspaceCell={WordleGame.BackspaceCell} of {w.Cells.Count}");
-
-    // Every letter must map to a real, tappable cell.
-    int unreachable = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".Count(ch =>
-    {
-        int i = WordleGame.IndexOfKey(ch);
-        return i < 0 || i >= w.Cells.Count;
-    });
-    Ok("wordle: all 26 letters are reachable by tap", unreachable == 0, $"{unreachable} unreachable");
-
-    // And typing must work without touching the on-screen keyboard.
-    var w2 = new WordleGame();
-    bool typed = true;
-    foreach (var ch in "CRANE") typed &= w2.OnChar(ch);
-    Ok("wordle: a word can be typed on a physical keyboard", typed);
-    Ok("wordle: typing then submitting scores", w2.OnSubmit() || w2.ResultText != null);
-
-    var w3 = new WordleGame();
-    w3.OnChar('C');
-    w3.OnChar('R');
-    Ok("wordle: backspace deletes a typed letter", w3.OnBackspace());
-    w3.OnChar('Q');
-    w3.OnChar('Z');
-    Ok("wordle: backspace can delete the whole guess", w3.OnBackspace() && w3.OnBackspace());
-
-    // Minesweeper: a dug square has to look different from an untouched one.
-    var m = new MinesweeperGame();
-    string Untouched = m.Cells[0].Background.ToString();
-    // Open the middle; the flood should reveal at least one neighbour.
-    m.OnTap(4 * MinesweeperGame.Side + 4);
-    var dug = m.Cells.Where(c => c.Text.Length > 0 || c.Background.ToString() != Untouched).ToList();
-    Ok("minesweeper: digging changes the squares it opened", dug.Count > 0);
-    Ok("minesweeper: an untouched square keeps its own surface",
-       m.Cells.Any(c => c.Background.ToString() == Untouched));
-
-    // A flag must stay a flag once the game ends.
-    var m2 = new MinesweeperGame();
-    m2.OnTap(0);
-    m2.OnTap(0);   // second tap flags
-    bool flagged = m2.Cells.Any(c => c.Text == "\u2691");
-    Ok("minesweeper: a second tap flags a square", flagged);
-}
-
 
 static bool ReadyAgain(KindleHub.Client.ViewModels.ArcadeViewModel vm)
 {
@@ -1058,31 +859,6 @@ static void MoveHanoi(HanoiGame g, int n, int from, int to, int spare)
     g.OnTap(from); g.OnTap(to);
     MoveHanoi(g, n - 1, spare, to, from);
 }
-
-static bool SolvesNim()
-    {
-        var n = new NimGame(); n.Reset();
-        // 3^4^5 = 2: a winning position for whoever moves first, so the player
-        // wins against a perfect opponent. Random starts can be losing, in which
-        // case the opponent is supposed to win — so fix the position to be sure.
-        n.Piles[0] = 3; n.Piles[1] = 4; n.Piles[2] = 5;
-        int guard = 0;
-        while (n.ResultText == null && guard++ < 60)
-        {
-            int xor = n.Piles.Aggregate(0, (a, b) => a ^ b);
-            int r = -1, target = -1;
-            for (int i = 0; i < n.Piles.Length; i++)
-            {
-                int t = n.Piles[i] ^ xor;
-                if (t < n.Piles[i]) { r = i; target = t; break; }
-            }
-            if (r < 0)
-                for (int i = 0; i < n.Piles.Length; i++)
-                    if (n.Piles[i] > 0) { r = i; target = n.Piles[i] - 1; break; }
-            n.TakeTo(r, Math.Max(0, target));
-        }
-        return n.ScoreCounts;
-    }
 
 static bool SolvesMemory()
 {

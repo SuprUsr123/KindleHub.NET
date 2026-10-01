@@ -14,7 +14,7 @@
             <TextBlock Text="Messages" FontSize="28" FontWeight="Bold"/>
             <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="13"/>
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBox Text="{Binding JoinCode}" Width="220" Watermark="Join room by 12-digit code…"
+                <TextBox Text="{Binding JoinCode}" Width="220" PlaceholderText="Join room by 12-digit code…"
                          KeyDown="JoinBox_KeyDown"/>
                 <Button Content="Join" Command="{Binding JoinCommand}"/>
                 <Button Content="Refresh" Command="{Binding ReloadCommand}"/>
@@ -290,7 +290,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <TextBlock Text="{Binding ReportReason}" FontSize="12" Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
-                        <TextBox Text="{Binding ReportNote}" Watermark="Add a note (optional)" AcceptsReturn="True" Height="52"/>
+                        <TextBox Text="{Binding ReportNote}" PlaceholderText="Add a note (optional)" AcceptsReturn="True" Height="52"/>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <Button Content="Submit report" Command="{Binding SubmitReportCommand}"/>
                             <Button Content="Cancel" Command="{Binding CancelReportCommand}"/>
@@ -323,19 +323,19 @@
                                 </ItemsControl>
                                 <!-- Poll composer -->
                                 <StackPanel IsVisible="{Binding IsPollMode}" Spacing="4">
-                                    <TextBox Text="{Binding PollQuestion}" Watermark="Question" FontSize="12"/>
+                                    <TextBox Text="{Binding PollQuestion}" PlaceholderText="Question" FontSize="12"/>
                                     <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto">
-                                        <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding PollOption1}" Watermark="Option 1" FontSize="12"/>
-                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PollOption2}" Watermark="Option 2" FontSize="12"/>
-                                        <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding PollOption3}" Watermark="Option 3" FontSize="12"/>
-                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PollOption4}" Watermark="Option 4" FontSize="12"/>
+                                        <TextBox Grid.Row="0" Grid.Column="0" Text="{Binding PollOption1}" PlaceholderText="Option 1" FontSize="12"/>
+                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PollOption2}" PlaceholderText="Option 2" FontSize="12"/>
+                                        <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding PollOption3}" PlaceholderText="Option 3" FontSize="12"/>
+                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PollOption4}" PlaceholderText="Option 4" FontSize="12"/>
                                         <CheckBox Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Content="Open poll" IsChecked="{Binding PollIsOpen}" FontSize="12"/>
                                     </Grid>
                                     <Button Content="Send poll" Command="{Binding SendPollCommand}" Padding="16,4" HorizontalAlignment="Right"/>
                                 </StackPanel>
                                 <!-- Flipbook creator -->
                                 <StackPanel IsVisible="{Binding IsFlipbookMode}" Spacing="4">
-                                    <TextBox Text="{Binding FlipbookName}" Watermark="Name (max 40)" FontSize="12"/>
+                                    <TextBox Text="{Binding FlipbookName}" PlaceholderText="Name (max 40)" FontSize="12"/>
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <Border Width="64" Height="64" CornerRadius="4"
                                                 Background="White" BorderBrush="Gray" BorderThickness="1">
@@ -351,10 +351,10 @@
                                 </StackPanel>
                                 <!-- Story composer -->
                                 <StackPanel IsVisible="{Binding IsStoryMode}" Spacing="4">
-                                    <TextBox Text="{Binding StorySetting}" Watermark="Setting (max 60)" FontSize="12"/>
-                                    <TextBox Text="{Binding StoryTheme}" Watermark="Theme (max 40)" FontSize="12"/>
+                                    <TextBox Text="{Binding StorySetting}" PlaceholderText="Setting (max 60)" FontSize="12"/>
+                                    <TextBox Text="{Binding StoryTheme}" PlaceholderText="Theme (max 40)" FontSize="12"/>
                                     <Grid ColumnDefinitions="*,Auto">
-                                        <TextBox Grid.Column="0" Text="{Binding StoryLogText}" Watermark="Story line…" AcceptsReturn="True" Height="48" FontSize="12"/>
+                                        <TextBox Grid.Column="0" Text="{Binding StoryLogText}" PlaceholderText="Story line…" AcceptsReturn="True" Height="48" FontSize="12"/>
                                         <Button Grid.Column="1" Content="Add" Click="AddStoryLine_Click" VerticalAlignment="Bottom" Margin="4,0,0,0" Padding="12,4"/>
                                     </Grid>
                                     <ItemsControl ItemsSource="{Binding StoryLog}">
@@ -371,12 +371,12 @@
                                 </StackPanel>
                                 <!-- App share composer -->
                                 <StackPanel IsVisible="{Binding IsAppMode}" Spacing="4">
-                                    <TextBox Text="{Binding AppLabel}" Watermark="Label (max 40)" FontSize="12"/>
+                                    <TextBox Text="{Binding AppLabel}" PlaceholderText="Label (max 40)" FontSize="12"/>
                                     <WrapPanel Orientation="Horizontal">
                                         <Button Content="Choose HTML file…" Click="ShareAppFile_Click" Padding="10,3" FontSize="11" Margin="0,0,6,0"/>
                                         <Button Content="Paste" Click="PasteAppHtml_Click" Padding="10,3" FontSize="11"/>
                                     </WrapPanel>
-                                    <TextBox Text="{Binding AppHtml}" Watermark="Paste your HTML here (max 512 KB)"
+                                    <TextBox Text="{Binding AppHtml}" PlaceholderText="Paste your HTML here (max 512 KB)"
                                              AcceptsReturn="True" Height="120" FontSize="12"
                                              TextWrapping="NoWrap"/>
                                     <TextBlock Text="{Binding AppHtmlSizeLabel}" FontSize="11" Foreground="Gray"/>
@@ -392,7 +392,7 @@
                 <!-- composer -->
                 <Grid Grid.Row="4" Margin="0,4,0,0" ColumnDefinitions="3*,Auto,Auto,Auto,Auto,Auto,Auto">
                     <TextBox Grid.Column="0" x:Name="ComposerBox" Text="{Binding NewMessageText}"
-                             Watermark="Message…  (start your line with ! to mark it important)"
+                             PlaceholderText="Message…  (start your line with ! to mark it important)"
                              KeyDown="Composer_KeyDown"/>
                     <Button Grid.Column="1" Margin="4,0,0,0" Content="📷" ToolTip.Tip="Photo" Click="Attach_Click"/>
                     <Button Grid.Column="2" Margin="4,0,0,0" Content="😊" ToolTip.Tip="Sticker" Command="{Binding ToggleStickerPanelCommand}"/>

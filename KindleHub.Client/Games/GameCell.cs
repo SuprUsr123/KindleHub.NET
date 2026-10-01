@@ -9,6 +9,7 @@ public enum GameKey
     Left,
     Right,
     Confirm,
+    Backspace,
 }
 
 /// <summary>
@@ -25,6 +26,8 @@ public sealed class GameCell
     public bool IsEnabled { get; set; } = true;
     public int FontSize { get; set; } = 20;
     public bool Bold { get; set; }
+    public Avalonia.Media.IBrush? BorderBrush { get; set; }
+    public Avalonia.Thickness BorderThickness { get; set; } = new(0);
     /// <summary>Grid columns this cell occupies. 2 makes a keyboard key or peg twice as wide.</summary>
     public int Span { get; set; } = 1;
     /// <summary>Set when a cell is decoration rather than something to tap.</summary>

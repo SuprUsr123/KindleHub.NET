@@ -8,34 +8,30 @@ namespace KindleHub.Client.Games;
 /// <summary>
 /// Wordle — guess the word in six tries, with green/amber/grey per letter.
 ///
-/// The 6x5 board sits on top and the QWERTY keyboard underneath, all in one grid
-/// so it still renders through the shared board view.
+/// The board is kept separate from the QWERTY keyboard in the underlying 10-column
+/// grid so the desktop/touch keyboard has room to breathe instead of being squeezed
+/// into the five board columns.
 /// </summary>
-public sealed class WordleGame : GameBase, IWordEntry
+public sealed class WordleGame : GameBase
 {
     private const int Rows = 6;
+    private const int BoardColumns = 10;
     private const int Cols = 5;
 
     private static readonly string[] Answers =
     {
-        "CRANE","SLATE","TRACE","AUDIO","ROUTE","STONE","LIGHT","MOUNT","TRAIN",
+        "CRANE","SLATE","TRACE","AUDIO","ADIEU","ROUTE","STONE","LIGHT","MOUNT","TRAIN",
         "SHARE","PLANT","GRAPE","HOUSE","FROST","SPARK","BLADE","CHARM","FLAME",
     };
 
-    private const string Keyboard =
-        "QWERTYUIOP" +
-        "ASDFGHJKL" +
-        "ZXCVBNM";
+    private const string KeyboardRow1 = "QWERTYUIOP";
+    private const string KeyboardRow2 = "ASDFGHJKL";
+    private const string KeyboardRow3 = "ZXCVBNM";
 
-    // The board is 5 squares wide but a QWERTY row is 10, so the whole grid is
-    // KeyboardCols wide and the board is centred inside it. This used to be
-    // Columns (5), which silently pushed 11 letters and the Enter key past the end
-    // of the cell list — EnterCell resolved to index 61 in a 50-cell board, so
-    // there was no way to submit a guess by tapping.
-    private const int KeyboardCols = 10;
-    private const int BoardOffset = (KeyboardCols - Cols) / 2;   // 2
-
-    public const int TotalColumns = KeyboardCols;
+    public const int TotalColumns = BoardColumns;
+    private const int BoardCellCount = Rows * BoardColumns;
+    private const int KeyboardBase = BoardCellCount + BoardColumns;
+    private const int KeyboardRows = 3;
 
     private enum Mark { None, Correct, Present, Absent }
 
@@ -47,17 +43,12 @@ public sealed class WordleGame : GameBase, IWordEntry
     private int _row;
     private int _col;
     private bool _won;
+    private string _message = "";
 
     public WordleGame()
     {
-        // Board rows, one gutter row, then three keyboard rows, all KeyboardCols wide.
-        for (int r = 0; r < Rows; r++)
-            for (int c = 0; c < KeyboardCols; c++)
-                _cells.Add(Blank());
-        for (int c = 0; c < KeyboardCols; c++) _cells.Add(Blank());          // gutter row
-        for (int r = 0; r < 3; r++)
-            for (int c = 0; c < KeyboardCols; c++)
-                _cells.Add(Blank());
+        for (int i = 0; i < BoardCellCount + BoardColumns + KeyboardRows * BoardColumns; i++)
+            _cells.Add(Blank());
         Reset();
     }
 
@@ -81,36 +72,49 @@ public sealed class WordleGame : GameBase, IWordEntry
         {
             if (_won) return $"Correct — {_answer} in {_row + 1}.";
             if (_row >= Rows) return $"The word was {_answer}.";
-            return _col == 0 ? $"Guess {_row + 1} of {Rows} — tap letters below."
-                              : $"Guess {_row + 1} of {Rows} — press Enter to submit.";
+            if (!string.IsNullOrEmpty(_message)) return _message;
+            return _col == 0
+                ? $"Guess {_row + 1} of {Rows} — type A–Z or use the keyboard below."
+                : $"Guess {_row + 1} of {Rows} — Enter to submit · Backspace to edit";
         }
     }
 
-    /// <summary>Where the keyboard block starts inside <see cref="Cells"/>.</summary>
-    private static int KeyboardBase => Rows * KeyboardCols + KeyboardCols;
+    public static int EnterCell => KeyboardBase + 20;
+    public static int BackspaceCell => KeyboardBase + 29;
 
-    /// <summary>The cell index of the Enter key, for the view and for tests.</summary>
-    public static int EnterCell => KeyboardBase + 26;
-
-    /// <summary>The cell index of the backspace key.</summary>
-    public static int BackspaceCell => EnterCell - 1;
-
-    /// <summary>The cell index of a board square, which is centred in the wide grid.</summary>
-    public static int BoardCell(int row, int col) => row * KeyboardCols + BoardOffset + col;
-
-    /// <summary>The cell index of a letter key, or -1 if it isn't on the board.</summary>
+    /// <summary>The cell index of a letter key, or -1 if it isn't on the keyboard.</summary>
     public static int IndexOfKey(char key)
     {
-        int at = Keyboard.IndexOf(char.ToUpperInvariant(key));
-        return at < 0 ? -1 : KeyboardBase + at;
+        key = char.ToUpperInvariant(key);
+        int at = KeyboardRow1.IndexOf(key);
+        if (at >= 0) return KeyboardBase + at;
+        at = KeyboardRow2.IndexOf(key);
+        if (at >= 0) return KeyboardBase + BoardColumns + at;
+        at = KeyboardRow3.IndexOf(key);
+        if (at >= 0) return KeyboardBase + BoardColumns * 2 + 1 + at;
+        return -1;
     }
 
-    /// <summary>The key at a keyboard cell, or '\0' for the padding blanks.</summary>
+    /// <summary>The key at a keyboard cell, or '\0' for padding/command cells.</summary>
     public static char KeyAt(int index)
     {
         int k = index - KeyboardBase;
-        return k >= 0 && k < Keyboard.Length ? Keyboard[k] : '\0';
+        if (k >= 0 && k < BoardColumns) return KeyboardRow1[k];
+        if (k >= BoardColumns && k < BoardColumns * 2)
+        {
+            int at = k - BoardColumns;
+            return at < KeyboardRow2.Length ? KeyboardRow2[at] : '\0';
+        }
+        if (k >= BoardColumns * 2 && k < BoardColumns * 3)
+        {
+            int at = k - BoardColumns * 2 - 1;
+            return at >= 0 && at < KeyboardRow3.Length ? KeyboardRow3[at] : '\0';
+        }
+        return '\0';
     }
+
+    private static bool IsEnterCell(int index) => index == EnterCell;
+    private static bool IsBackspaceCell(int index) => index == BackspaceCell;
 
     public override void Reset()
     {
@@ -121,118 +125,133 @@ public sealed class WordleGame : GameBase, IWordEntry
         _row = 0;
         _col = 0;
         _won = false;
+        _message = "";
         ScoreCounts = false;
         Redraw();
     }
 
-    public override bool OnTap(int index)
+    public override bool OnLetter(char letter)
     {
         if (_won || _row >= Rows) return false;
+        letter = char.ToUpperInvariant(letter);
+        if (letter < 'A' || letter > 'Z' || _col >= Cols) return false;
 
-        if (index < Rows * KeyboardCols)
-        {
-            int r = index / KeyboardCols, c = index - BoardOffset - r * KeyboardCols;
-            if (r == _row && c >= 0 && c < Cols) _col = Math.Clamp(c, 0, Cols - 1);
-            Redraw();
-            return true;
-        }
-
-        // Submit lives on a padding blank at the end of the bottom keyboard row,
-        // so it never steals a letter from QWERTY. It has to be tested BEFORE the
-        // blank check, because that slot legitimately has no letter on it.
-        if (IsEnterCell(index)) return Submit();
-        if (IsBackspaceCell(index)) return Backspace();
-
-        char key = KeyAt(index);
-        if (key == '\0') return false;
-        return Type(key);
-    }
-
-    private static bool IsEnterCell(int index) => index == EnterCell;
-
-    private static bool IsBackspaceCell(int index) => index == BackspaceCell;
-
-    /// <summary>Types one letter into the current guess, if there is room.</summary>
-    private bool Type(char key)
-    {
-        if (_won || _row >= Rows) return false;
-        if (_col < Cols)
-        {
-            _board[_row, _col++] = key;
-            Redraw();
-        }
-        return true;
-    }
-
-    /// <summary>
-    /// Deletes the last letter. This exists on the physical keyboard and as a
-    /// visible key — without it a mistyped guess could not be corrected even by
-    /// tapping, which is what made Wordle feel broken rather than merely awkward.
-    /// </summary>
-    public override bool OnChar(char c)
-    {
-        char up = char.ToUpperInvariant(c);
-        return char.IsAsciiLetterUpper(up) && Type(up);
-    }
-
-    public override bool OnBackspace()
-    {
-        if (_won || _row >= Rows || _col == 0) return false;
-        _col--;
-        _board[_row, _col] = '\0';
+        _board[_row, _col++] = letter;
+        _message = "";
         Redraw();
         return true;
     }
 
-    private bool Backspace() => OnBackspace();
+    public override bool OnBackspace()
+    {
+        if (_won || _row >= Rows || _col <= 0) return false;
+        _col--;
+        _board[_row, _col] = '\0';
+        _message = "";
+        Redraw();
+        return true;
+    }
 
-    /// <summary>Submits the current row. Public so Enter on a physical keyboard can reach it.</summary>
-    public bool OnSubmit() => Submit();
+    public override bool OnKey(GameKey key)
+    {
+        if (key == GameKey.Confirm) return Submit();
+        if (key == GameKey.Backspace) return OnBackspace();
+        return base.OnKey(key);
+    }
+
+    public override bool OnTap(int index)
+    {
+        if (_won || _row >= Rows || index < 0 || index >= _cells.Count) return false;
+
+        if (index < BoardCellCount)
+        {
+            int r = index / BoardColumns;
+            int visualCol = index % BoardColumns;
+            int start = (BoardColumns - Cols) / 2;
+            if (r != _row || visualCol < start || visualCol >= start + Cols) return false;
+            _col = visualCol - start + 1;
+            _col = Math.Clamp(_col, 0, Cols);
+            Redraw();
+            return true;
+        }
+
+        if (IsEnterCell(index)) return Submit();
+        if (IsBackspaceCell(index)) return OnBackspace();
+
+        char key = KeyAt(index);
+        return key != '\0' && OnLetter(key);
+    }
 
     private bool Submit()
     {
-        if (_col < Cols) return false;   // need a full word
+        if (_won || _row >= Rows || _col < Cols) return false;
 
-        var guess = new string(Enumerable.Range(0, Cols).Select(c => _board[_row, c]).ToArray());
+        var guess = new string(Enumerable.Range(0, Cols)
+            .Select(c => _board[_row, c]).ToArray());
+
+        if (!WordleWordList.Words.Contains(guess) && !Answers.Contains(guess, StringComparer.Ordinal))
+        {
+            _message = $"{guess} isn't in the word list.";
+            Redraw();
+            return true;
+        }
+
+        _message = "";
         var remaining = _answer.ToCharArray().ToList();
 
-        // First pass: exact matches consume both sides.
         for (int c = 0; c < Cols; c++)
         {
             if (guess[c] != _answer[c]) continue;
             _marks[_row, c] = Mark.Correct;
             remaining[c] = '\0';
         }
-        // Second pass: present-but-misplaced, honouring counts.
         for (int c = 0; c < Cols; c++)
         {
             if (_marks[_row, c] == Mark.Correct) continue;
             int at = remaining.IndexOf(guess[c]);
-            if (at >= 0) { _marks[_row, c] = Mark.Present; remaining[at] = '\0'; }
+            if (at >= 0)
+            {
+                _marks[_row, c] = Mark.Present;
+                remaining[at] = '\0';
+            }
             else _marks[_row, c] = Mark.Absent;
         }
 
         for (int c = 0; c < Cols; c++)
         {
             char ch = guess[c];
-            var m = _marks[_row, c];
-            if (!_keyState.TryGetValue(ch, out var prev) || Rank(m) > Rank(prev)) _keyState[ch] = m;
+            var mark = _marks[_row, c];
+            if (!_keyState.TryGetValue(ch, out var previous) || Rank(mark) > Rank(previous))
+                _keyState[ch] = mark;
         }
 
-        if (guess == _answer) { _won = true; ScoreCounts = true; }
-        else { _row++; if (_row >= Rows) ScoreCounts = false; }
+        if (guess == _answer)
+        {
+            _won = true;
+            ScoreCounts = true;
+        }
+        else
+        {
+            _row++;
+            ScoreCounts = false;
+        }
         _col = 0;
         Redraw();
         return true;
     }
 
-    private static int Rank(Mark m) => m switch
+    private static int Rank(Mark mark) => mark switch
     {
-        Mark.Correct => 3, Mark.Present => 2, Mark.Absent => 1, _ => 0,
+        Mark.Correct => 3,
+        Mark.Present => 2,
+        Mark.Absent => 1,
+        _ => 0,
     };
 
     public override void Redraw()
     {
+        int start = (BoardColumns - Cols) / 2;
+
         for (int i = 0; i < _cells.Count; i++)
         {
             var c = _cells[i];
@@ -241,50 +260,76 @@ public sealed class WordleGame : GameBase, IWordEntry
             c.IsEnabled = false;
             c.Foreground = Ink;
             c.Background = Board;
+        }
 
-            if (i < Rows * KeyboardCols)
+        // Six 5-cell guesses, centered inside a 10-column board row.
+        for (int r = 0; r < Rows; r++)
+        {
+            for (int visualCol = start; visualCol < start + Cols; visualCol++)
             {
-                int r = i / KeyboardCols, raw = i - r * KeyboardCols;
-                int cc = raw - BoardOffset;
-                if (cc < 0 || cc >= Cols) continue;   // centring padding beside the board
-                char ch = _board[r, cc];
-                var m = _marks[r, cc];
+                int cIndex = visualCol - start;
+                var c = _cells[r * BoardColumns + visualCol];
+                char ch = _board[r, cIndex];
+                var mark = _marks[r, cIndex];
+                bool live = r == _row && ch != '\0';
                 c.Text = ch == '\0' ? "" : ch.ToString();
                 c.FontSize = 22;
-                switch (m)
+                c.Bold = true;
+
+                switch (mark)
                 {
                     case Mark.Correct: c.Background = Good; c.Foreground = Cell; break;
                     case Mark.Present: c.Background = Warn; c.Foreground = Cell; break;
                     case Mark.Absent: c.Background = Board; c.Foreground = Muted; break;
                     default:
-                        // An empty square on the current row is the one you can type
-                        // into, so it reads as fillable. "live" alone meant "has a
-                        // letter in it", which left the row you're meant to fill
-                        // the same colour as the padding around the board.
-                        bool fillable = r == _row && !_won && _row < Rows;
-                        c.Background = fillable ? Slot : Board;
-                        c.Foreground = fillable ? Ink : Muted;
+                        c.Background = live ? Cell : Board;
+                        c.Foreground = live ? Ink : Muted;
                         break;
                 }
-                continue;
+                c.IsEnabled = r == _row && !_won;
             }
-
-            if (i < Rows * KeyboardCols + KeyboardCols) { c.Text = ""; c.Background = Board; continue; } // gutter
-
-            if (IsBackspaceCell(i)) { c.Text = "⌫"; c.FontSize = 15; c.IsEnabled = !_won && _row < Rows; continue; }
-            if (IsEnterCell(i)) { c.Text = "↵"; c.FontSize = 15; c.IsEnabled = !_won && _row < Rows; continue; }
-
-            char key = KeyAt(i);
-            if (key == '\0') { c.Text = ""; c.Background = Board; continue; }
-            c.Text = key.ToString();
-            c.FontSize = 14;
-            var st = _keyState.TryGetValue(key, out var s) ? s : Mark.None;
-            c.Background = st switch
-            {
-                Mark.Correct => Good, Mark.Present => Warn, Mark.Absent => Board, _ => Slot,
-            };
-            c.Foreground = st == Mark.None ? Ink : st == Mark.Absent ? Muted : Cell;
-            c.IsEnabled = !_won && _row < Rows;
         }
+
+        // QWERTY keyboard: 10 / 9 / 7 keys, with Enter and Backspace flanking row 3.
+        for (int col = 0; col < BoardColumns; col++)
+        {
+            DrawKey(KeyboardBase + col, KeyboardRow1[col]);
+            if (col < BoardColumns)
+                DrawKey(KeyboardBase + BoardColumns + col,
+                        col < KeyboardRow2.Length ? KeyboardRow2[col] : '\0');
+
+            int bottom = KeyboardBase + BoardColumns * 2 + col;
+            if (col == 0) DrawCommandKey(bottom, "↵", IsEnterCell(bottom));
+            else if (col >= 1 && col <= 7) DrawKey(bottom, KeyboardRow3[col - 1]);
+            else if (col == 9) DrawCommandKey(bottom, "⌫", false);
+        }
+    }
+
+    private void DrawKey(int index, char key)
+    {
+        var c = _cells[index];
+        if (key == '\0') { c.Text = ""; c.Background = Board; c.IsEnabled = false; return; }
+        c.Text = key.ToString();
+        c.FontSize = 15;
+        var state = _keyState.TryGetValue(key, out var s) ? s : Mark.None;
+        c.Background = state switch
+        {
+            Mark.Correct => Good,
+            Mark.Present => Warn,
+            Mark.Absent => Board,
+            _ => Cell,
+        };
+        c.Foreground = state == Mark.None ? Ink : state == Mark.Absent ? Muted : Cell;
+        c.IsEnabled = !_won && _row < Rows;
+    }
+
+    private void DrawCommandKey(int index, string text, bool _)
+    {
+        var c = _cells[index];
+        c.Text = text;
+        c.FontSize = 16;
+        c.Background = Cell;
+        c.Foreground = Ink;
+        c.IsEnabled = !_won && _row < Rows;
     }
 }
