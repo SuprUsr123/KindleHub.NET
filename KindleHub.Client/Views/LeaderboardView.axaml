@@ -2,65 +2,122 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             mc:Ignorable="d" d:DesignWidth="1050" d:DesignHeight="720"
              x:Class="KindleHub.Client.Views.LeaderboardView">
-    <Grid RowDefinitions="Auto,*" Margin="20">
-        <StackPanel Grid.Row="0">
-            <TextBlock Text="Leaderboards" FontSize="32" FontWeight="Bold"/>
-            <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,10,0,12">
-                <TextBlock Text="Game:" VerticalAlignment="Center" FontSize="16"/>
+    <Grid RowDefinitions="Auto,*" Margin="24">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,18">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Leaderboards" FontSize="30" FontWeight="Bold"/>
+                <TextBlock Text="Compare the top scores across KindleHub games." Foreground="Gray"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <ComboBox ItemsSource="{Binding AvailableGames}" SelectedItem="{Binding SelectedGameEntry}"
-                          MinWidth="220" FontSize="14" VerticalAlignment="Center">
+                          MinWidth="220" FontSize="14">
                     <ComboBox.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding DisplayName}"/>
-                        </DataTemplate>
+                        <DataTemplate><TextBlock Text="{Binding DisplayName}"/></DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
-                <Button Content="Refresh" Command="{Binding RefreshGamesCommand}"/>
-                <ProgressBar IsVisible="{Binding IsLoading}" Width="80" IsIndeterminate="True" VerticalAlignment="Center"/>
+                <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
+                <ProgressBar IsVisible="{Binding IsLoading}" Width="64" IsIndeterminate="True" VerticalAlignment="Center"/>
             </StackPanel>
-        </StackPanel>
+        </Grid>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,340">
-            <Border Grid.Column="0" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="4">
-                <ListBox ItemsSource="{Binding Entries}">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Border Padding="14" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
-                                <Grid ColumnDefinitions="Auto,*,Auto,130">
-                                    <TextBlock Grid.Column="0" Text="# " FontWeight="Bold" FontSize="18" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="15"/>
-                                        <TextBlock Text="{Binding UserId}" FontSize="11" Foreground="Gray"/>
-                                    </StackPanel>
-                                    <TextBlock Grid.Column="2" Text="{Binding ScoreFormatted}" FontWeight="Bold" FontSize="18"
-                                               VerticalAlignment="Center" Margin="0,0,14,0"/>
-                                    <TextBlock Grid.Column="3" Text="{Binding DateFormatted}" FontSize="11" Foreground="Gray"
-                                               VerticalAlignment="Center"/>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+        <Grid Grid.Row="1" ColumnDefinitions="*,300" ColumnSpacing="16">
+            <Border Grid.Column="0" BorderBrush="{DynamicResource ControlBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Background="{DynamicResource ControlFillColorDefault}">
+                <Grid RowDefinitions="Auto,*">
+                    <Border Grid.Row="0" Padding="16,12">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="SCORE" FontSize="11" Foreground="Gray"/>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Row="1" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,1,0,0">
+                        <Panel>
+                            <ListBox ItemsSource="{Binding Entries}" IsVisible="{Binding HasEntries}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="14,10" BorderBrush="{DynamicResource ControlBorderBrush}"
+                                                BorderThickness="0,0,0,1">
+                                            <Grid ColumnDefinitions="44,40,*,Auto" ColumnSpacing="12">
+                                                <TextBlock Grid.Column="0" Text="{Binding RankLabel}" FontSize="20"
+                                                           FontWeight="Bold" VerticalAlignment="Center"/>
+                                                <Grid Grid.Column="1" Width="36" Height="36" ClipToBounds="True">
+                                                    <Border CornerRadius="18" Background="{DynamicResource ControlFillColorSecondary}"
+                                                            IsVisible="{Binding !HasAvatar}">
+                                                        <TextBlock Text="{Binding Initial}" FontWeight="Bold" FontSize="14"
+                                                                   Foreground="{DynamicResource AppTextPrimaryBrush}"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <Image Source="{Binding AvatarImage}" Width="36" Height="36"
+                                                           IsVisible="{Binding HasAvatar}"/>
+                                                </Grid>
+                                                <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2">
+                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="15"/>
+                                                    <TextBlock Text="{Binding DateFormatted}" Foreground="Gray" FontSize="11"/>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="3" Text="{Binding ScoreFormatted}" FontSize="18"
+                                                           FontWeight="Bold" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource AppTextPrimaryBrush}"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel IsVisible="{Binding !HasEntries}" HorizontalAlignment="Center"
+                                        VerticalAlignment="Center" Spacing="8" MaxWidth="340">
+                                <TextBlock Text="No scores yet" FontSize="20" FontWeight="Bold"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Play this game and submit a score to start the leaderboard."
+                                           Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </StackPanel>
+                        </Panel>
+                    </Border>
+                </Grid>
             </Border>
 
-            <Border Grid.Column="1" Margin="20,0,0,0" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="4">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="People online" FontWeight="Bold" FontSize="18" Padding="14,12"/>
-                    <ScrollViewer>
-                        <ItemsControl ItemsSource="{Binding OnlineNow}" Margin="14,4">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Spacing="2" Margin="0,6">
-                                        <TextBlock Text="{Binding DisplayName}" FontWeight="Bold"/>
-                                        <TextBlock Text="{Binding AgeFormatted}" FontSize="11" Foreground="Gray"/>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </DockPanel>
+            <Border Grid.Column="1" BorderBrush="{DynamicResource ControlBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Background="{DynamicResource ControlFillColorDefault}">
+                <Grid RowDefinitions="Auto,*">
+                    <StackPanel Grid.Row="0" Margin="16,14,16,10" Spacing="3">
+                        <TextBlock Text="People online" FontSize="18" FontWeight="Bold"/>
+                        <TextBlock Text="Seen in the last 10 minutes" FontSize="11" Foreground="Gray"/>
+                    </StackPanel>
+                    <Border Grid.Row="1" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,1,0,0">
+                        <Panel>
+                            <ScrollViewer IsVisible="{Binding HasOnline}">
+                                <ItemsControl ItemsSource="{Binding OnlineNow}" Margin="12,8">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="8" Margin="0,2" CornerRadius="6"
+                                                    Background="{DynamicResource ControlFillColorSecondary}">
+                                                <Grid ColumnDefinitions="36,*" ColumnSpacing="9">
+                                                    <Grid Width="34" Height="34" ClipToBounds="True">
+                                                        <Border CornerRadius="17" Background="{DynamicResource ControlFillColorDefault}"
+                                                                IsVisible="{Binding !HasAvatar}">
+                                                            <TextBlock Text="{Binding Initial}" FontSize="12" FontWeight="Bold"
+                                                                       Foreground="{DynamicResource AppTextPrimaryBrush}"
+                                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <Image Source="{Binding AvatarImage}" Width="34" Height="34"
+                                                               IsVisible="{Binding HasAvatar}"/>
+                                                    </Grid>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding AgeFormatted}" FontSize="11" Foreground="Gray"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                            <TextBlock Text="No one has checked in recently." Foreground="Gray"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap"
+                                       Margin="16" IsVisible="{Binding !HasOnline}"/>
+                        </Panel>
+                    </Border>
+                </Grid>
             </Border>
         </Grid>
     </Grid>

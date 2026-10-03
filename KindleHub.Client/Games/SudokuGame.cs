@@ -30,6 +30,7 @@ public sealed class SudokuGame : GameBase
     public override string Name => "Sudoku";
     public override int Columns => Side;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => Solved ? 10 : 0;
     public override string? ResultText => Solved ? "Solved — every row, column and box has 1-9." : null;
     public override string StatusText => Solved
         ? "Solved."

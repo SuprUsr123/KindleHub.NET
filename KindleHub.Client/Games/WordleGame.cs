@@ -56,6 +56,7 @@ public sealed class WordleGame : GameBase
     public override string Name => "Wordle";
     public override int Columns => TotalColumns;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => _won ? (7 - (_row + 1)) * 100 + Cols * 10 : 0;
 
     public override string? ResultText
     {

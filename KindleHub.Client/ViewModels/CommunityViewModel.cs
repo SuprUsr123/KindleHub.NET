@@ -20,6 +20,7 @@ public class CommunityViewModel : ViewModelBase
     private readonly MainViewModel _nav;
 
     private ObservableCollection<TopicListing> _topics = new();
+    private System.Collections.Generic.List<TopicListing> _allTopics = new();
     private TopicListing? _selectedTopic;
     private string _searchText = "";
     private string _selectedCategory = "All";
@@ -34,11 +35,13 @@ public class CommunityViewModel : ViewModelBase
     private string _joinCode = "";
 
     public ObservableCollection<TopicListing> Topics { get => _topics; set => SetProperty(ref _topics, value); }
-    public TopicListing? SelectedTopic { get => _selectedTopic; set { if (SetProperty(ref _selectedTopic, value)) OpenCommand.RaiseCanExecuteChanged(); } }
-    public string SearchText { get => _searchText; set { if (SetProperty(ref _searchText, value)) _ = RefreshAsync(); } }
-    public string SelectedCategory { get => _selectedCategory; set { if (SetProperty(ref _selectedCategory, value)) _ = RefreshAsync(); } }
+    public TopicListing? SelectedTopic { get => _selectedTopic; set { if (SetProperty(ref _selectedTopic, value)) { OpenCommand.RaiseCanExecuteChanged(); OnPropertyChanged(nameof(HasSelection)); } } }
+    public string SearchText { get => _searchText; set { if (SetProperty(ref _searchText, value)) ApplyFilter(); } }
+    public string SelectedCategory { get => _selectedCategory; set { if (SetProperty(ref _selectedCategory, value)) ApplyFilter(); } }
     public bool IsLoading { get => _isLoading; set => SetProperty(ref _isLoading, value); }
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
+    public bool HasSelection => SelectedTopic != null;
+    public bool HasTopics => Topics.Count > 0;
     public string JoinCode { get => _joinCode; set { if (SetProperty(ref _joinCode, value)) JoinCommand.RaiseCanExecuteChanged(); } }
 
     public bool ShowCreate { get => _showCreate; set => SetProperty(ref _showCreate, value); }
@@ -47,6 +50,7 @@ public class CommunityViewModel : ViewModelBase
     public string NewCategory { get => _newCategory; set => SetProperty(ref _newCategory, value); }
 
     public string[] AllCategories { get; } = new[] { "All" }.Concat(TopicHelper.Categories.Select(c => c.Name)).ToArray();
+    public string[] TopicCategories { get; } = TopicHelper.Categories.Select(c => c.Name).ToArray();
 
     public RelayCommand RefreshCommand { get; }
     public RelayCommand OpenCommand { get; }
@@ -81,25 +85,34 @@ public class CommunityViewModel : ViewModelBase
         IsLoading = true;
         try
         {
-            var t = await _core.ListOpenTopicsAsync(200, CancellationToken.None);
-            var needle = SearchText.Trim().ToLowerInvariant();
-            var want = _selectedCategory == "All" ? null : TopicHelper.CategoryIdByName(_selectedCategory);
-            Topics = new ObservableCollection<TopicListing>(
-                t.Where(x => (want == null || x.CategoryId == want) &&
-                             (needle.Length == 0 ||
-                              x.Title.ToLowerInvariant().Contains(needle) ||
-                              (x.Blurb ?? "").ToLowerInvariant().Contains(needle) ||
-                              (x.Creator ?? "").ToLowerInvariant().Contains(needle)))
-            .OrderByDescending(x => x.CreatedAt));
-            StatusText = $"{Topics.Count} topic(s).";
+            _allTopics = await _core.ListOpenTopicsAsync(200, CancellationToken.None);
+            ApplyFilter();
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Topic list failed");
             StatusText = "Couldn't load topics. Sign in or check the network.";
+            _allTopics.Clear();
             Topics.Clear();
+            OnPropertyChanged(nameof(HasTopics));
         }
         finally { IsLoading = false; }
+    }
+
+    private void ApplyFilter()
+    {
+        var needle = SearchText.Trim();
+        var want = _selectedCategory == "All" ? null : TopicHelper.CategoryIdByName(_selectedCategory);
+        var filtered = _allTopics.Where(x => (want == null || x.CategoryId == want) &&
+            (needle.Length == 0 || x.Title.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+             (x.Blurb ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+             (x.Creator ?? "").Contains(needle, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(x => x.CreatedAt).ToList();
+        if (SelectedTopic != null && !filtered.Any(x => x.Code == SelectedTopic.Code))
+            SelectedTopic = null;
+        Topics = new ObservableCollection<TopicListing>(filtered);
+        StatusText = $"Showing {filtered.Count} of {_allTopics.Count} topics.";
+        OnPropertyChanged(nameof(HasTopics));
     }
 
     public async Task OpenSelectedAsync()

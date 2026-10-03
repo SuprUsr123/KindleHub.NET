@@ -124,22 +124,8 @@
             <Button Classes="game-action" Content="Submit guess" Command="{Binding ConfirmCommand}"
                     HorizontalAlignment="Center" IsVisible="{Binding CanSubmitMastermind}"/>
 
-            <StackPanel Orientation="Horizontal"
-                        Spacing="8"
-                        HorizontalAlignment="Center"
-                        IsVisible="{Binding IsInConnect4Online}">
-                <Button Classes="game-action" Content="New game" Command="{Binding NewGameCommand}"/>
-                <Button Classes="game-action" Content="Leave match" Command="{Binding LeaveConnect4Command}"/>
-                <Button Classes="game-action" Content="Opponent move" Command="{Binding DebugStepCommand}" IsVisible="{Binding IsConnect4Debug}"/>
-            </StackPanel>
-
-            <TextBlock Text="{Binding OnlineStatus}"
-                       FontSize="11"
-                       Foreground="Gray"
-                       TextAlignment="Center"
-                       HorizontalAlignment="Center"
-                       TextWrapping="Wrap"
-                       IsVisible="{Binding IsInConnect4Online}"/>
+            <Button Classes="game-action" Content="Retry score submission" Command="{Binding RetryScoreCommand}"
+                    HorizontalAlignment="Center" IsVisible="{Binding CanRetryScore}"/>
 
             <Separator Margin="0,2"/>
 

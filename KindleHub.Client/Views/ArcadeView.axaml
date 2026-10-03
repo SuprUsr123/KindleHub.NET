@@ -100,11 +100,23 @@
                                    MaxLines="4"/>
                     </Border>
 
-                    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="0,12,0,0">
+                    <Grid Grid.Row="3" ColumnDefinitions="*,*" Margin="0,12,0,0">
                         <Button Classes="play"
                                 Content="Play"
                                 IsEnabled="{Binding IsPorted}"
+                                IsVisible="{Binding !HasOnlinePlay}"
                                 Command="{Binding $parent[UserControl].DataContext.PlayCommand}"
+                                CommandParameter="{Binding}"/>
+                        <Button Classes="play" Grid.ColumnSpan="2"
+                                Content="Play offline"
+                                Grid.Column="0"
+                                IsVisible="{Binding HasOnlinePlay}"
+                                Command="{Binding $parent[UserControl].DataContext.PlayCommand}"
+                                CommandParameter="{Binding}"/>
+                        <Button Classes="play" Grid.Column="1"
+                                Content="Play online"
+                                IsVisible="{Binding HasOnlinePlay}"
+                                Command="{Binding $parent[UserControl].DataContext.PlayOnlineCommand}"
                                 CommandParameter="{Binding}"/>
                         <TextBlock Grid.Column="1"
                                    Text="Not available yet"
@@ -119,8 +131,9 @@
         </DataTemplate>
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Spacing="22" Margin="24,24,24,32" IsVisible="{Binding NotInGame}">
+    <Grid>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" IsVisible="{Binding NotInGame}">
+        <StackPanel Spacing="22" Margin="24,24,24,32">
             <Border Padding="20"
                     CornerRadius="18"
                     Background="{DynamicResource ControlFillColorDefault}"
@@ -235,4 +248,124 @@
             </StackPanel>
         </StackPanel>
     </ScrollViewer>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" IsVisible="{Binding IsOnlineGamePage}">
+        <StackPanel Spacing="16" Margin="24,24,24,32" HorizontalAlignment="Center">
+            <Grid ColumnDefinitions="Auto,*" Width="760" MaxWidth="900">
+                <Button Content="← Arcade" Command="{Binding BackCommand}" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Margin="16,0,0,0" Spacing="3" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding GameName}" FontSize="28" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding Status}" Foreground="Gray" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Grid>
+            <Border Padding="14" CornerRadius="12" Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                    IsVisible="{Binding ShowConnect4Tools}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Host a room or join a six digit room code." Foreground="Gray"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Host online" Command="{Binding HostConnect4Command}"/>
+                        <TextBox Text="{Binding Connect4Room}" Width="140" PlaceholderText="6 digit code"/>
+                        <Button Content="Join" Command="{Binding JoinConnect4Command}"/>
+                        <Button Content="Debug match" Command="{Binding DebugConnect4Command}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Padding="14" CornerRadius="12" Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                    IsVisible="{Binding ShowDotsBoxesTools}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Complete boxes by claiming their fourth edge. A completed box earns an extra turn." Foreground="Gray" TextWrapping="Wrap"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Host online" Command="{Binding HostDotsBoxesCommand}"/>
+                        <TextBox Text="{Binding DotsBoxesRoom}" Width="140" PlaceholderText="6 digit code"/>
+                        <Button Content="Join" Command="{Binding JoinDotsBoxesCommand}"/>
+                        <Button Content="Debug match" Command="{Binding StartDotsBoxesDebugCommand}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Padding="14" CornerRadius="12" Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                    IsVisible="{Binding ShowReversiTools}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Host a room or join a six digit room code." Foreground="Gray"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Host online" Command="{Binding HostReversiCommand}"/>
+                        <TextBox Text="{Binding ReversiRoom}" Width="140" PlaceholderText="6 digit code"/>
+                        <Button Content="Join" Command="{Binding JoinReversiCommand}"/>
+                        <Button Content="Debug match" Command="{Binding StartReversiDebugCommand}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Padding="14" CornerRadius="12" Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                    IsVisible="{Binding ShowLobbyTools}">
+                <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="Open rooms" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Content="Refresh rooms" Command="{Binding RefreshLobbiesCommand}"
+                                IsEnabled="{Binding !IsLoadingLobbies}"/>
+                    </Grid>
+                    <TextBlock Text="{Binding LobbyStatus}" Foreground="Gray" FontSize="12"/>
+                    <ItemsControl ItemsSource="{Binding OpenLobbies}" IsVisible="{Binding HasOpenLobbies}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="6"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="10,8" CornerRadius="8"
+                                        Background="{DynamicResource ControlFillColorSecondary}"
+                                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Host}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding AnnouncedFormatted}" FontSize="11" Foreground="Gray"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{Binding RoomShort}" FontFamily="Consolas, monospace"
+                                                   VerticalAlignment="Center"/>
+                                        <Button Grid.Column="2" Content="Join" VerticalAlignment="Center"
+                                                Command="{Binding $parent[UserControl].DataContext.JoinLobbyCommand}"
+                                                CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+            <TextBlock Text="{Binding OnlineStatus}" Foreground="Gray" TextWrapping="Wrap"
+                       HorizontalAlignment="Center"/>
+            <Border Padding="12" CornerRadius="14" Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                    IsVisible="{Binding HasOnlineBoard}">
+                <ItemsControl ItemsSource="{Binding Cells}" Width="{Binding BoardWidth}" Height="{Binding BoardHeight}"
+                              Tapped="OnOnlineBoardTapped">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><UniformGrid Columns="{Binding Columns}" Rows="{Binding Rows}"/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Margin="2" CornerRadius="5" Background="{Binding Background}"
+                                    BorderBrush="{Binding BorderBrush}" BorderThickness="{Binding BorderThickness}"
+                                    IsEnabled="{Binding IsEnabled}">
+                                <TextBlock Text="{Binding Text}" Foreground="{Binding Foreground}" FontSize="{Binding FontSize}"
+                                           FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           TextAlignment="Center" FontFamily="Consolas, monospace" TextWrapping="NoWrap"/>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" IsVisible="{Binding HasOnlineBoard}">
+                <Button Content="Debug opponent move" Command="{Binding DebugStepCommand}" IsVisible="{Binding IsConnect4Debug}"/>
+                <Button Content="Debug opponent move" Command="{Binding DotsBoxesDebugStepCommand}" IsVisible="{Binding IsDotsBoxesDebug}"/>
+                <Button Content="Debug opponent move" Command="{Binding ReversiDebugStepCommand}" IsVisible="{Binding IsReversiDebug}"/>
+                <Button Content="Leave match" Command="{Binding LeaveConnect4Command}" IsVisible="{Binding IsInConnect4Online}"/>
+                <Button Content="Leave match" Command="{Binding LeaveDotsBoxesCommand}" IsVisible="{Binding IsInDotsBoxesOnline}"/>
+                <Button Content="Leave match" Command="{Binding LeaveReversiCommand}" IsVisible="{Binding IsInReversiOnline}"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+    </Grid>
 </UserControl>

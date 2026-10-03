@@ -19,25 +19,31 @@ public enum MailFolder
 
 /// <summary>One row in the mail list, with the decrypted body ready to show.</summary>
 public sealed class MailRow
-{
-    public MailItem Item { get; }
-    public string Id => Item.Id;
-    public string Subject => string.IsNullOrEmpty(Item.Subject) ? "(no subject)" : Item.Subject;
-    public string Who => IsOutbound ? $"To {Item.ToUser}" : $"From {Item.FromUser}";
-    public string Preview => PreviewOf(Item.Body);
-    public string Body => Item.Body;
-    public string Timestamp => Item.TimestampFormatted;
-    public bool IsSelected { get; set; }
-    public bool IsOutbound { get; }
-    public bool CanUnsend { get; }
-
-    public MailRow(MailItem item, string myUserId)
     {
-        Item = item;
-        IsOutbound = !string.IsNullOrEmpty(item.FromId)
-                     && string.Equals(item.FromId, myUserId, StringComparison.OrdinalIgnoreCase);
-        CanUnsend = IsOutbound;
-    }
+        public MailItem Item { get; }
+        public string Id => Item.Id;
+        public string Subject => string.IsNullOrEmpty(Item.Subject) ? "(no subject)" : Item.Subject;
+        public string Who => IsOutbound ? $"To {Item.ToUser}" : $"From {Item.FromUser}";
+        public string Preview => PreviewOf(Item.Body);
+        public string Body => Item.Body;
+        public string Timestamp => Item.TimestampFormatted;
+        public bool IsSelected { get; set; }
+        public bool IsOutbound { get; }
+        public bool CanUnsend { get; }
+        /// <summary>Mail you sent to your own address. The website lists those in
+        /// both folders, so a note-to-self is never hidden away in Sent.</summary>
+        public bool IsSelfSent { get; }
+
+        public MailRow(MailItem item, string myUserId, string myUser)
+        {
+            Item = item;
+            IsOutbound = !string.IsNullOrEmpty(item.FromId)
+                         && string.Equals(item.FromId, myUserId, StringComparison.OrdinalIgnoreCase);
+            CanUnsend = IsOutbound;
+            var mine = KindleHubApiClient.NormalizeMailUser(myUser);
+            var to = KindleHubApiClient.NormalizeMailUser(item.ToUser);
+            IsSelfSent = IsOutbound && mine.Length > 0 && string.Equals(to, mine, StringComparison.Ordinal);
+        }
 
     /// <summary>First line of the body, for the collapsed row.</summary>
     private static string PreviewOf(string body)
@@ -107,14 +113,14 @@ public class MailViewModel : ViewModelBase
     public bool HasMail => _messages.Count > 0;
     public int InboxUnreadCount { get; private set; }
 
-    public string ComposeTo { get => _composeTo; set => SetProperty(ref _composeTo, value); }
-    public string ComposeSubject { get => _composeSubject; set => SetProperty(ref _composeSubject, value); }
-    public string ComposeBody { get => _composeBody; set => SetProperty(ref _composeBody, value); }
+    public string ComposeTo { get => _composeTo; set { if (SetProperty(ref _composeTo, value)) SendCommand.RaiseCanExecuteChanged(); } }
+    public string ComposeSubject { get => _composeSubject; set { if (SetProperty(ref _composeSubject, value)) SendCommand.RaiseCanExecuteChanged(); } }
+    public string ComposeBody { get => _composeBody; set { if (SetProperty(ref _composeBody, value)) SendCommand.RaiseCanExecuteChanged(); } }
     public string ComposeReplyTo { get => _composeReplyTo; set => SetProperty(ref _composeReplyTo, value); }
 
     public bool CanSend => !_isSending
                            && !string.IsNullOrWhiteSpace(_composeTo)
-                           && !string.IsNullOrWhiteSpace(_composeSubject);
+                           && !string.IsNullOrWhiteSpace(_composeBody);
 
     public RelayCommand RefreshCommand { get; }
     public RelayCommand ComposeCommand { get; }
@@ -157,7 +163,8 @@ public class MailViewModel : ViewModelBase
         {
             var items = await _core.FetchMailAsync(CancellationToken.None);
             var myId = _core.CurrentProfile?.UserId ?? "";
-            _all = items.Select(i => new MailRow(i, myId)).ToList();
+            var myUser = _core.CurrentProfile?.Email ?? "";
+            _all = items.Select(i => new MailRow(i, myId, myUser)).ToList();
             Refilter();
             Status = _all.Count == 0
                 ? "No mail yet. It always delivers between KindleHub accounts."
@@ -171,12 +178,14 @@ public class MailViewModel : ViewModelBase
         finally { IsLoading = false; }
     }
 
-    /// <summary>Inbox shows what came in, Sent shows what you wrote. Trashed mail is
-    /// simply gone — the server's delete is permanent.</summary>
+    /// <summary>Inbox shows what came in; Sent shows what you wrote. A note to
+    /// yourself is in both, like the website, so it is never lost.</summary>
     private void Refilter()
     {
         Messages.Clear();
-        foreach (var r in _all.Where(r => _folder == MailFolder.Inbox ? !r.IsOutbound : r.IsOutbound))
+        foreach (var r in _all.Where(r => _folder == MailFolder.Inbox
+                                            ? (!r.IsOutbound || r.IsSelfSent)
+                                            : r.IsOutbound))
             Messages.Add(r);
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(HasMail));
@@ -223,10 +232,13 @@ public class MailViewModel : ViewModelBase
         try
         {
             var sent = await _core.SendMailAsync(ComposeTo.Trim(), ComposeSubject.Trim(), ComposeBody ?? "", ComposeReplyTo, CancellationToken.None);
-            _all.Insert(0, new MailRow(sent, _core.CurrentProfile?.UserId ?? ""));
+            var row = new MailRow(sent, _core.CurrentProfile?.UserId ?? "", _core.CurrentProfile?.Email ?? "");
+            _all.Insert(0, row);
             CancelCompose();
             ComposeTo = ""; ComposeSubject = ""; ComposeBody = ""; ComposeReplyTo = "";
-            Folder = MailFolder.Sent;
+            /* Stay where the letter is: a note to yourself belongs in the Inbox,
+               and the website never yanks you into Sent after a send. */
+            if (!row.IsSelfSent) Folder = MailFolder.Sent;
             Refilter();
             Status = $"Sent to {sent.ToUser}.";
         }

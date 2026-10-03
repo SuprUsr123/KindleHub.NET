@@ -29,6 +29,7 @@ public static class GameRegistry
         () => new NumberSlideGame(),
         () => new Connect4Game(),
         () => new ReversiGame(),
+        () => new DotsBoxesGame(),
     };
 
     /// <summary>Slugs that have a real implementation, in display order.</summary>

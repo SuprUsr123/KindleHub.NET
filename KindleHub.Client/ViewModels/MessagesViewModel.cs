@@ -51,6 +51,8 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     private readonly DispatcherTimer _settleTimer;
     private readonly Timer _pollTimer;
     private readonly HashSet<string> _seenInvites = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _avatarCodes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _avatarLookups = new(StringComparer.OrdinalIgnoreCase);
     private DateTimeOffset _inboxSince = DateTimeOffset.UtcNow;
     private Control? _host;
     private int _polling;
@@ -335,7 +337,10 @@ public class MessagesViewModel : ViewModelBase, IDisposable
         // starts ReloadRoomAsync, which touches the timer.
         _settleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
         _settleTimer.Tick += SettleTimer_Tick;
-        SelectedGroup = Groups[0];
+        var activeRoom = RoomRegistry.ActiveRoom;
+        SelectedGroup = (activeRoom != null
+            ? Groups.FirstOrDefault(g => string.Equals(g.Code, activeRoom.Code, StringComparison.Ordinal))
+            : null) ?? Groups[0];
         _pollTimer = new Timer(async _ => await PollTickAsync(), null, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8));
     }
 
@@ -387,6 +392,8 @@ private async Task SelectedFromRegistryAsync()
                 _messages.Add(m);
             }
             TrimMessagesToRecent(room);
+            ApplyVisualGrouping(_messages);
+            await HydrateMessageAvatarsAsync(_messages.ToList());
             StatusText = $"{_messages.Count} messages · #{room.Code}";
             UpdateActivePolls();
         }
@@ -421,8 +428,10 @@ private async Task SelectedFromRegistryAsync()
         try
         {
             var msg = await _core.SendMessageAsync(room.Code, text, important, replyToId, CancellationToken.None);
+            msg.AvatarCode = _core.CurrentPrefs().ProfileAvatar;
             _messages.Add(msg);
             TrimMessagesToRecent(room);
+            ApplyVisualGrouping(_messages);
             RoomRegistry.AddRoom(room);
             if (ReplyCompose) { ReplyCompose = false; ReplyTargetLabel = ""; OnPropertyChanged(nameof(ReplyTargetLabel)); }
         }
@@ -1183,10 +1192,14 @@ _messages.Clear();
             // Only the newly-arrived rows need their reply previews resolved.
             await _core.HydrateReplyPreviewsAsync(batch, room.Code, CancellationToken.None);
         }
+
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Reply preview hydration failed");
         }
+
+        ApplyVisualGrouping(_messages);
+        await HydrateMessageAvatarsAsync(batch);
 
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
@@ -1271,8 +1284,10 @@ _messages.Clear();
                 }
                 if (fresh.Count > 0)
                 {
+                    ApplyVisualGrouping(_messages);
                     // Resolve previews for the rows that just arrived, not the whole backlog.
                     await _core.HydrateReplyPreviewsAsync(fresh, room.Code, CancellationToken.None);
+                    await HydrateMessageAvatarsAsync(fresh);
                     StatusText = $"{_messages.Count} messages · #{room.Code}";
                     RequestScroll();
                     UpdateActivePolls();
@@ -1284,6 +1299,60 @@ _messages.Clear();
             _logger.LogDebug(ex, "Chat poll failed");
         }
         finally { _polling = 0; }
+    }
+
+    private static void ApplyVisualGrouping(IList<Message> messages)
+    {
+        Message? previous = null;
+        DateTime? previousDate = null;
+        foreach (var message in messages)
+        {
+            var localDate = message.Timestamp.ToLocalTime().Date;
+            var sameSender = previous != null &&
+                (string.IsNullOrEmpty(message.UserId)
+                    ? string.Equals(previous.DisplayName, message.DisplayName, StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(previous.UserId, message.UserId, StringComparison.OrdinalIgnoreCase));
+            message.IsContinuation = sameSender && previous!.IsMine == message.IsMine &&
+                                     message.Timestamp - previous.Timestamp >= TimeSpan.Zero &&
+                                     message.Timestamp - previous.Timestamp <= TimeSpan.FromMinutes(5);
+            message.ShowDateDivider = previousDate != localDate;
+            previous = message;
+            previousDate = localDate;
+        }
+    }
+
+    private async Task HydrateMessageAvatarsAsync(IReadOnlyCollection<Message> messages)
+    {
+        if (messages.Count == 0) return;
+        var ownAvatar = _core.CurrentPrefs().ProfileAvatar;
+        var ids = messages.Where(m => !m.IsMine && !string.IsNullOrWhiteSpace(m.UserId))
+            .Select(m => m.UserId).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(id => !_avatarLookups.Contains(id)).ToList();
+
+        foreach (var id in ids) _avatarLookups.Add(id);
+        try
+        {
+            foreach (var batch in ids.Chunk(30))
+            {
+                var fetched = await _core.FetchAvatarCodesAsync(batch, CancellationToken.None);
+                foreach (var pair in fetched) _avatarCodes[pair.Key] = pair.Value;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Message avatar lookup failed");
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            foreach (var message in messages)
+            {
+                if (message.IsMine) message.AvatarCode = ownAvatar;
+                else if (!string.IsNullOrWhiteSpace(message.UserId) && _avatarCodes.TryGetValue(message.UserId, out var code))
+                    message.AvatarCode = code;
+                else message.AvatarCode = "";
+            }
+        });
     }
 
     private async Task PollInboxAsync()

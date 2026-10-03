@@ -22,6 +22,7 @@ public sealed class ArcadeGame
     public GameCatalogEntry Catalog { get; }
     public bool IsPorted => GameRegistry.IsPorted(Catalog.Slug) || UsesRelayScreen;
     public bool UsesRelayScreen => Catalog.Slug == TicTacToeSlug;
+    public bool HasOnlinePlay => UsesRelayScreen || Catalog.Slug is "connect4" or "reversi" or "dotsboxes";
     public string Slug => Catalog.Slug;
     public string Name => Catalog.DisplayName;
     public string Description => Catalog.HowTo;
@@ -56,16 +57,30 @@ public class ArcadeViewModel : ViewModelBase
 {
     private readonly KindleHubCore _core;
     private readonly ILogger<ArcadeViewModel> _logger;
+    private readonly Func<string, int, CancellationToken, Task<bool>> _submitScore;
+    private readonly bool _scoreSubmitWasInjected;
+    private int _scoreSubmittingAttempt = -1;
+    private int _scoreSubmittedAttempt = -1;
+    private int _scoreFailedAttempt = -1;
 
     /// <summary>Lets the Tic-Tac-Toe card hand off to the relay view. Tic-Tac-Toe is
     /// a real game, so it belongs in the arcade rather than as its own nav entry —
     /// but it needs the dedicated relay screen, which this page doesn't host.</summary>
     private readonly System.Action<string>? _navigate;
+    private readonly System.Action<ArcadeViewModel>? _showOnlinePage;
 
     private Connect4Session? _connect4;
     private Connect4Session? _debugFoe;
+    private DotsBoxesSession? _dotsBoxes;
+    private DotsBoxesSession? _dotsBoxesDebugFoe;
+    private ReversiSession? _reversi;
+    private ReversiSession? _reversiDebugFoe;
     private string _connect4Room = "";
     private string _onlineStatus = "";
+    private string _dotsBoxesRoom = "";
+    private string _reversiRoom = "";
+    private bool _isLoadingLobbies;
+    private string _lobbyStatus = "";
 
     /// <summary>Room code to type when joining a Connect 4 match.</summary>
     public string Connect4Room
@@ -75,9 +90,28 @@ public class ArcadeViewModel : ViewModelBase
     }
 
     public bool IsInConnect4Online => _connect4 != null;
+    public bool ShowConnect4Tools => _game?.Slug == "connect4" && _connect4 is null;
+    public bool ShowDotsBoxesTools => _game?.Slug == "dotsboxes" && _dotsBoxes is null;
+    public bool IsInDotsBoxesOnline => _dotsBoxes is not null;
+    public bool IsDotsBoxesDebug => _dotsBoxes?.IsOfflineDebug == true;
+    public string DotsBoxesRoom { get => _dotsBoxesRoom; set => SetProperty(ref _dotsBoxesRoom, value); }
+    public bool ShowReversiTools => _game?.Slug == "reversi" && _reversi is null;
+    public bool ShowLobbyTools => ShowConnect4Tools || ShowDotsBoxesTools || ShowReversiTools;
+    public ObservableCollection<OpenGameListing> OpenLobbies { get; } = new();
+    public bool HasOpenLobbies => OpenLobbies.Count > 0;
+    public bool IsLoadingLobbies { get => _isLoadingLobbies; private set => SetProperty(ref _isLoadingLobbies, value); }
+    public string LobbyStatus { get => _lobbyStatus; private set => SetProperty(ref _lobbyStatus, value); }
+    public bool IsInReversiOnline => _reversi is not null;
+    public bool IsReversiDebug => _reversi?.IsOfflineDebug == true;
+    public string ReversiRoom { get => _reversiRoom; set => SetProperty(ref _reversiRoom, value); }
     /// <summary>True while the offline debug match is running.</summary>
     public bool IsConnect4Debug => _connect4?.IsOfflineDebug == true;
     public string OnlineStatus => _onlineStatus;
+    private bool _isOnlineGamePage;
+    public bool IsOnlineGamePage { get => _isOnlineGamePage; private set => SetProperty(ref _isOnlineGamePage, value); }
+    public bool HasOnlineBoard => _connect4 is not null || _dotsBoxes is not null || _reversi is not null;
+    public int OnlineBoardColumns => Columns;
+    public int OnlineBoardRows => Rows;
 
     private IGame? _game;
     private ObservableCollection<GameCell> _cells = new();
@@ -139,6 +173,7 @@ public class ArcadeViewModel : ViewModelBase
         "wordle" => 44,
         "nim" => 44,
         "simon" => 76,
+        "dotsboxes" => 38,
         _ => 52,
     };
 
@@ -197,9 +232,13 @@ public class ArcadeViewModel : ViewModelBase
     public event Action? GameReady;
 
     public RelayCommand<ArcadeGame> PlayCommand { get; }
+    public RelayCommand<ArcadeGame> PlayOnlineCommand { get; }
+    public RelayCommand RefreshLobbiesCommand { get; }
+    public RelayCommand<OpenGameListing> JoinLobbyCommand { get; }
     public RelayCommand<ArcadeGame> ToggleHelpCommand { get; }
     public RelayCommand NewGameCommand { get; }
     public RelayCommand BackCommand { get; }
+    public RelayCommand RetryScoreCommand { get; }
 
     /// <summary>Opens the multiplayer Tic-Tac-Toe relay screen.</summary>
     public RelayCommand PlayTicTacToeCommand { get; }
@@ -218,6 +257,16 @@ public class ArcadeViewModel : ViewModelBase
 
     /// <summary>One step of the debug opponent, so the UI can drive it on a timer.</summary>
     public RelayCommand DebugStepCommand { get; }
+    public RelayCommand StartDotsBoxesDebugCommand { get; }
+    public RelayCommand DotsBoxesDebugStepCommand { get; }
+    public RelayCommand HostDotsBoxesCommand { get; }
+    public RelayCommand JoinDotsBoxesCommand { get; }
+    public RelayCommand LeaveDotsBoxesCommand { get; }
+    public RelayCommand HostReversiCommand { get; }
+    public RelayCommand JoinReversiCommand { get; }
+    public RelayCommand StartReversiDebugCommand { get; }
+    public RelayCommand ReversiDebugStepCommand { get; }
+    public RelayCommand LeaveReversiCommand { get; }
     public RelayCommand<int> TapCommand { get; }
 
     // Four commands rather than one taking a GameKey: XAML cannot convert a command
@@ -229,11 +278,16 @@ public class ArcadeViewModel : ViewModelBase
     public RelayCommand ConfirmCommand { get; }
 
     public ArcadeViewModel(KindleHubCore core, ILogger<ArcadeViewModel> logger,
-                           System.Action<string>? navigate = null)
+                           System.Action<string>? navigate = null,
+                           Func<string, int, CancellationToken, Task<bool>>? submitScore = null,
+                           System.Action<ArcadeViewModel>? showOnlinePage = null)
     {
         _core = core;
         _logger = logger;
+        _scoreSubmitWasInjected = submitScore is not null;
+        _submitScore = submitScore ?? ((slug, score, token) => _core.SubmitScoreAsync(slug, score, token));
         _navigate = navigate;
+        _showOnlinePage = showOnlinePage;
 
         foreach (var entry in GameCatalog.All) All.Add(new ArcadeGame(entry));
         ApplyFilter();
@@ -245,6 +299,14 @@ public class ArcadeViewModel : ViewModelBase
             if (g.UsesRelayScreen) { _navigate?.Invoke("Games"); return; }
             Start(g);
         });
+        PlayOnlineCommand = new RelayCommand<ArcadeGame>(g =>
+        {
+            if (g is null || !g.HasOnlinePlay) return;
+            if (g.UsesRelayScreen) { _navigate?.Invoke("Games"); return; }
+            OpenOnlineGamePage(g);
+        });
+        RefreshLobbiesCommand = new RelayCommand(async () => await RefreshLobbiesAsync());
+        JoinLobbyCommand = new RelayCommand<OpenGameListing>(async lobby => await JoinLobbyAsync(lobby));
         ToggleHelpCommand = new RelayCommand<ArcadeGame>(g =>
         {
             if (g != null) g.Catalog.IsDescriptionVisible = !g.Catalog.IsDescriptionVisible;
@@ -256,7 +318,19 @@ public class ArcadeViewModel : ViewModelBase
             Attempt++;
             Refresh();
         });
-        BackCommand = new RelayCommand(() => { _game = null; Refresh(); });
+        BackCommand = new RelayCommand(() =>
+        {
+            _dotsBoxes?.Dispose(); _dotsBoxes = null;
+            _dotsBoxesDebugFoe?.Dispose(); _dotsBoxesDebugFoe = null;
+            _reversi?.Dispose(); _reversi = null;
+            _reversiDebugFoe?.Dispose(); _reversiDebugFoe = null;
+            _connect4?.Dispose(); _connect4 = null;
+            _debugFoe?.Dispose(); _debugFoe = null;
+            _game = null;
+            IsOnlineGamePage = false;
+            Refresh();
+        });
+        RetryScoreCommand = new RelayCommand(async () => await SubmitScoreIfNeededAsync(), () => CanRetryScore);
         PlayTicTacToeCommand = new RelayCommand(() =>
         {
             _game = null;
@@ -275,7 +349,7 @@ public class ArcadeViewModel : ViewModelBase
             OnPropertyChanged(nameof(IsInConnect4Online));
             OnPropertyChanged(nameof(IsConnect4Debug));
             ShowConnect4();
-            GameReady?.Invoke();
+            NavigateToOnlinePage();
         });
         DebugStepCommand = new RelayCommand(() =>
         {
@@ -283,6 +357,57 @@ public class ArcadeViewModel : ViewModelBase
             // at the wrong time is a no-op rather than an error.
             if (_debugFoe is null) return;
             _ = _debugFoe.DebugOpponentMove();
+        });
+        StartDotsBoxesDebugCommand = new RelayCommand(() =>
+        {
+            _dotsBoxes?.Dispose();
+            _dotsBoxesDebugFoe?.Dispose();
+            (_dotsBoxes, _dotsBoxesDebugFoe) = DotsBoxesSession.CreateOfflinePair(_core, _logger);
+            _dotsBoxes.Changed += OnDotsBoxesChanged;
+            _dotsBoxesDebugFoe.Changed += OnDotsBoxesChanged;
+            _dotsBoxesRoom = "";
+            ShowDotsBoxes();
+            NavigateToOnlinePage();
+        });
+        DotsBoxesDebugStepCommand = new RelayCommand(() =>
+        {
+            if (_dotsBoxes is not null) _ = _dotsBoxes.DebugOpponentMoveAsync();
+        });
+        HostDotsBoxesCommand = new RelayCommand(async () => await HostDotsBoxesAsync());
+        JoinDotsBoxesCommand = new RelayCommand(async () => await JoinDotsBoxesAsync());
+        LeaveDotsBoxesCommand = new RelayCommand(() =>
+        {
+            _dotsBoxes?.Dispose();
+            _dotsBoxesDebugFoe?.Dispose();
+            _dotsBoxes = _dotsBoxesDebugFoe = null;
+            _onlineStatus = "";
+            _game = null;
+            IsOnlineGamePage = false;
+            Refresh();
+        });
+        HostReversiCommand = new RelayCommand(async () => await HostReversiAsync());
+        JoinReversiCommand = new RelayCommand(async () => await JoinReversiAsync());
+        StartReversiDebugCommand = new RelayCommand(() =>
+        {
+            _reversi?.Dispose(); _reversiDebugFoe?.Dispose();
+            (_reversi, _reversiDebugFoe) = ReversiSession.CreateOfflinePair(_core, _logger);
+            _reversi.Changed += OnReversiChanged;
+            _reversiDebugFoe.Changed += OnReversiChanged;
+            _reversiRoom = "";
+            ShowReversi();
+            NavigateToOnlinePage();
+        });
+        ReversiDebugStepCommand = new RelayCommand(() =>
+        {
+            if (_reversi is not null) _ = _reversi.DebugOpponentMoveAsync();
+        });
+        LeaveReversiCommand = new RelayCommand(() =>
+        {
+            _reversi?.Dispose(); _reversiDebugFoe?.Dispose();
+            _reversi = _reversiDebugFoe = null;
+            _game = null;
+            IsOnlineGamePage = false;
+            Refresh();
         });
         LeaveConnect4Command = new RelayCommand(() =>
         {
@@ -296,6 +421,7 @@ public class ArcadeViewModel : ViewModelBase
             OnPropertyChanged(nameof(IsInConnect4Online));
             OnPropertyChanged(nameof(IsConnect4Debug));
             _game = null;
+            IsOnlineGamePage = false;
             Refresh();
         });
         TapCommand = new RelayCommand<int>(i =>
@@ -304,6 +430,16 @@ public class ArcadeViewModel : ViewModelBase
             if (_connect4 != null)
             {
                 _ = DropConnect4Async(i % C4Rules.Cols);
+                return;
+            }
+            if (_dotsBoxes is not null)
+            {
+                _ = _dotsBoxes.PlayAtAsync(i);
+                return;
+            }
+            if (_reversi is not null)
+            {
+                _ = _reversi.PlayAtAsync(i);
                 return;
             }
             if (_game != null) { _game.OnTap(i); Refresh(); }
@@ -387,6 +523,73 @@ public class ArcadeViewModel : ViewModelBase
         OnPropertyChanged(nameof(VisibleCount));
     }
 
+    private void OpenOnlineGamePage(ArcadeGame game)
+    {
+        _game = GameRegistry.Create(game.Slug);
+        Attempt++;
+        Refresh();
+        IsOnlineGamePage = true;
+        OpenLobbies.Clear();
+        OnPropertyChanged(nameof(HasOpenLobbies));
+        LobbyStatus = "Looking for open rooms…";
+        _showOnlinePage?.Invoke(this);
+        _ = RefreshLobbiesAsync();
+    }
+
+    private async Task RefreshLobbiesAsync()
+    {
+        var slug = _game?.Slug;
+        if (slug is not (Connect4Session.GameSlug or DotsBoxesSession.GameSlug or ReversiSession.GameSlug)) return;
+        LobbyStatus = "Looking for open rooms…";
+        IsLoadingLobbies = true;
+        try
+        {
+            var rooms = await _core.PollLobbyForOpenGamesAsync(slug, CancellationToken.None);
+            if (_game?.Slug != slug || !IsOnlineGamePage) return;
+            OpenLobbies.Clear();
+            foreach (var room in rooms) OpenLobbies.Add(room);
+            LobbyStatus = rooms.Count == 0
+                ? "No open rooms right now. Host a room or refresh to look again."
+                : $"{rooms.Count} open {(_game?.Name ?? "game").ToLowerInvariant()} room(s).";
+            OnPropertyChanged(nameof(HasOpenLobbies));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Open game lobby refresh failed for {Game}", slug);
+            LobbyStatus = "Couldn't reach the lobby. Check your connection and try again.";
+        }
+        finally { IsLoadingLobbies = false; }
+    }
+
+    private async Task JoinLobbyAsync(OpenGameListing? lobby)
+    {
+        if (lobby is null || lobby.Game != _game?.Slug) return;
+        switch (lobby.Game)
+        {
+            case Connect4Session.GameSlug:
+                Connect4Room = lobby.RoomShort;
+                await JoinConnect4Async();
+                break;
+            case DotsBoxesSession.GameSlug:
+                DotsBoxesRoom = lobby.RoomShort;
+                await JoinDotsBoxesAsync();
+                break;
+            case ReversiSession.GameSlug:
+                ReversiRoom = lobby.RoomShort;
+                await JoinReversiAsync();
+                break;
+        }
+    }
+
+    private void NavigateToOnlinePage()
+    {
+        IsOnlineGamePage = true;
+        OnPropertyChanged(nameof(HasOnlineBoard));
+        OnPropertyChanged(nameof(OnlineBoardColumns));
+        OnPropertyChanged(nameof(OnlineBoardRows));
+        _showOnlinePage?.Invoke(this);
+    }
+
     /// <summary>Hosts a Connect 4 relay match and shows the board it produces.</summary>
     private async Task HostConnect4Async()
     {
@@ -399,7 +602,11 @@ public class ArcadeViewModel : ViewModelBase
             _connect4Room = _connect4.RoomCode is { Length: > 6 } r ? r[^6..] : _connect4.RoomCode ?? "";
             OnPropertyChanged(nameof(Connect4Room));
             OnPropertyChanged(nameof(IsInConnect4Online));
+        OnPropertyChanged(nameof(HasOnlineBoard));
+        OnPropertyChanged(nameof(OnlineBoardColumns));
+        OnPropertyChanged(nameof(OnlineBoardRows));
             ShowConnect4();
+            NavigateToOnlinePage();
         }
         catch (Exception ex)
         {
@@ -425,7 +632,11 @@ public class ArcadeViewModel : ViewModelBase
             _connect4 = await Connect4Session.JoinAsync(_core, _logger, code, "");
             _connect4.Changed += OnConnect4Changed;
             OnPropertyChanged(nameof(IsInConnect4Online));
+        OnPropertyChanged(nameof(HasOnlineBoard));
+        OnPropertyChanged(nameof(OnlineBoardColumns));
+        OnPropertyChanged(nameof(OnlineBoardRows));
             ShowConnect4();
+            NavigateToOnlinePage();
         }
         catch (Exception ex)
         {
@@ -440,6 +651,161 @@ public class ArcadeViewModel : ViewModelBase
         _onlineStatus = _connect4?.Status ?? "";
         OnPropertyChanged(nameof(OnlineStatus));
         ShowConnect4();
+    }
+
+    private async Task HostDotsBoxesAsync()
+    {
+        if (!_core.IsAuthenticated) { _onlineStatus = "Sign in to host a game."; OnPropertyChanged(nameof(OnlineStatus)); return; }
+        try
+        {
+            _dotsBoxes?.Dispose();
+            _dotsBoxesDebugFoe?.Dispose(); _dotsBoxesDebugFoe = null;
+            _dotsBoxes = await DotsBoxesSession.HostAsync(_core, _logger);
+            _dotsBoxes.Changed += OnDotsBoxesChanged;
+            _dotsBoxesRoom = _dotsBoxes.RoomCode is { Length: > 6 } room ? room[^6..] : _dotsBoxes.RoomCode ?? "";
+            OnPropertyChanged(nameof(DotsBoxesRoom));
+            ShowDotsBoxes();
+            NavigateToOnlinePage();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Dots & Boxes host failed");
+            _onlineStatus = "Couldn't host a Dots & Boxes room.";
+            OnPropertyChanged(nameof(OnlineStatus));
+        }
+    }
+
+    private async Task JoinDotsBoxesAsync()
+    {
+        if (!_core.IsAuthenticated) { _onlineStatus = "Sign in to join a game."; OnPropertyChanged(nameof(OnlineStatus)); return; }
+        var code = new string((_dotsBoxesRoom ?? "").Where(char.IsDigit).ToArray());
+        if (code.Length != 6) { _onlineStatus = "Room codes are six digits."; OnPropertyChanged(nameof(OnlineStatus)); return; }
+        try
+        {
+            _dotsBoxes?.Dispose();
+            _dotsBoxesDebugFoe?.Dispose(); _dotsBoxesDebugFoe = null;
+            _dotsBoxes = await DotsBoxesSession.JoinAsync(_core, _logger, code);
+            _dotsBoxes.Changed += OnDotsBoxesChanged;
+            ShowDotsBoxes();
+            NavigateToOnlinePage();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Dots & Boxes join failed");
+            _onlineStatus = "Couldn't join that Dots & Boxes room.";
+            OnPropertyChanged(nameof(OnlineStatus));
+        }
+    }
+
+    private void OnDotsBoxesChanged()
+    {
+        Avalonia.Threading.Dispatcher.UIThread.Post(ShowDotsBoxes);
+    }
+
+    private void ShowDotsBoxes()
+    {
+        if (_dotsBoxes is null) return;
+        _game = _dotsBoxes.Game;
+        _status = _dotsBoxes.Status;
+        _result = _game.ResultText;
+        _isRealTime = false;
+        _cells = new ObservableCollection<GameCell>(_game.Cells);
+        _onlineStatus = _dotsBoxes.Status;
+        OnPropertyChanged(nameof(Cells));
+        OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(Result));
+        OnPropertyChanged(nameof(HasResult));
+        OnPropertyChanged(nameof(InGame));
+        OnPropertyChanged(nameof(NotInGame));
+        OnPropertyChanged(nameof(GameName));
+        OnPropertyChanged(nameof(Slug));
+        OnPropertyChanged(nameof(Columns));
+        OnPropertyChanged(nameof(Rows));
+        OnPropertyChanged(nameof(BoardWidth));
+        OnPropertyChanged(nameof(BoardHeight));
+        OnPropertyChanged(nameof(OnlineStatus));
+        OnPropertyChanged(nameof(IsInDotsBoxesOnline));
+        OnPropertyChanged(nameof(ShowLobbyTools));
+        OnPropertyChanged(nameof(HasOnlineBoard));
+        OnPropertyChanged(nameof(OnlineBoardColumns));
+        OnPropertyChanged(nameof(OnlineBoardRows));
+        OnPropertyChanged(nameof(IsDotsBoxesDebug));
+        OnPropertyChanged(nameof(ShowDotsBoxesTools));
+    }
+
+    private async Task HostReversiAsync()
+    {
+        if (!_core.IsAuthenticated) { _onlineStatus = "Sign in to host a game."; OnPropertyChanged(nameof(OnlineStatus)); return; }
+        try
+        {
+            _reversi?.Dispose(); _reversiDebugFoe?.Dispose(); _reversiDebugFoe = null;
+            _reversi = await ReversiSession.HostAsync(_core, _logger);
+            _reversi.Changed += OnReversiChanged;
+            _reversiRoom = _reversi.RoomCode is { Length: > 6 } room ? room[^6..] : _reversi.RoomCode ?? "";
+            OnPropertyChanged(nameof(ReversiRoom));
+            ShowReversi();
+            NavigateToOnlinePage();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Reversi host failed");
+            _onlineStatus = "Couldn't host a Reversi room.";
+            OnPropertyChanged(nameof(OnlineStatus));
+        }
+    }
+
+    private async Task JoinReversiAsync()
+    {
+        if (!_core.IsAuthenticated) { _onlineStatus = "Sign in to join a game."; OnPropertyChanged(nameof(OnlineStatus)); return; }
+        var code = new string((_reversiRoom ?? "").Where(char.IsDigit).ToArray());
+        if (code.Length != 6) { _onlineStatus = "Room codes are six digits."; OnPropertyChanged(nameof(OnlineStatus)); return; }
+        try
+        {
+            _reversi?.Dispose(); _reversiDebugFoe?.Dispose(); _reversiDebugFoe = null;
+            _reversi = await ReversiSession.JoinAsync(_core, _logger, code);
+            _reversi.Changed += OnReversiChanged;
+            ShowReversi();
+            NavigateToOnlinePage();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Reversi join failed");
+            _onlineStatus = "Couldn't join that Reversi room.";
+            OnPropertyChanged(nameof(OnlineStatus));
+        }
+    }
+
+    private void OnReversiChanged() => Avalonia.Threading.Dispatcher.UIThread.Post(ShowReversi);
+
+    private void ShowReversi()
+    {
+        if (_reversi is null) return;
+        _game = _reversi.Game;
+        _status = _reversi.Status;
+        _result = _game.ResultText;
+        _isRealTime = false;
+        _cells = new ObservableCollection<GameCell>(_game.Cells);
+        _onlineStatus = _reversi.Status;
+        OnPropertyChanged(nameof(Cells));
+        OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(Result));
+        OnPropertyChanged(nameof(HasResult));
+        OnPropertyChanged(nameof(InGame));
+        OnPropertyChanged(nameof(NotInGame));
+        OnPropertyChanged(nameof(GameName));
+        OnPropertyChanged(nameof(Slug));
+        OnPropertyChanged(nameof(Columns));
+        OnPropertyChanged(nameof(Rows));
+        OnPropertyChanged(nameof(BoardWidth));
+        OnPropertyChanged(nameof(BoardHeight));
+        OnPropertyChanged(nameof(OnlineStatus));
+        OnPropertyChanged(nameof(ShowReversiTools));
+        OnPropertyChanged(nameof(ShowLobbyTools));
+        OnPropertyChanged(nameof(IsInReversiOnline));
+        OnPropertyChanged(nameof(HasOnlineBoard));
+        OnPropertyChanged(nameof(OnlineBoardColumns));
+        OnPropertyChanged(nameof(OnlineBoardRows));
+        OnPropertyChanged(nameof(IsReversiDebug));
     }
 
     /// <summary>Renders the live relay board through the same GameCell pipeline the
@@ -481,6 +847,8 @@ public class ArcadeViewModel : ViewModelBase
         OnPropertyChanged(nameof(GameName));
         OnPropertyChanged(nameof(BoardWidth));
         OnPropertyChanged(nameof(BoardHeight));
+        OnPropertyChanged(nameof(ShowConnect4Tools));
+        OnPropertyChanged(nameof(ShowLobbyTools));
     }
 
     /// <summary>A drop in the live board, routed from the board view.</summary>
@@ -547,6 +915,19 @@ public class ArcadeViewModel : ViewModelBase
             OnPropertyChanged(nameof(IsRealTime));
             OnPropertyChanged(nameof(NeedsTicks));
             OnPropertyChanged(nameof(CanSubmitMastermind));
+            OnPropertyChanged(nameof(ShowConnect4Tools));
+            OnPropertyChanged(nameof(ShowLobbyTools));
+            OnPropertyChanged(nameof(ShowDotsBoxesTools));
+            OnPropertyChanged(nameof(IsInDotsBoxesOnline));
+            OnPropertyChanged(nameof(IsDotsBoxesDebug));
+            OnPropertyChanged(nameof(ShowReversiTools));
+            OnPropertyChanged(nameof(IsInReversiOnline));
+            OnPropertyChanged(nameof(IsReversiDebug));
+            OnPropertyChanged(nameof(IsInConnect4Online));
+            OnPropertyChanged(nameof(IsConnect4Debug));
+            OnPropertyChanged(nameof(HasOnlineBoard));
+            OnPropertyChanged(nameof(OnlineBoardColumns));
+            OnPropertyChanged(nameof(OnlineBoardRows));
             return;
         }
 
@@ -587,6 +968,28 @@ public class ArcadeViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsRealTime));
         OnPropertyChanged(nameof(NeedsTicks));
         OnPropertyChanged(nameof(CanSubmitMastermind));
+        OnPropertyChanged(nameof(ShowConnect4Tools));
+        OnPropertyChanged(nameof(ShowLobbyTools));
+        OnPropertyChanged(nameof(ShowDotsBoxesTools));
+        OnPropertyChanged(nameof(IsInDotsBoxesOnline));
+        OnPropertyChanged(nameof(HasOnlineBoard));
+        OnPropertyChanged(nameof(OnlineBoardColumns));
+        OnPropertyChanged(nameof(OnlineBoardRows));
+        OnPropertyChanged(nameof(ShowReversiTools));
+        OnPropertyChanged(nameof(IsInReversiOnline));
+        OnPropertyChanged(nameof(HasOnlineBoard));
+        OnPropertyChanged(nameof(OnlineBoardColumns));
+        OnPropertyChanged(nameof(OnlineBoardRows));
+        OnPropertyChanged(nameof(IsReversiDebug));
+        OnPropertyChanged(nameof(ShowDotsBoxesTools));
+        OnPropertyChanged(nameof(IsDotsBoxesDebug));
+        OnPropertyChanged(nameof(ScoreCounts));
+        OnPropertyChanged(nameof(Score));
+        OnPropertyChanged(nameof(CanRetryScore));
+
+        // Submit only after the game has produced its terminal result. The game
+        // slug and score are the same values the leaderboard endpoint expects.
+        _ = SubmitScoreIfNeededAsync();
     }
 
     /// <summary>Advances a real-time game. Called by the view's clock.</summary>
@@ -596,23 +999,57 @@ public class ArcadeViewModel : ViewModelBase
         if (_game.Tick(elapsed)) Refresh();
     }
 
-    /// <summary>Posts the finished game's score to the shared leaderboard, once.</summary>
+    /// <summary>Posts the finished game's score to kh_scores, at most once per attempt.</summary>
     public async Task SubmitScoreIfNeededAsync()
     {
-        if (_game is null || !_game.ScoreCounts || !_core.IsAuthenticated) return;
+        var game = _game;
+        int attempt = Attempt;
+        if (game is null || !game.ScoreCounts || string.IsNullOrEmpty(game.ResultText)) return;
+        if (!_core.IsAuthenticated && !_scoreSubmitWasInjected) return;
+        if (_scoreSubmittedAttempt == attempt || _scoreSubmittingAttempt == attempt) return;
+
+        _scoreSubmittingAttempt = attempt;
+        _scoreFailedAttempt = -1;
+        OnPropertyChanged(nameof(CanRetryScore));
+        RetryScoreCommand.RaiseCanExecuteChanged();
         try
         {
-            await _core.SubmitScoreAsync(_game.Slug, _game.Score, CancellationToken.None);
-            _status = $"{_game.Score} posted to the {_game.Name} leaderboard.";
-            OnPropertyChanged(nameof(Status));
+            bool posted = await _submitScore(game.Slug, game.Score, CancellationToken.None);
+            if (!posted) throw new InvalidOperationException("The leaderboard did not accept the score.");
+            _scoreSubmittedAttempt = attempt;
+            if (Attempt == attempt && ReferenceEquals(_game, game))
+            {
+                _status = $"Score {game.Score} submitted to the {game.Name} leaderboard.";
+                OnPropertyChanged(nameof(Status));
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Score submit failed for {Slug}", _game.Slug);
+            _logger.LogWarning(ex, "Score submit failed for {Slug}", game.Slug);
+            _scoreFailedAttempt = attempt;
+            if (Attempt == attempt && ReferenceEquals(_game, game))
+            {
+                _status = "Couldn't submit the score. You can retry while signed in.";
+                OnPropertyChanged(nameof(Status));
+            }
+        }
+        finally
+        {
+            if (_scoreSubmittingAttempt == attempt) _scoreSubmittingAttempt = -1;
+            OnPropertyChanged(nameof(CanRetryScore));
+            RetryScoreCommand.RaiseCanExecuteChanged();
         }
     }
 
     /// <summary>Exposed so the view can show the score once, then stop asking.</summary>
     public bool ScoreCounts => _game?.ScoreCounts ?? false;
     public int Score => _game?.Score ?? 0;
+    public bool CanRetryScore => (_core.IsAuthenticated || _scoreSubmitWasInjected)
+        && _game is { ScoreCounts: true, ResultText: not null }
+        && _scoreFailedAttempt == Attempt
+        && _scoreSubmittedAttempt != Attempt
+        && _scoreSubmittingAttempt != Attempt;
+
+    // Only used by the headless gametest to record the same operation without
+    // making a live authenticated request.
 }

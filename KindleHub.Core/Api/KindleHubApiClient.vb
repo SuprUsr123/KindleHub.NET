@@ -64,8 +64,9 @@ Public Interface IKindleHubApiClient
     Function SubmitScoreAsync(request As SubmitScoreRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of Boolean)
     Function FetchScoresAsync(request As FetchScoresRequest, cancellationToken As CancellationToken) As Task(Of List(Of LeaderboardEntry))
     Function ListKnownGamesAsync(cancellationToken As CancellationToken) As Task(Of List(Of String))
-    Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, cancellationToken As CancellationToken) As Task
+    Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, avatar As String, cancellationToken As CancellationToken) As Task
     Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry))
+    Function FetchAvatarCodesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, String))
 
     ' Multiplayer relay (JSON envelopes riding the encrypted chat transport)
     Function SendRoomEventAsync(groupCode As String, eventJson As String, displayName As String, authToken As String, cancellationToken As CancellationToken) As Task(Of Message)
@@ -116,6 +117,7 @@ End Class
 
 Public Class SendMailRequest
     Public Property ToUser As String
+    Public Property FromUser As String
     Public Property Subject As String
     Public Property Body As String
     Public Property ReplyTo As String
@@ -657,10 +659,26 @@ Public Class KindleHubApiClient
     End Function
 
     ' ───────────────────── mail ─────────────────────
-    ''' <summary>The per-message key the website uses for a mail body. Subject stays
-    ''' plaintext on the server, so an inbox list renders without any keys.</summary>
-    Public Shared Function MailKeySuffix(mailId As String) As String
-        Return "mail:" & If(mailId, "")
+    ''' <summary>The website's <code>_mailNorm</code>: trim, lowercase, drop
+    ''' everything from the first <code>@</code>, cap at 40. The mailbox gate in
+    ''' the worker resolves recipients through the same function, so a name that
+    ''' differs here is a name the recipient can never query.</summary>
+    Private Shared Function MailNorm(u As String) As String
+        Dim s = If(u, "").Trim().ToLowerInvariant()
+        Dim at = s.IndexOf("@"c)
+        If at >= 0 Then s = s.Substring(0, at)
+        Return If(s.Length > 40, s.Substring(0, 40), s)
+    End Function
+
+    Public Shared Function NormalizeMailUser(u As String) As String
+        Return MailNorm(u)
+    End Function
+
+    ''' <summary>The key the website derives for a mail row: the recipient's
+    ''' canonical name. Both subject and body are sealed under it, and because the
+    ''' name is public a sender re-derives it to read their own Sent copy.</summary>
+    Public Shared Function MailKeySuffix(toUser As String) As String
+        Return "mail:" & If(toUser, "")
     End Function
 
     Public Async Function FetchMailAsync(authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of MailItem)) Implements IKindleHubApiClient.FetchMailAsync
@@ -672,24 +690,38 @@ Public Class KindleHubApiClient
         Dim results As New List(Of MailItem)()
         If rows Is Nothing Then Return results
         For Each row In rows
-            Dim id = JsonStr(row, "id")
-            Dim cipher = JsonStr(row, "body")
+            ' The website seals both columns under the recipient's name, so a sender
+            ' who knows the address can read their own Sent copy and the recipient
+            ' their inbox — and a note to yourself is sealed to your own name too.
+            Dim key = MailKeySuffix(MailNorm(JsonStr(row, "to_user")))
             Dim body = ""
+            Dim cipher = JsonStr(row, "body")
             If Not String.IsNullOrEmpty(cipher) Then
                 Try
-                    body = ChatEncryption.Decrypt(MailKeySuffix(id), cipher)
+                    body = ChatEncryption.Decrypt(key, cipher)
                 Catch ex As Exception
                     ' A body we cannot open is still worth listing — show it as such
                     ' rather than dropping the mail.
                     body = "(This message could not be decrypted on this device.)"
                 End Try
             End If
+            ' The subject is sealed the same way, not plaintext: read it back or an
+            ' inbox list shows the base64 blob instead of what the letter was about.
+            Dim subject = ""
+            Dim subjCipher = JsonStr(row, "subject")
+            If Not String.IsNullOrEmpty(subjCipher) Then
+                Try
+                    subject = ChatEncryption.Decrypt(key, subjCipher)
+                Catch ex As Exception
+                    subject = subjCipher
+                End Try
+            End If
             results.Add(New MailItem With {
-                .Id = id,
+                .Id = JsonStr(row, "id"),
                 .ToUser = JsonStr(row, "to_user"),
                 .FromUser = JsonStr(row, "from_user"),
                 .FromId = JsonStr(row, "from_id"),
-                .Subject = JsonStr(row, "subject"),
+                .Subject = subject,
                 .Body = body,
                 .Timestamp = JsonDate(row, "ts").GetValueOrDefault(DateTimeOffset.MinValue),
                 .ReplyTo = JsonStr(row, "reply_to"),
@@ -701,25 +733,29 @@ Public Class KindleHubApiClient
 
     Public Async Function SendMailAsync(request As SendMailRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of MailItem) Implements IKindleHubApiClient.SendMailAsync
         If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in to send mail.")
-        Dim toUser = TrimStr(If(request?.ToUser, ""), 40)
+        ' Store the recipient's CANONICAL name. The website does the same, and the
+        ' worker resolves a mailbox through the identical function, so a name saved
+        ' any other way is a row the recipient can never query.
+        Dim toUser = MailNorm(If(request?.ToUser, ""))
         If String.IsNullOrEmpty(toUser) Then Throw New ArgumentException("Enter a recipient.", NameOf(request.ToUser))
         Dim userId = authToken.Substring(0, 16).ToLowerInvariant()
-
-        ' The id has to exist BEFORE the body is encrypted, because it is part of
-        ' the key — the website does the same, which is what keeps the two clients
-        ' able to read each other's mail.
         Dim id = "m_" & userId & "_" & DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() & "_" & Random.Shared.Next(100000)
-        Dim subject = TrimStr(If(request.Subject, ""), 200)
+        Dim subject = If(String.IsNullOrWhiteSpace(request.Subject), "(no subject)", request.Subject.Trim())
+        If subject.Length > 160 Then subject = subject.Substring(0, 160)
         Dim body = If(request.Body, "")
         If body.Length > 8000 Then body = body.Substring(0, 8000)
 
+        ' Both columns are sealed under the recipient's name — the website's scheme,
+        ' which is what keeps the two clients reading each other's mail. The name is
+        ' public, so a sender re-derives the key to open their own Sent copy.
+        Dim key = MailKeySuffix(toUser)
         Dim payload = New With {
             Key .id = id,
             Key .to_user = toUser,
-            Key .from_user = "",                       ' resolved server-side from the secret
+            Key .from_user = MailNorm(If(request.FromUser, "")),
             Key .from_id = userId,
-            Key .subject = subject,
-            Key .body = ChatEncryption.Encrypt(MailKeySuffix(id), body),
+            Key .subject = ChatEncryption.Encrypt(key, subject),
+            Key .body = ChatEncryption.Encrypt(key, body),
             Key .ts = UtcIso(),
             Key .reply_to = TrimStr(If(request.ReplyTo, ""), 120),
             Key .owner_secret = authToken.ToLowerInvariant()
@@ -786,22 +822,17 @@ Public Class KindleHubApiClient
         Return known.OrderBy(Function(s) s, StringComparer.OrdinalIgnoreCase).ToList()
     End Function
 
-    Public Async Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.PingPresenceAsync
-        ' kh_presence columns are user_id/display_name/last_seen/avatar/profile (no game_room);
-        ' the room hint rides as a JSON field inside profile, matching _khMyProfileBlob.
+    Public Async Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, avatar As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.PingPresenceAsync
+        ' kh_presence has no game_room column. The official profile JSON uses "g"
+        ' for public game stats, so leave profile untouched rather than writing a
+        ' room code there; merge-upsert preserves profile fields set by the web app.
         If Not Hex64.IsMatch(If(authToken, "")) Then Return
         Dim uid = authToken.Substring(0, 16).ToLowerInvariant()
-        Dim profile = "{}"
-        Try
-            profile = JsonSerializer.Serialize(New Dictionary(Of String, String) From {{"g", If(gameRoom, "")}})
-        Catch
-        End Try
         Dim payload = New With {
             Key .user_id = uid,
             Key .display_name = TrimStr(If(displayName, "Reader"), 40),
             Key .last_seen = UtcIso(),
-            Key .avatar = "",
-            Key .profile = profile
+            Key .avatar = If(IsProfileAvatarCode(avatar), avatar, "")
         }
         Try
             Await PostVoidAsync("rest/v1/kh_presence?on_conflict=user_id", payload, UpsertHeaders(authToken), cancellationToken)
@@ -812,7 +843,7 @@ Public Class KindleHubApiClient
 
     Public Async Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry)) Implements IKindleHubApiClient.FetchPresenceAsync
         Dim cutoff = DateTimeOffset.UtcNow.AddMinutes(-Math.Max(1, minutesActive)).ToString("O")
-        Dim rows = Await GetRowsAsync($"rest/v1/kh_presence?last_seen=gt.{Uri.EscapeDataString(cutoff)}&select=user_id,display_name,last_seen,profile&order=last_seen.desc&limit=" &
+        Dim rows = Await GetRowsAsync($"rest/v1/kh_presence?last_seen=gt.{Uri.EscapeDataString(cutoff)}&select=user_id,display_name,last_seen,avatar&order=last_seen.desc&limit=" &
                                       Math.Max(1, Math.Min(limit, 100)), cancellationToken)
         Dim list As New List(Of PresenceEntry)()
         If rows Is Nothing Then Return list
@@ -821,12 +852,32 @@ Public Class KindleHubApiClient
             Dim p As New PresenceEntry With {
                 .UserId = JsonStr(row, "user_id"),
                 .DisplayName = JsonStr(row, "display_name"),
-                .GameRoom = ProfileRoom(JsonStr(row, "profile")),
+                .Avatar = If(IsProfileAvatarCode(JsonStr(row, "avatar")), JsonStr(row, "avatar"), ""),
                 .LastSeen = If(d.HasValue, d.Value, DateTimeOffset.MinValue)
             }
             list.Add(p)
         Next
         Return list
+    End Function
+
+    Public Async Function FetchAvatarCodesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, String)) Implements IKindleHubApiClient.FetchAvatarCodesAsync
+        Dim ids = If(userIds, Enumerable.Empty(Of String)()).Where(Function(id) Regex.IsMatch(If(id, ""), "^[a-fA-F0-9]{16}$")).Distinct(StringComparer.OrdinalIgnoreCase).Take(100).ToList()
+        Dim result As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+        If ids.Count = 0 Then Return result
+        Dim filter = String.Join(",", ids.Select(Function(id) id.ToLowerInvariant()))
+        Dim rows = Await GetRowsAsync("rest/v1/kh_presence?user_id=in.(" & filter & ")&select=user_id,avatar&limit=100", cancellationToken)
+        If rows Is Nothing Then Return result
+        For Each row In rows
+            Dim id = JsonStr(row, "user_id")
+            Dim avatar = JsonStr(row, "avatar")
+            If Regex.IsMatch(id, "^[a-fA-F0-9]{16}$") AndAlso IsProfileAvatarCode(avatar) Then result(id) = avatar
+        Next
+        Return result
+    End Function
+
+    Private Shared Function IsProfileAvatarCode(value As String) As Boolean
+        Return Not String.IsNullOrEmpty(value) AndAlso value.Length <= 400 AndAlso
+               (value.StartsWith("KHAV1:", StringComparison.Ordinal) OrElse value.StartsWith("KHAV2:", StringComparison.Ordinal))
     End Function
 
     ''' <summary>Send a plain-text relay JSON event over the encrypted chat transport
@@ -1163,19 +1214,6 @@ Public Class KindleHubApiClient
             .RatingCount = CInt(JsonLong(row, "rating_count")),
             .CreatedAt = If(d.HasValue, d.Value, DateTimeOffset.MinValue)
         }
-    End Function
-
-    ''' <summary>The profile json field is a plain JSON blob on kh_presence rows; game
-    ''' is stowaway from a client. This pulls the room short the profile field holds.</summary>
-    Private Function ProfileRoom(profile As String) As String
-        If String.IsNullOrEmpty(profile) Then Return ""
-        Try
-            Dim root = JsonDocument.Parse(profile).RootElement
-            If root.ValueKind <> JsonValueKind.Object Then Return ""
-            If root.TryGetProperty("g", Nothing) AndAlso root.GetProperty("g").ValueKind = JsonValueKind.String Then Return root.GetProperty("g").GetString() & ""
-        Catch
-        End Try
-        Return ""
     End Function
 
     Private Function SafeErr(body As String, resp As HttpResponseMessage) As String

@@ -37,6 +37,7 @@ public sealed class MastermindGame : GameBase
     public override string Name => "Mastermind";
     public override int Columns => BoardColumns;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => _won ? (Rows + 1 - _history.Count) * 100 : 0;
     public bool CanSubmit => !_won && _history.Count < Rows && _guess.All(v => v > 0);
 
     public override string? ResultText

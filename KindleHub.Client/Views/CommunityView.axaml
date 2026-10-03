@@ -2,58 +2,132 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             mc:Ignorable="d" d:DesignWidth="1050" d:DesignHeight="720"
              x:Class="KindleHub.Client.Views.CommunityView">
-    <Grid RowDefinitions="Auto,*,Auto" Margin="20">
-        <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,12">
-            <TextBlock Text="Community · Topics" FontSize="32" FontWeight="Bold"/>
-            <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="13"/>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBox Text="{Binding SearchText}" Width="240" PlaceholderText="Filter topics…"/>
-                <ComboBox ItemsSource="{Binding AllCategories}" SelectedItem="{Binding SelectedCategory}" Width="150"/>
-                <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
-                <Button Content="New Topic" Command="{Binding ShowCreateCommand}" FontWeight="Bold"/>
-                <ProgressBar IsVisible="{Binding IsLoading}" Width="80" IsIndeterminate="True" VerticalAlignment="Center"/>
+    <Grid RowDefinitions="Auto,*,Auto" Margin="24">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Community" FontSize="30" FontWeight="Bold"/>
+                <TextBlock Text="Find a topic, join the conversation, or start one of your own."
+                           Foreground="Gray" TextWrapping="Wrap"/>
             </StackPanel>
-        </StackPanel>
-
-        <Border Grid.Row="1" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="4">
-            <ListBox ItemsSource="{Binding Topics}" SelectedItem="{Binding SelectedTopic}"
-                     DoubleTapped="Topic_DoubleTapped">
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <Border Padding="16" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
-                            <StackPanel Spacing="4">
-                                <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="17"/>
-                                    <TextBlock Text="{Binding CategoryId}" Foreground="Blue"/>
-                                </StackPanel>
-                                <TextBlock Text="{Binding Blurb}" Foreground="Gray" TextWrapping="Wrap"/>
-                                <TextBlock FontSize="11" Foreground="Gray">
-                                    <Run Text="by "/><Run Text="{Binding Creator}"/><Run Text="  ·  room "/><Run Text="{Binding Code}"/>
-                                </TextBlock>
-                            </StackPanel>
-                        </Border>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-        </Border>
-
-        <Grid Grid.Row="2" Margin="0,16,0,0">
-            <StackPanel IsVisible="{Binding ShowCreate}">
-                <TextBlock Text="Create a topic" FontWeight="Bold" Margin="0,0,0,8"/>
-                <Grid ColumnDefinitions="2*,*,*,Auto,Auto">
-                    <TextBox Grid.Column="0" Text="{Binding NewTitle}" PlaceholderText="Topic title" Margin="0,0,8,0"/>
-                    <TextBox Grid.Column="1" Text="{Binding NewBlurb}" PlaceholderText="Blurb (optional)" Margin="0,0,8,0"/>
-                    <ComboBox Grid.Column="2" ItemsSource="{Binding AllCategories}" SelectedItem="{Binding NewCategory}" Margin="0,0,8,0"/>
-                    <Button Grid.Column="3" Content="Create &amp; open" Command="{Binding CreateCommand}"/>
-                    <Button Grid.Column="4" Content="Cancel" Command="{Binding CancelCreateCommand}" Margin="8,0,0,0"/>
-                </Grid>
-                <StackPanel Margin="0,6,0,0" Orientation="Horizontal" Spacing="8">
-                    <TextBox Text="{Binding JoinCode}" Width="180" PlaceholderText="…or join by code"/>
-                    <Button Content="Join" Command="{Binding JoinCommand}"/>
-                </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <ProgressBar IsVisible="{Binding IsLoading}" Width="56" IsIndeterminate="True"/>
+                <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
+                <Button Content="New topic" Command="{Binding ShowCreateCommand}" FontWeight="Bold"/>
             </StackPanel>
         </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="1.35*,*" ColumnSpacing="16">
+            <Border Grid.Column="0" BorderBrush="{DynamicResource ControlBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Background="{DynamicResource ControlFillColorDefault}">
+                <Grid RowDefinitions="Auto,*">
+                    <Border Grid.Row="0" Padding="12">
+                        <Grid ColumnDefinitions="*,200" ColumnSpacing="8">
+                            <TextBox Grid.Column="0" Text="{Binding SearchText}" PlaceholderText="Search topics or people…"/>
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding AllCategories}"
+                                      SelectedItem="{Binding SelectedCategory}"/>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Row="1" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,1,0,0">
+                        <Panel>
+                            <ListBox ItemsSource="{Binding Topics}" SelectedItem="{Binding SelectedTopic}"
+                                     DoubleTapped="Topic_DoubleTapped" IsVisible="{Binding HasTopics}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="14,12" BorderBrush="{DynamicResource ControlBorderBrush}"
+                                                BorderThickness="0,0,0,1">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="16"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Blurb}" Foreground="Gray" FontSize="12"
+                                                               TextWrapping="Wrap" MaxHeight="38"/>
+                                                    <TextBlock FontSize="11" Foreground="Gray">
+                                                        <Run Text="by "/><Run Text="{Binding Creator}"/>
+                                                        <Run Text="  ·  "/><Run Text="{Binding CategoryId}"/>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="›" FontSize="24" Foreground="Gray"
+                                                           VerticalAlignment="Center" Margin="8,0"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel IsVisible="{Binding !HasTopics}" HorizontalAlignment="Center"
+                                        VerticalAlignment="Center" Spacing="8" MaxWidth="300" Margin="20">
+                                <TextBlock Text="No topics found" FontSize="20" FontWeight="Bold"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Try another search or category, or create the first topic."
+                                           Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </StackPanel>
+                        </Panel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" BorderBrush="{DynamicResource ControlBorderBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="20"
+                    Background="{DynamicResource ControlFillColorDefault}">
+                <Panel>
+                    <StackPanel IsVisible="{Binding HasSelection}" Spacing="12">
+                        <TextBlock Text="TOPIC" FontSize="11" FontWeight="Bold"
+                                   Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                        <TextBlock Text="{Binding SelectedTopic.Title}" FontSize="24" FontWeight="Bold"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding SelectedTopic.Blurb}" Foreground="Gray"
+                                   FontSize="14" TextWrapping="Wrap"/>
+                        <Border Height="1" Background="{DynamicResource ControlBorderBrush}" Margin="0,4"/>
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="Started by" Foreground="Gray" FontSize="11"/>
+                            <TextBlock Text="{Binding SelectedTopic.Creator}" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="Category" Foreground="Gray" FontSize="11"/>
+                            <TextBlock Text="{Binding SelectedTopic.CategoryId}" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="Room code" Foreground="Gray" FontSize="11"/>
+                            <TextBlock Text="{Binding SelectedTopic.Code}" FontFamily="monospace"/>
+                        </StackPanel>
+                        <Button Content="Open conversation" Command="{Binding OpenCommand}"
+                                HorizontalAlignment="Left" Margin="0,8,0,0" FontWeight="Bold"/>
+                    </StackPanel>
+                    <StackPanel IsVisible="{Binding !HasSelection}" HorizontalAlignment="Center"
+                                VerticalAlignment="Center" Spacing="8" MaxWidth="280">
+                        <TextBlock Text="Choose a topic" FontSize="20" FontWeight="Bold"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock Text="Select a community topic to see its details and open the conversation."
+                                   Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center"/>
+                    </StackPanel>
+                </Panel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" IsVisible="{Binding ShowCreate}" Margin="0,14,0,0" Padding="14"
+                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="10"
+                Background="{DynamicResource ControlFillColorDefault}">
+            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                <TextBlock Grid.Row="0" Grid.ColumnSpan="4" Text="Start a topic" FontSize="17" FontWeight="Bold"/>
+                <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding NewTitle}" PlaceholderText="Topic title"/>
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NewBlurb}" PlaceholderText="Short description (optional)"/>
+                <ComboBox Grid.Row="1" Grid.Column="2" ItemsSource="{Binding TopicCategories}"
+                          SelectedItem="{Binding NewCategory}" MinWidth="150"/>
+                <StackPanel Grid.Row="1" Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                    <Button Content="Create &amp; open" Command="{Binding CreateCommand}" FontWeight="Bold"/>
+                    <Button Content="Cancel" Command="{Binding CancelCreateCommand}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" IsVisible="{Binding !ShowCreate}" Margin="0,14,0,0" Padding="10,8"
+                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8">
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="Gray" VerticalAlignment="Center"/>
+                <TextBox Grid.Column="1" Text="{Binding JoinCode}" Width="200" PlaceholderText="Join with 12-digit room code"/>
+                <Button Grid.Column="2" Content="Join room" Command="{Binding JoinCommand}"/>
+            </Grid>
+        </Border>
     </Grid>
 </UserControl>

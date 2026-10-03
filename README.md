@@ -23,9 +23,9 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 
 | Platform | Notes |
 |----------|-------|
-| **Windows** | Use PowerShell script (`build.ps1`). Requires Windows 10/11 x64 or ARM64. |
-| **Linux** | Use bash script (`build.sh`). Supports X11 and native Wayland sessions. Tested on Ubuntu 22.04+, Debian 12+, Fedora 38+. |
-| **macOS** | Use bash script (`build.sh`). Requires macOS 12+ (Monterey). Works on Intel and Apple Silicon. |
+| **Windows** | Use PowerShell script (`build.ps1`). Requires Windows 10/11 x64 or ARM64. Untested! |
+| **Linux** | Use bash script (`build.sh`). Supports X11 and native Wayland sessions. Tested on Debian 13+ (KDE Plasma 6.7.4, Wayland), EndavourOS (KDE Plasma 6.7.4, Wayland) |
+| **macOS** | Use bash script (`build.sh`). Requires macOS 12+ (Monterey). Works on Intel and Apple Silicon (probably). Untested! |
 
 ## Quick Start
 
@@ -178,7 +178,7 @@ To use a different backend, modify `KindleHub.Core/Api/KindleHubApiClient.vb`:
 ```vb
 Private Const BaseUrl As String = "https://your-api-endpoint.workers.dev/rest/v1/"
 ```
-
+See how to host your own instance (still legacy compared to the latest version due to owner taking down repo after implementing Stripe payments in the jankiest way possible) [here](https://github.com/SuprUsr123/KindleHub-Pro-Full-Archive)
 ## License
 
 GPL License - see LICENSE file for details. (why does the agent keep messing this up, why was it originally MIT)

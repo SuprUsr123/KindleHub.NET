@@ -95,7 +95,8 @@ foreach (var slug in ported)
         m.Tick(TimeSpan.FromSeconds(2));
     }
     Ok("memory: board clears when every pair is found", m.ResultText != null, m.StatusText);
-    Ok("memory: a perfect game is 8 moves", m.Score == 8, $"{m.Score}");
+    Ok("memory: a perfect game is 8 moves", m.Moves == 8, $"{m.Moves}");
+    Ok("memory: a perfect game has a positive leaderboard score", m.Score > 0, $"{m.Score}");
     Ok("memory: a cleared board scores", m.ScoreCounts);
 }
 
@@ -188,12 +189,12 @@ foreach (var slug in ported)
     }
 
     var h = new HangmanGame(); h.Reset();
-    Ok("hangman: 26 letters plus a word row", h.Cells.Count == 52, $"{h.Cells.Count}");
+    Ok("hangman: 26 letters plus the visual word row", h.Cells.Count == HangmanGame.AlphabetOffset + 26, $"{h.Cells.Count}");
     for (int i = 0; i < 26; i++) h.OnTap(HangmanGame.AlphabetOffset + i);
     Ok("hangman: terminates within the alphabet", h.ResultText != null, h.StatusText);
     var h2 = new HangmanGame(); h2.Reset();
     for (int i = 0; i < 60; i++) h2.OnTap(i % 26);
-    Ok("hangman: re-tapping used letters is safe", h2.Cells.Count == 52);
+    Ok("hangman: re-tapping used letters is safe", h2.Cells.Count == HangmanGame.AlphabetOffset + 26);
     Ok("hangman: word-row taps are not read as letters", WordRowTapIgnored());
 }
 
@@ -342,11 +343,11 @@ bool BadTargetRefused()
     int near = gcol > 0 ? gap - 1 : gap + 1;          // shares an edge
     int far = Enumerable.Range(0, 16).First(i => i != gap && i != near && !EdgeAdjacent(i, gap));
     s2.OnTap(far);
-    Ok("numslide: a tile that does not touch the gap does not move", s2.Score == 0, $"score={s2.Score}");
+    Ok("numslide: a tile that does not touch the gap does not move", s2.Moves == 0, $"moves={s2.Moves}");
     string before = string.Join("|", s2.Cells.Select(c => c.Text));
     s2.OnTap(near);
     string after = string.Join("|", s2.Cells.Select(c => c.Text));
-    Ok("numslide: a tile sharing an edge slides", s2.Score == 1, $"score={s2.Score}");
+    Ok("numslide: a tile sharing an edge slides", s2.Moves == 1, $"moves={s2.Moves}");
     Ok("numslide: sliding changes the board", after != before, $"gap={gap} near={near} far={far} before={before} after={after}");
 }
 
@@ -540,8 +541,14 @@ bool FullColumnRefused()
     var core = KindleHub.Core.KindleHubCoreFactory.CreateCore(
         Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
         System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kh_gametest_secrets2.json"));
+    var submittedScores = new List<(string Slug, int Score)>();
     var vm = new KindleHub.Client.ViewModels.ArcadeViewModel(
-        core, Microsoft.Extensions.Logging.Abstractions.NullLogger<KindleHub.Client.ViewModels.ArcadeViewModel>.Instance);
+        core, Microsoft.Extensions.Logging.Abstractions.NullLogger<KindleHub.Client.ViewModels.ArcadeViewModel>.Instance,
+        submitScore: (slug, score, _) =>
+        {
+            submittedScores.Add((slug, score));
+            return Task.FromResult(submittedScores.Count > 1);
+        });
 
     var snake = vm.All.First(g => g.Slug == "snake");
     vm.PlayCommand.Execute(snake);
@@ -554,13 +561,26 @@ bool FullColumnRefused()
         Ok("arcade: snake's result shows the number, not a bool",
            vm.Result != null && vm.Result.Contains(vm.Score.ToString()) && !vm.Result.Contains("True")
            && !vm.Result.Contains("False"), vm.Result ?? "none");
-        Ok("arcade: snake's score is a number", vm.Score >= 0, $"{vm.Score}");
+    Ok("arcade: snake's score is a number", vm.Score >= 0, $"{vm.Score}");
+    Ok("arcade: finished snake submits its official slug and score",
+       submittedScores.Count == 1 && submittedScores[0].Slug == "snake" && submittedScores[0].Score == vm.Score,
+       string.Join(",", submittedScores));
+    Ok("arcade: a rejected score can be retried", vm.RetryScoreCommand.CanExecute(null));
+    vm.RetryScoreCommand.Execute(null);
+    Ok("arcade: retry submits the same finished score", submittedScores.Count == 2
+       && submittedScores[1] == submittedScores[0]);
+    vm.Refresh(); vm.Refresh();
+    Ok("arcade: refreshing a posted game does not submit twice", submittedScores.Count == 2,
+       $"{submittedScores.Count} submissions");
 
     // New game starts a new attempt, which is what re-arms posting.
     vm.NewGameCommand.Execute(null);
     Ok("arcade: new game bumps the attempt counter", vm.Attempt == attemptAtStart + 1,
        $"{vm.Attempt} vs {attemptAtStart + 1}");
     Ok("arcade: new game clears the finished score", !vm.ScoreCounts, vm.Status);
+    for (int i = 0; i < 200 && !vm.ScoreCounts; i++) vm.Tick(TimeSpan.FromMilliseconds(300));
+    Ok("arcade: a new attempt submits its own score", submittedScores.Count == 3,
+       $"{submittedScores.Count} submissions");
     core.Dispose();
 
     // Reversi must be able to finish and score too.
@@ -630,18 +650,18 @@ bool FullColumnRefused()
     // Rows classify by sender id, and only your own mail can be unsent.
     var inbound = new KindleHub.Client.ViewModels.MailRow(
         new KindleHub.Core.MailItem { Id = "1", FromUser = "someone", FromId = "0123456789abcdef", Subject = "Hi", Body = "body line" },
-        "0123456789abcdef");
+        "0123456789abcdef", "me");
     Ok("mail: your own row is outbound", inbound.IsOutbound, inbound.Who);
     Ok("mail: outbound rows can be unsent", inbound.CanUnsend);
     var outboundMail = new KindleHub.Client.ViewModels.MailRow(
         new KindleHub.Core.MailItem { Id = "2", ToUser = "me", FromId = "ffffffffffffffff", Subject = "Re: Hi", Body = "reply" },
-        "0123456789abcdef");
+        "0123456789abcdef", "me");
     Ok("mail: someone else's row is inbound", !outboundMail.IsOutbound, outboundMail.Who);
     Ok("mail: inbound rows cannot be unsent", !outboundMail.CanUnsend);
     Ok("mail: an empty subject gets a placeholder", outboundMail.Subject == "Re: Hi");
     Ok("mail: the preview is the first non-empty line",
-       new KindleHub.Client.ViewModels.MailRow(
-           new KindleHub.Core.MailItem { Body = "\n\n  first real line\nsecond" }, "x").Preview == "first real line");
+           new KindleHub.Client.ViewModels.MailRow(
+           new KindleHub.Core.MailItem { Body = "\n\n  first real line\nsecond" }, "x", "x").Preview == "first real line");
     core.Dispose();
 }
 

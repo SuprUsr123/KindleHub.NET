@@ -4,9 +4,11 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.ComponentModel;
 using KindleHub.Client.Models;
 using KindleHub.Core;
 using Microsoft.Extensions.Logging;
+using Avalonia.Threading;
 
 namespace KindleHub.Client.ViewModels;
 
@@ -17,22 +19,28 @@ namespace KindleHub.Client.ViewModels;
 /// that the catalog does not. Also exposes the online-players panel from kh_presence
 /// heartbeats.
 /// </summary>
-public class LeaderboardViewModel : ViewModelBase
+public class LeaderboardViewModel : ViewModelBase, IDisposable
 {
     private readonly KindleHubCore _core;
     private readonly ILogger<LeaderboardViewModel> _logger;
     private readonly Timer _pingTimer;
+    private bool _disposed;
 
-    private ObservableCollection<LeaderboardEntry> _entries = new();
+    private ObservableCollection<LeaderboardRow> _entries = new();
     private string _selectedGame = "snake";
     private bool _isLoading;
+    private bool _initialising = true;
+    private string _statusText = "Loading leaderboard…";
 
-    public ObservableCollection<LeaderboardEntry> Entries { get => _entries; set => SetProperty(ref _entries, value); }
+    public ObservableCollection<LeaderboardRow> Entries { get => _entries; set => SetProperty(ref _entries, value); }
+    public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
+    public bool HasEntries => Entries.Count > 0;
+    public bool HasOnline => OnlineNow.Count > 0;
 
     public string SelectedGame
     {
         get => _selectedGame;
-        set { if (SetProperty(ref _selectedGame, value)) _ = LoadLeaderboardAsync(); }
+        set { if (SetProperty(ref _selectedGame, value) && !_initialising) _ = LoadLeaderboardAsync(); }
     }
 
     public bool IsLoading { get => _isLoading; set => SetProperty(ref _isLoading, value); }
@@ -52,24 +60,29 @@ public class LeaderboardViewModel : ViewModelBase
         }
     }
 
-    private ObservableCollection<PresenceEntry> _onlineNow = new();
-    public ObservableCollection<PresenceEntry> OnlineNow { get => _onlineNow; set => SetProperty(ref _onlineNow, value); }
+    private ObservableCollection<OnlinePlayerRow> _onlineNow = new();
+    public ObservableCollection<OnlinePlayerRow> OnlineNow { get => _onlineNow; set => SetProperty(ref _onlineNow, value); }
 
-    public RelayCommand RefreshGamesCommand { get; }
+    public RelayCommand RefreshCommand { get; }
 
     public LeaderboardViewModel(KindleHubCore core, ILogger<LeaderboardViewModel> logger)
     {
         _core = core;
         _logger = logger;
-        RefreshGamesCommand = new RelayCommand(async () => await RefreshGamesAsync());
+        RefreshCommand = new RelayCommand(async () =>
+        {
+            await LoadLeaderboardAsync();
+            await LoadOnlineAsync();
+        });
         _ = InitialiseAsync();
-        _pingTimer = new Timer(async _ => await HeartbeatAsync(), null,
+        _pingTimer = new Timer(_ => Dispatcher.UIThread.Post(async () => await HeartbeatAsync()), null,
             TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30));
     }
 
     private async Task InitialiseAsync()
     {
         await RefreshGamesAsync();
+        _initialising = false;
         await LoadLeaderboardAsync();
         await LoadOnlineAsync();
     }
@@ -110,15 +123,30 @@ public class LeaderboardViewModel : ViewModelBase
     {
         if (string.IsNullOrEmpty(SelectedGame)) return;
         IsLoading = true;
+        StatusText = "Loading scores…";
+        _entries.Clear();
+        OnPropertyChanged(nameof(HasEntries));
         try
         {
             var entries = await _core.FetchLeaderboardAsync(SelectedGame, 25, CancellationToken.None);
             _entries.Clear();
-            foreach (var e in entries) _entries.Add(e);
+            for (var i = 0; i < entries.Count; i++) _entries.Add(new LeaderboardRow(i + 1, entries[i]));
+            try
+            {
+                var avatars = await _core.FetchAvatarCodesAsync(entries.Select(e => e.UserId), CancellationToken.None);
+                foreach (var entry in _entries)
+                    if (avatars.TryGetValue(entry.UserId, out var avatar)) entry.SetAvatar(avatar);
+            }
+            catch (Exception ex) { _logger.LogDebug(ex, "Leaderboard profile pictures were unavailable"); }
+            StatusText = entries.Count == 0
+                ? $"No scores have been posted for {SelectedGameEntry?.DisplayName ?? SelectedGame} yet."
+                : $"Top {entries.Count} scores · {SelectedGameEntry?.DisplayName ?? SelectedGame}";
+            OnPropertyChanged(nameof(HasEntries));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Leaderboard lookup failed for {Game}", SelectedGame);
+            StatusText = "Couldn't load scores. Try refreshing.";
         }
         finally
         {
@@ -132,7 +160,8 @@ public class LeaderboardViewModel : ViewModelBase
         {
             var list = await _core.FetchPresenceAsync(10, 50, CancellationToken.None);
             _onlineNow.Clear();
-            foreach (var p in list) _onlineNow.Add(p);
+            foreach (var p in list) _onlineNow.Add(new OnlinePlayerRow(p));
+            OnPropertyChanged(nameof(HasOnline));
         }
         catch
         {
@@ -142,6 +171,7 @@ public class LeaderboardViewModel : ViewModelBase
 
     private async Task HeartbeatAsync()
     {
+        if (_disposed) return;
         try
         {
             if (!_core.IsAuthenticated) return;
@@ -154,4 +184,48 @@ public class LeaderboardViewModel : ViewModelBase
             _logger.LogDebug(ex, "Presence heartbeat failed");
         }
     }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _pingTimer.Dispose();
+    }
+}
+
+public sealed class LeaderboardRow : INotifyPropertyChanged
+{
+    public int Rank { get; }
+    public string RankLabel => Rank switch { 1 => "🥇", 2 => "🥈", 3 => "🥉", _ => $"#{Rank}" };
+    public string DisplayName => Entry.DisplayName;
+    public string UserId => Entry.UserId;
+    public string ScoreFormatted => Entry.ScoreFormatted;
+    public string DateFormatted => Entry.DateFormatted;
+    public string Initial => string.IsNullOrWhiteSpace(DisplayName) ? "?" : DisplayName.Trim()[0].ToString().ToUpperInvariant();
+    private string _avatarCode = "";
+    public bool HasAvatar => ProfileAvatar.TryDecode(_avatarCode, out _, out _);
+    public Avalonia.Media.DrawingImage? AvatarImage => ProfileAvatar.Render(_avatarCode);
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public LeaderboardEntry Entry { get; }
+
+    public LeaderboardRow(int rank, LeaderboardEntry entry) { Rank = rank; Entry = entry; }
+
+    public void SetAvatar(string code)
+    {
+        _avatarCode = code ?? "";
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AvatarImage)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasAvatar)));
+    }
+}
+
+public sealed class OnlinePlayerRow
+{
+    private readonly PresenceEntry _entry;
+    public string DisplayName => _entry.DisplayName;
+    public string AgeFormatted => _entry.AgeFormatted;
+    public string Initial => string.IsNullOrWhiteSpace(DisplayName) ? "?" : DisplayName.Trim()[0].ToString().ToUpperInvariant();
+    public bool HasAvatar => ProfileAvatar.TryDecode(_entry.Avatar, out _, out _);
+    public Avalonia.Media.DrawingImage? AvatarImage => ProfileAvatar.Render(_entry.Avatar);
+
+    public OnlinePlayerRow(PresenceEntry entry) => _entry = entry;
 }

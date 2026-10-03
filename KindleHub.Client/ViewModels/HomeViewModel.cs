@@ -22,5 +22,7 @@ public class HomeViewModel : ViewModelBase
     {
         _core = core;
         _logger = logger;
+        var name = _core.CurrentProfile?.DisplayName;
+        WelcomeText = string.IsNullOrWhiteSpace(name) ? "Welcome to KindleHub Pro" : $"Welcome back, {name}";
     }
 }

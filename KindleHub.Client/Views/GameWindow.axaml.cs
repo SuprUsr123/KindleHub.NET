@@ -55,6 +55,7 @@ public partial class GameWindow : Window
         // Leaving a match (or going back) closes the window rather than stranding
         // an empty board.
         if (e.PropertyName == nameof(ArcadeViewModel.InGame) && _vm is { InGame: false }) Close();
+        if (e.PropertyName == nameof(ArcadeViewModel.NeedsTicks)) StartClock();
     }
 
     /// <summary>Only real-time games need a clock, so an idle window costs nothing.</summary>

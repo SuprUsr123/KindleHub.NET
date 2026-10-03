@@ -31,6 +31,7 @@ public sealed class NimGame : GameBase
     public override string Name => "Nim";
     public override int Columns => Cols;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => _won ? 10 : 0;
     public override string? ResultText =>
         _won ? $"You took the last counter — {_taken} moves." :
         _lost ? "The computer took the last counter." : null;

@@ -314,7 +314,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
         Public Async Function SendMailAsync(toUser As String, subject As String, body As String, replyTo As String, cancellationToken As CancellationToken) As Task(Of MailItem)
             If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to send mail.")
             Dim request = New SendMailRequest With {
-                .ToUser = toUser, .Subject = subject, .Body = body, .ReplyTo = replyTo
+                .ToUser = toUser, .FromUser = _currentProfile.Email, .Subject = subject, .Body = body, .ReplyTo = replyTo
             }
             Return Await _apiClient.SendMailAsync(request, _currentProfile.AuthToken, cancellationToken)
         End Function
@@ -337,11 +337,15 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
 
         Public Async Function PingPresenceAsync(gameRoom As String, cancellationToken As CancellationToken) As Task
             If Not IsAuthenticated Then Return
-            Await _apiClient.PingPresenceAsync(_currentProfile.AuthToken, _currentProfile.DisplayName, gameRoom, cancellationToken)
+            Await _apiClient.PingPresenceAsync(_currentProfile.AuthToken, _currentProfile.DisplayName, gameRoom, CurrentPrefs().ProfileAvatar, cancellationToken)
         End Function
 
         Public Async Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry))
             Return Await _apiClient.FetchPresenceAsync(minutesActive, limit, cancellationToken)
+        End Function
+
+        Public Async Function FetchAvatarCodesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, String))
+            Return Await _apiClient.FetchAvatarCodesAsync(userIds, cancellationToken)
         End Function
 
         ' ───────────────────── multiplayer relay (over encrypted chat) ─────────────────────
@@ -590,6 +594,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
         ' ═══════════════ account-state preferences (the official web settings surface) ═══════════════
         Public Class AccountPrefs
             Public Property ProfileName As String
+            Public Property ProfileAvatar As String
             Public Property FontSizePx As Integer
             Public Property Theme As String
             Public Property SimpleMode As Boolean
@@ -601,6 +606,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
             Dim s = If(_currentAccountState, "")
             Return New AccountPrefs With {
                 .ProfileName = AccountState.GetText(s, "profileName", If(_currentProfile?.DisplayName, "")),
+                .ProfileAvatar = AccountState.GetText(s, "profileAvatar", ""),
                 .FontSizePx = AccountState.GetNumber(s, "fontSize", 16),
                 .Theme = AccountState.GetText(s, "theme", "light"),
                 .SimpleMode = AccountState.GetFlag(s, "simpleMode", False),
@@ -611,6 +617,12 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
 
         Public Function SetProfileName(value As String) As Boolean
             Return MutateState(Function(s) AccountState.WithText(s, "profileName", If(value, "")))
+        End Function
+
+        Public Function SetProfileAvatar(value As String) As Boolean
+            Dim avatar = If(value, "")
+            If avatar.Length > 400 OrElse (avatar <> "" AndAlso Not (avatar.StartsWith("KHAV1:", StringComparison.Ordinal) OrElse avatar.StartsWith("KHAV2:", StringComparison.Ordinal))) Then Return False
+            Return MutateState(Function(s) AccountState.WithText(s, "profileAvatar", avatar))
         End Function
 
         Public Function SetFontSize(valuePx As Integer) As Boolean

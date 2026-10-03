@@ -185,6 +185,65 @@ Public Class Message
     Public Property OwnerSecret As String
     Public Property IsMine As Boolean
 
+    Private _avatarCode As String
+    Public Property AvatarCode As String
+        Get
+            Return _avatarCode
+        End Get
+        Set(value As String)
+            If _avatarCode = value Then Return
+            _avatarCode = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(AvatarCode)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(AvatarInitial)))
+        End Set
+    End Property
+    Private _isContinuation As Boolean
+    Public Property IsContinuation As Boolean
+        Get
+            Return _isContinuation
+        End Get
+        Set(value As Boolean)
+            If _isContinuation = value Then Return
+            _isContinuation = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(IsContinuation)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ShowSenderName)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ShowIncomingAvatar)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ShowOwnAvatar)))
+        End Set
+    End Property
+    Private _showDateDivider As Boolean
+    Public Property ShowDateDivider As Boolean
+        Get
+            Return _showDateDivider
+        End Get
+        Set(value As Boolean)
+            If _showDateDivider = value Then Return
+            _showDateDivider = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ShowDateDivider)))
+        End Set
+    End Property
+    Public ReadOnly Property ShowSenderName As Boolean
+        Get
+            Return Not IsMine AndAlso Not IsContinuation
+        End Get
+    End Property
+    Public ReadOnly Property ShowIncomingAvatar As Boolean
+        Get
+            Return Not IsMine AndAlso Not IsContinuation
+        End Get
+    End Property
+    Public ReadOnly Property ShowOwnAvatar As Boolean
+        Get
+            Return IsMine AndAlso Not IsContinuation
+        End Get
+    End Property
+    Public ReadOnly Property AvatarInitial As String
+        Get
+            If String.IsNullOrWhiteSpace(DisplayName) Then Return "?"
+            Return DisplayName.Trim().Substring(0, 1).ToUpperInvariant()
+        End Get
+    End Property
+
     Private _isStarred As Boolean
     ''' <summary>Starred locally in this session (the official keeps it device-local).</summary>
     Public Property IsStarred As Boolean
@@ -451,7 +510,7 @@ Public Class Message
 
     Public ReadOnly Property TimestampFormatted As String
         Get
-            Return Timestamp.ToString("HH:mm")
+            Return Timestamp.ToLocalTime().ToString("h:mm tt")
         End Get
     End Property
 
@@ -517,8 +576,8 @@ End Class
 Public Class PresenceEntry
     Public Property UserId As String
     Public Property DisplayName As String
+    Public Property Avatar As String
     Public Property LastSeen As DateTimeOffset
-    Public Property GameRoom As String
 
     Public ReadOnly Property AgeFormatted As String
         Get

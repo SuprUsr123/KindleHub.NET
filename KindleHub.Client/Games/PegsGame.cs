@@ -51,6 +51,7 @@ public sealed class PegsGame : GameBase
     public override string Name => "Peg Solitaire";
     public override int Columns => Side;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => ScoreCounts ? Math.Max(0, 40 - _moves) : 0;
 
     public override string? ResultText
     {

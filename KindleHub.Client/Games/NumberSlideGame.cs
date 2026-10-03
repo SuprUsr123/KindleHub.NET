@@ -38,7 +38,8 @@ public sealed class NumberSlideGame : GameBase
     public override string Name => "Number Slide";
     public override int Columns => Side;
     public override IReadOnlyList<GameCell> Cells => _cells;
-    public override int Score => _moves;
+    public override int Score => Math.Max(0, 2000 - _moves);
+    public int Moves => _moves;
     public override string? ResultText => _solved ? $"Solved in {_moves} moves." : null;
 
     public override string StatusText => _solved

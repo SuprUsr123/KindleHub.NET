@@ -53,6 +53,7 @@ public sealed class SimonGame : GameBase
     public override int Columns => TotalColumns;
     public override bool NeedsTicks => true;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => Math.Max(0, _round - 1);
 
     public override string? ResultText => _dead ? $"You reached round {_round}." : null;
 
@@ -130,7 +131,7 @@ public sealed class SimonGame : GameBase
         {
             _dead = true;
             _phase = Phase.Dead;
-            ScoreCounts = false;
+            ScoreCounts = _round > 1;
             Redraw();
             return true;
         }

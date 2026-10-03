@@ -98,7 +98,8 @@ public partial class App : Application
                         sp.GetRequiredService<KindleHubCore>(),
                         sp.GetRequiredService<ILogger<ArcadeViewModel>>(),
                         // The Tic-Tac-Toe card hands off to the relay screen.
-                        target => sp.GetRequiredService<MainViewModel>().NavigateTo(target)));
+                        target => sp.GetRequiredService<MainViewModel>().NavigateTo(target),
+                        showOnlinePage: vm => sp.GetRequiredService<MainViewModel>().ShowOnlineGamePage(vm)));
                 services.AddTransient<AppStoreViewModel>(sp => 
                     new AppStoreViewModel(
                         sp.GetRequiredService<KindleHubCore>(),

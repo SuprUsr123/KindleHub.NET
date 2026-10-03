@@ -18,6 +18,7 @@ public sealed class MemoryGame : GameBase
     private int _first = -1;
     private int _pendingA = -1, _pendingB = -1;
     private TimeSpan _pendingFor;
+    private TimeSpan _elapsed;
     private int _moves;
     private int _matched;
 
@@ -32,7 +33,8 @@ public sealed class MemoryGame : GameBase
     public override int Columns => Side;
     public override bool NeedsTicks => true;
     public override IReadOnlyList<GameCell> Cells => _cells;
-    public override int Score => _moves;
+    public override int Score => Math.Max(0, Pairs * 120 - _moves * 3 - (int)_elapsed.TotalSeconds);
+    public int Moves => _moves;
     public override string? ResultText => _matched == Pairs ? $"Board cleared in {_moves} moves." : null;
 
     public override string StatusText => _matched == Pairs
@@ -60,6 +62,7 @@ public sealed class MemoryGame : GameBase
         Array.Clear(_gone, 0, _gone.Length);
         _first = _pendingA = _pendingB = -1;
         _pendingFor = TimeSpan.Zero;
+        _elapsed = TimeSpan.Zero;
         _moves = 0;
         _matched = 0;
         ScoreCounts = false;
@@ -68,6 +71,7 @@ public sealed class MemoryGame : GameBase
 
     public override bool Tick(TimeSpan elapsed)
     {
+        if (_matched < Pairs) _elapsed += elapsed;
         if (_pendingA < 0) return false;
         _pendingFor -= elapsed;
         if (_pendingFor > TimeSpan.Zero) return false;

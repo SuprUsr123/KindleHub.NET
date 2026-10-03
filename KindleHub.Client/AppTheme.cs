@@ -12,8 +12,8 @@ namespace KindleHub.Client;
 /// overridden to warm paper tones, which keeps it legible on e-ink without
 /// hand-rolling a second theme.
 ///
-/// Only a handful of resource keys are themed — the views use four — so this
-/// stays small. Add a key here if a new view starts hard-coding a colour.
+/// Shared palette tokens live here so view text and surfaces track the active
+/// theme instead of relying on fixed color names such as Gray.
 /// </summary>
 public static class AppTheme
 {
@@ -39,6 +39,15 @@ public static class AppTheme
     private static readonly IBrush SepiaSurfaceAlt = new SolidColorBrush(Color.Parse("#E9DDC4"));
     private static readonly IBrush SepiaBorder = new SolidColorBrush(Color.Parse("#CDBA93"));
     private static readonly IBrush SepiaAccent = new SolidColorBrush(Color.Parse("#9A5B25"));
+    private static readonly IBrush DarkSecondaryText = new SolidColorBrush(Color.Parse("#B7B7C0"));
+    private static readonly IBrush LightSecondaryText = new SolidColorBrush(Color.Parse("#5E5E66"));
+    private static readonly IBrush SepiaSecondaryText = new SolidColorBrush(Color.Parse("#70634D"));
+    private static readonly IBrush DarkPrimaryText = new SolidColorBrush(Color.Parse("#F5F5F7"));
+    private static readonly IBrush LightPrimaryText = new SolidColorBrush(Color.Parse("#1B1B1F"));
+    private static readonly IBrush SepiaPrimaryText = new SolidColorBrush(Color.Parse("#30291F"));
+
+    public const string SecondaryTextKey = "AppTextSecondaryBrush";
+    public const string PrimaryTextKey = "AppTextPrimaryBrush";
 
     // Only present while Sepia is active; removed again on the way out.
     private static readonly Dictionary<string, IBrush> SepiaOverrides = new()
@@ -77,6 +86,18 @@ public static class AppTheme
             Dark => new SolidColorBrush(Color.Parse("#1E1E22")),
             Sepia => SepiaWindow,
             _ => new SolidColorBrush(Color.Parse("#F3F3F6")),
+        };
+        app.Resources[SecondaryTextKey] = theme switch
+        {
+            Dark => DarkSecondaryText,
+            Sepia => SepiaSecondaryText,
+            _ => LightSecondaryText,
+        };
+        app.Resources[PrimaryTextKey] = theme switch
+        {
+            Dark => DarkPrimaryText,
+            Sepia => SepiaPrimaryText,
+            _ => LightPrimaryText,
         };
     }
 

@@ -52,6 +52,7 @@ public sealed class HangmanGame : GameBase
     public override string Name => "Hangman";
     public override int Columns => TotalCols;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => _won ? 10 : 0;
 
     public override string? ResultText
     {

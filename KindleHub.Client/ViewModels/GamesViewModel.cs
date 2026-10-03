@@ -44,7 +44,10 @@ public class GamesViewModel : ViewModelBase, IDisposable
     private string _oppName = "";
     private string _resultText = "";
     private string _matchTitle = "";
-    private long _lastEventMs;
+    // KH_MP.subscribe de-duplicates by message id, not timestamp. Several relay
+    // events can share a timestamp (for example JOIN and the host state reply).
+    private readonly HashSet<string> _seenEventIds = new(StringComparer.Ordinal);
+    private bool _matchDone;
     private readonly string?[] _cells = new string?[9];
     private LocalGame? _local;
 
@@ -159,7 +162,8 @@ public class GamesViewModel : ViewModelBase, IDisposable
             _myPiece = 'X';
             _turn = 'X';
             _oppName = "";
-            _lastEventMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 1000; // ignore backlog on join
+            _seenEventIds.Clear();
+            _matchDone = false;
             ResetGrid();
             InMatch = true;
             MatchTitle = $"You are hosting  ·  room {_roomCode} ({RoomShort(_roomCode)})";
@@ -210,12 +214,18 @@ public class GamesViewModel : ViewModelBase, IDisposable
             _myPiece = 'O';
             _turn = 'X';
             _oppName = SelectedOpen?.Host ?? "";
-            _lastEventMs = 0;
+            _seenEventIds.Clear();
+            _matchDone = false;
             ResetGrid();
             InMatch = true;
             MatchTitle = $"Joined {_roomCode}  ·  you are O";
             ResultText = "";
-            await _core.SendGameEventAsync(_roomCode, new { type = "JOIN", game = "ttt" }, CancellationToken.None);
+            await _core.SendGameEventAsync(_roomCode, new
+            {
+                type = "JOIN",
+                game = "ttt",
+                name = _core.CurrentProfile?.DisplayName ?? "Reader"
+            }, CancellationToken.None);
             StartPoll();
             UpdateCommands();
         }
@@ -261,11 +271,11 @@ public class GamesViewModel : ViewModelBase, IDisposable
             var events = await _core.PollGameEventsAsync(code, CancellationToken.None);
             foreach (var ev in events)
             {
-                var ts = ev.Message.Timestamp.ToUnixTimeMilliseconds();
-                if (ts <= _lastEventMs) continue;
-                _lastEventMs = ts;
+                var eventId = !string.IsNullOrEmpty(ev.Message.Id)
+                    ? ev.Message.Id
+                    : $"{ev.Message.Timestamp:O}:{ev.Type}:{ev.Data?.RootElement.GetRawText()}";
+                if (!_seenEventIds.Add(eventId)) continue;
                 if (ev.Message.IsMine && ev.Type != "OPEN") continue; // our own echo
-                if (ts > _lastEventMs) { } // (guard keeps newest only; harmless)
                 await HandleRemoteEventAsync(ev);
             }
         }
@@ -289,7 +299,8 @@ public class GamesViewModel : ViewModelBase, IDisposable
                     _oppName = ev.Data != null && ev.Data.RootElement.TryGetProperty("name", out var nm) && nm.ValueKind == System.Text.Json.JsonValueKind.String
                         ? nm.GetString() ?? "" : "Opponent";
                     if (string.IsNullOrEmpty(_oppName)) _oppName = ev.Message.DisplayName ?? "Opponent";
-                    ResultText = $"{_oppName} joined. You are X — make the first move.";
+                    ResultText = "";
+                    StatusText = $"{_oppName} joined. You are X — make the first move.";
                     // Send them the board state so a mid-match joiner can sync.
                     try
                     {
@@ -298,7 +309,7 @@ public class GamesViewModel : ViewModelBase, IDisposable
                             type = "TTT_STATE",
                             board = _cells.Select(c => c ?? "").ToArray(),
                             currentTurn = _turn.ToString(),
-                            active = string.IsNullOrEmpty(ResultText) || !ResultText.Contains("joined") ? true : true
+                            active = !_matchDone
                         }, CancellationToken.None);
                     }
                     catch { }
@@ -318,6 +329,9 @@ public class GamesViewModel : ViewModelBase, IDisposable
                     }
                     var t = ev.Str("currentTurn");
                     if (t == "X" || t == "O") _turn = t[0];
+                    if (ev.Data != null && ev.Data.RootElement.TryGetProperty("active", out var active) &&
+                        active.ValueKind == System.Text.Json.JsonValueKind.False)
+                        _matchDone = true;
                     OnPropertyChanged(nameof(TurnLabel));
                 }
                 break;
@@ -326,24 +340,28 @@ public class GamesViewModel : ViewModelBase, IDisposable
                 if (_localActive) break;
                 var idx = (int)ev.Number("idx");
                 var piece = ev.Str("piece");
-                if (idx is >= 0 and <= 8 && (piece == "X" || piece == "O") && _cells[idx] == null)
+                if (idx is >= 0 and <= 8 && (piece == "X" || piece == "O") &&
+                    piece[0] != _myPiece && piece[0] == _turn && _cells[idx] == null && !_matchDone)
                 {
                     _cells[idx] = piece;
                     Cells[idx].Value = piece;
-                    _turn = piece == "X" ? 'O' : 'X';
-                    OnPropertyChanged(nameof(TurnLabel));
                     var (winner, line) = TttJudge.Evaluate(_cells);
                     if (winner != null)
                     {
                         foreach (var i in line) Cells[i].IsWinning = true;
+                        _matchDone = true;
                         ResultText = winner.Value == _myPiece ? "You win! 🏆" : "You lost.";
                         PostWinScoreIfNeeded(local: false, won: winner.Value == _myPiece, moves: 9);
                     }
                     else if (_cells.All(c => c != null))
                     {
+                        _matchDone = true;
                         ResultText = "Draw.";
                     }
+                    else _turn = piece[0] == 'X' ? 'O' : 'X';
+                    OnPropertyChanged(nameof(TurnLabel));
                 }
+                else _logger.LogDebug("Ignoring invalid MOVE_TTT event: idx={Index}, piece={Piece}, expected={Turn}", idx, piece, _turn);
                 break;
         }
     }
@@ -367,26 +385,30 @@ public class GamesViewModel : ViewModelBase, IDisposable
         if (_localActive) { PlayLocal(i); return; }
         if (!InMatch || _roomCode == null) return;
         if (_cells[i] != null) return;
-        if (_turn != _myPiece || !string.IsNullOrEmpty(ResultText)) return;
+        if (_turn != _myPiece || _matchDone) return;
 
         _cells[i] = _myPiece.ToString();
         Cells[i].Value = _myPiece.ToString();
-        var (winner, line) = TttJudge.Evaluate(_cells);
-        if (winner != null)
-        {
-            foreach (var x in line) Cells[x].IsWinning = true;
-            ResultText = "You win!";
-            OnPropertyChanged(nameof(TurnLabel));
-            return;
-        }
-        if (_cells.All(c => c != null)) { ResultText = "Draw."; OnPropertyChanged(nameof(TurnLabel)); return; }
-        _turn = _myPiece == 'X' ? 'O' : 'X';
-        OnPropertyChanged(nameof(TurnLabel));
+        // The web client relays every accepted move, including the move that
+        // ends the game. Send first so the other client can derive the same result.
         try
         {
             await _core.SendGameEventAsync(_roomCode, new { type = "MOVE_TTT", idx = i, piece = _myPiece.ToString() }, CancellationToken.None);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "move send failed"); }
+
+        var (winner, line) = TttJudge.Evaluate(_cells);
+        if (winner != null)
+        {
+            foreach (var x in line) Cells[x].IsWinning = true;
+            _matchDone = true;
+            ResultText = "You win!";
+            OnPropertyChanged(nameof(TurnLabel));
+            return;
+        }
+        if (_cells.All(c => c != null)) { _matchDone = true; ResultText = "Draw."; OnPropertyChanged(nameof(TurnLabel)); return; }
+        _turn = _myPiece == 'X' ? 'O' : 'X';
+        OnPropertyChanged(nameof(TurnLabel));
     }
 
     // ─── Local game vs computer ─────────────────────────────────────────────
@@ -509,6 +531,7 @@ public class GamesViewModel : ViewModelBase, IDisposable
     {
         for (int i = 0; i < 9; i++) { _cells[i] = null; Cells[i].Value = null; Cells[i].IsWinning = false; }
         _turn = _myPiece;
+        _matchDone = false;
     }
 
     private void UpdateCommands()

@@ -2,22 +2,82 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="700"
              x:Class="KindleHub.Client.Views.HomeView">
-    <StackPanel Spacing="20" Margin="40" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <TextBlock Text="KindleHub Pro" FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
-        <TextBlock Text="{Binding WelcomeText}" FontSize="24" HorizontalAlignment="Center" TextWrapping="Wrap"/>
-        <TextBlock Text="Your cross-platform gaming and community hub" FontSize="16" Foreground="Gray" HorizontalAlignment="Center"/>
-        
-        <Border Margin="0,40,0,0" Padding="20" Background="{DynamicResource ControlFillColorDefault}" CornerRadius="8" MaxWidth="500">
-            <StackPanel Spacing="12">
-                <TextBlock Text="Features:" FontWeight="Bold" FontSize="18"/>
-                <TextBlock Text="* Global leaderboards for retro games"/>
-                <TextBlock Text="* Community groups and chat"/>
-                <TextBlock Text="* Cross-device message sync"/>
-                <TextBlock Text="* Homebrew app store"/>
-                <TextBlock Text="* Secure account encryption"/>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="48,40" Spacing="22" MaxWidth="880" HorizontalAlignment="Center">
+            <StackPanel Spacing="8">
+                <TextBlock Text="KindleHub Pro" FontSize="14" FontWeight="Bold"
+                           Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                <TextBlock Text="{Binding WelcomeText}" FontSize="34" FontWeight="Bold"
+                           TextWrapping="Wrap"/>
+                <TextBlock Text="Play together, find a conversation, and see what the community is up to."
+                           FontSize="16" Foreground="Gray" TextWrapping="Wrap"/>
             </StackPanel>
-        </Border>
-    </StackPanel>
+
+            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="14" RowSpacing="14">
+                <Border Grid.Row="0" Grid.Column="0" Padding="20" CornerRadius="10"
+                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                        Background="{DynamicResource ControlFillColorDefault}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Community" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Browse reader topics or start a new conversation." Foreground="Gray"
+                                   TextWrapping="Wrap"/>
+                        <Button Content="Explore topics" HorizontalAlignment="Left" FontWeight="Bold"
+                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                CommandParameter="Community"/>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="0" Grid.Column="1" Padding="20" CornerRadius="10"
+                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                        Background="{DynamicResource ControlFillColorDefault}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Messages" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Open Global Chat, a topic room, or a direct conversation." Foreground="Gray"
+                                   TextWrapping="Wrap"/>
+                        <Button Content="Open messages" HorizontalAlignment="Left" FontWeight="Bold"
+                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                CommandParameter="Messages"/>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="1" Grid.Column="0" Padding="20" CornerRadius="10"
+                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                        Background="{DynamicResource ControlFillColorDefault}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Leaderboards" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Check the latest scores and see who is online." Foreground="Gray"
+                                   TextWrapping="Wrap"/>
+                        <Button Content="See rankings" HorizontalAlignment="Left" FontWeight="Bold"
+                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                CommandParameter="Leaderboards"/>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="1" Grid.Column="1" Padding="20" CornerRadius="10"
+                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                        Background="{DynamicResource ControlFillColorDefault}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Mail" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Send a private note to another KindleHub account." Foreground="Gray"
+                                   TextWrapping="Wrap"/>
+                        <Button Content="Open mailbox" HorizontalAlignment="Left" FontWeight="Bold"
+                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                CommandParameter="Mail"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Padding="18" CornerRadius="10" Background="{DynamicResource ControlFillColorSecondary}">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Ready for a game?" FontWeight="Bold" FontSize="17"/>
+                        <TextBlock Text="Browse the playable games and continue from there."
+                                   Foreground="Gray" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Open Arcade" VerticalAlignment="Center" FontWeight="Bold"
+                            Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                            CommandParameter="Arcade"/>
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

@@ -23,6 +23,7 @@ public sealed class LightsOutGame : GameBase
     public override string Name => "Lights Out";
     public override int Columns => Side;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override int Score => Solved ? Math.Max(0, 1000 - _moves * 10) : 0;
     public override string? ResultText => Solved ? $"Solved in {_moves} moves." : null;
 
     public override string StatusText => Solved

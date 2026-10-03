@@ -43,6 +43,8 @@ public sealed class MinesweeperGame : GameBase
     public override string Name => "Minesweeper";
     public override int Columns => Side;
     public override IReadOnlyList<GameCell> Cells => _cells;
+    public override bool NeedsTicks => !_won && !_dead;
+    public override int Score => _won ? Math.Max(0, Mines * 50 - (int)_elapsed.TotalSeconds) : 0;
     public override string? ResultText => _won
         ? $"Cleared {_opened} safe squares."
         : _dead ? "Boom — that was a mine." : null;
@@ -54,6 +56,13 @@ public sealed class MinesweeperGame : GameBase
             : $"{Mines} mines · {_flags} flagged · tap to open, tap a flag to mark";
 
     private int _opened;
+    private TimeSpan _elapsed;
+
+    public override bool Tick(TimeSpan elapsed)
+    {
+        if (NeedsTicks) _elapsed += elapsed;
+        return false;
+    }
 
     public override void Reset()
     {
@@ -62,6 +71,7 @@ public sealed class MinesweeperGame : GameBase
         Array.Clear(_flag, 0, _flag.Length);
         _started = _dead = _won = false;
         _flags = _opened = 0;
+        _elapsed = TimeSpan.Zero;
         ScoreCounts = false;
         Redraw();
     }

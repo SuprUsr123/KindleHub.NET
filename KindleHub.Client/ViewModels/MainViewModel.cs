@@ -17,6 +17,7 @@ public class MainViewModel : ViewModelBase
     private readonly IServiceProvider _serviceProvider;
     
     private ViewModelBase? _currentView;
+    private ArcadeViewModel? _arcadeViewModel;
     private UserProfile? _currentUser;
     private string _statusText = "Not connected";
 
@@ -157,7 +158,7 @@ public class MainViewModel : ViewModelBase
                 target = _serviceProvider.GetRequiredService<GamesViewModel>();
                 break;
             case "Arcade":
-                target = _serviceProvider.GetRequiredService<ArcadeViewModel>();
+                target = _arcadeViewModel ??= _serviceProvider.GetRequiredService<ArcadeViewModel>();
                 break;
             case "App Store":
                 target = _serviceProvider.GetRequiredService<AppStoreViewModel>();
@@ -170,9 +171,31 @@ public class MainViewModel : ViewModelBase
                 break;
         }
 
+        var previous = CurrentView;
+        if (previous is IDisposable disposable && !ReferenceEquals(previous, target))
+        {
+            try { disposable.Dispose(); }
+            catch (Exception ex) { _logger.LogDebug(ex, "View cleanup failed for {View}", previous.GetType().Name); }
+        }
+
         Console.WriteLine($"[KindleHub Debug] NavigateTo('{page}') -> {target.GetType().Name}");
         CurrentView = target;
         Console.WriteLine($"[KindleHub Debug] CurrentView is now: {CurrentView?.GetType().Name}");
+    }
+
+    public void ShowOnlineGamePage(ArcadeViewModel viewModel)
+    {
+        _arcadeViewModel = viewModel;
+        if (!ReferenceEquals(CurrentView, viewModel))
+        {
+            var previous = CurrentView;
+            if (previous is IDisposable disposable)
+            {
+                try { disposable.Dispose(); }
+                catch (Exception ex) { _logger.LogDebug(ex, "View cleanup failed for {View}", previous.GetType().Name); }
+            }
+            CurrentView = viewModel;
+        }
     }
 
     public async Task<bool> LoginAsync(string username, string password)

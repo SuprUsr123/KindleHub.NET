@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Controls.Primitives;
 using KindleHub.Client.ViewModels;
 
 namespace KindleHub.Client.Views;
@@ -30,5 +31,11 @@ public partial class SettingsView : UserControl
     {
         if (sender is Button { Content: string label } && DataContext is SettingsViewModel vm)
             vm.ThemeName = label;
+    }
+
+    private void AvatarPixel_Tapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is Border { DataContext: AvatarPixelCell pixel } && DataContext is SettingsViewModel vm)
+            vm.PaintAvatarPixel(pixel.Index);
     }
 }

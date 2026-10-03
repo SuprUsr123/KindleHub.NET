@@ -17,6 +17,8 @@ public sealed class ReversiGame : GameBase
     private readonly List<GameCell> _cells = new();
     private readonly int[,] _board = new int[Side, Side];
     private int _turn = Dark;
+    private int _mySide = Dark;
+    private bool _onlineMode;
     private int _winsDark, _winsLight;
     private bool _over;
 
@@ -32,20 +34,44 @@ public sealed class ReversiGame : GameBase
     public override IReadOnlyList<GameCell> Cells => _cells;
 
     public override string? ResultText => _over
-        ? (_winsDark == _winsLight ? "A draw." : $"You {_winsDark} — computer {_winsLight}")
+        ? (_winsDark == _winsLight ? "A draw." : _onlineMode
+            ? (_mySide == Dark ? _winsDark > _winsLight : _winsLight > _winsDark) ? "You win!" : "Opponent wins."
+            : $"You {_winsDark} — computer {_winsLight}")
         : null;
 
     /// <summary>Your final disc count — more discs is the better result.</summary>
-    public override int Score => _winsDark;
+    public override int Score => _mySide == Dark ? _winsDark : _winsLight;
 
     public override string StatusText => _over
         ? (ResultText ?? "")
-        : _turn == Dark
+        : _onlineMode
+            ? $"Dark {_winsDark} · Light {_winsLight} · {(_turn == _mySide ? "Your move" : "Opponent's move")}"
+            : _turn == Dark
             ? $"You play dark · dark {_winsDark} · light {_winsLight}"
             : "Computer is thinking…";
 
+    public int CurrentTurn => _turn;
+    public int MySide => _mySide;
+    public int DarkCount => _winsDark;
+    public int LightCount => _winsLight;
+    public bool IsFinished => _over;
+    public string BoardState => string.Concat(Enumerable.Range(0, Side * Side)
+        .Select(i => (char)('0' + _board[i % Side, i / Side])));
+    public bool IsOnlineTurn => _onlineMode && !_over && _turn == _mySide;
+
+    public void ConfigureOnline(int mySide)
+    {
+        Reset();
+        _onlineMode = true;
+        _mySide = mySide is Dark or Light ? mySide : Dark;
+        AdvanceOnlineTurns();
+        Redraw();
+    }
+
     public override void Reset()
     {
+        _onlineMode = false;
+        _mySide = Dark;
         Array.Clear(_board, 0, _board.Length);
         _board[3, 3] = _board[4, 4] = Light;
         _board[4, 3] = _board[3, 4] = Dark;
@@ -58,20 +84,47 @@ public sealed class ReversiGame : GameBase
 
     public override bool OnTap(int index)
     {
-        if (_over || _turn != Dark || index < 0 || index >= _cells.Count) return false;
+        if (_over || (_onlineMode ? _turn != _mySide : _turn != Dark) || index < 0 || index >= _cells.Count) return false;
         int x = index % Side, y = index / Side;
         if (_board[x, y] != Empty) return true;
 
-        var flips = FlipsFor(x, y, Dark);
+        var piece = _turn;
+        var flips = FlipsFor(x, y, piece);
         if (flips.Count == 0) return true;
 
-        _board[x, y] = Dark;
-        foreach (var (fx, fy) in flips) _board[fx, fy] = Dark;
+        _board[x, y] = piece;
+        foreach (var (fx, fy) in flips) _board[fx, fy] = piece;
         Tally();
-        _turn = Light;
-        AdvanceTurns();
+        _turn = piece == Dark ? Light : Dark;
+        if (_onlineMode) AdvanceOnlineTurns(); else AdvanceTurns();
         Redraw();
         return true;
+    }
+
+    public bool LoadOnlineState(string board, int turn, bool over)
+    {
+        if (!_onlineMode || board is null || board.Length != Side * Side || turn is not (Dark or Light)) return false;
+        for (int i = 0; i < board.Length; i++)
+        {
+            char value = board[i];
+            if (value is not ('0' or '1' or '2')) return false;
+        }
+        for (int i = 0; i < board.Length; i++) _board[i % Side, i / Side] = board[i] - '0';
+        _turn = turn;
+        _over = over;
+        Tally();
+        ScoreCounts = false;
+        Redraw();
+        return true;
+    }
+
+    private void AdvanceOnlineTurns()
+    {
+        var dark = LegalMoves(Dark);
+        var light = LegalMoves(Light);
+        if (dark.Count == 0 && light.Count == 0) { _over = true; ScoreCounts = false; return; }
+        if ((_turn == Dark ? dark : light).Count == 0) _turn = _turn == Dark ? Light : Dark;
+        _over = (LegalMoves(_turn).Count == 0 && LegalMoves(_turn == Dark ? Light : Dark).Count == 0);
     }
 
     private void AdvanceTurns()
@@ -176,8 +229,8 @@ public sealed class ReversiGame : GameBase
 
     public override void Redraw()
     {
-        var legal = !_over && _turn == Dark
-            ? LegalMoves(Dark).ToHashSet()
+        var legal = !_over && (_onlineMode ? _turn == _mySide : _turn == Dark)
+            ? LegalMoves(_turn).ToHashSet()
             : new HashSet<(int X, int Y)>();
 
         for (int y = 0; y < Side; y++)
