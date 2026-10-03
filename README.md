@@ -1,3 +1,6 @@
+# KindleHub.NET
+[WIP, and once released, aran, do NOT fuck with my code. It's all in the GPL. You legally have to commit back to this codebase.]
+
 # KindleHub Pro
 
 Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Runs on Windows, Linux, and macOS.
