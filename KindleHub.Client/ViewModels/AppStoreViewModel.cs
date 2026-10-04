@@ -35,8 +35,9 @@ public class AppStoreViewModel : ViewModelBase
     private readonly KindleHubCore _core;
     private readonly ILogger<AppStoreViewModel> _logger;
 
-    private ObservableCollection<AppCatalog> _apps = new();
-    private AppCatalog? _selectedApp;
+    private ObservableCollection<StoreAppItem> _apps = new();
+    private StoreAppItem? _selectedApp;
+    private readonly Dictionary<string, string> _downloadedApps = LoadDownloadedApps();
     private string _searchText = "";
     private string _selectedCategory = "All";
     private bool _isLoading;
@@ -53,9 +54,9 @@ public class AppStoreViewModel : ViewModelBase
     // my published apps
     private ObservableCollection<OwnAppItem> _myApps = new();
 
-    public ObservableCollection<AppCatalog> Apps { get => _apps; set => SetProperty(ref _apps, value); }
+    public ObservableCollection<StoreAppItem> Apps { get => _apps; set => SetProperty(ref _apps, value); }
 
-    public AppCatalog? SelectedApp
+    public StoreAppItem? SelectedApp
     {
         get => _selectedApp;
         set
@@ -153,7 +154,12 @@ public class AppStoreViewModel : ViewModelBase
             var category = SelectedCategory == "All" ? "" : SelectedCategory;
             var apps = await _core.FetchAppsAsync(category, SearchText, 50, CancellationToken.None);
             Apps.Clear();
-            foreach (var app in apps) Apps.Add(app);
+            foreach (var app in apps)
+            {
+                var item = new StoreAppItem(app);
+                item.IsDownloaded = TryGetDownloadedPath(app.Id, out _);
+                Apps.Add(item);
+            }
             StatusText = apps.Count > 0 ? $"{apps.Count} app(s)" : "No apps found";
         }
         catch (Exception ex)
@@ -170,14 +176,33 @@ public class AppStoreViewModel : ViewModelBase
     public async Task DownloadAndOpenAsync()
     {
         if (SelectedApp == null) return;
+        await OpenOrDownloadAsync(SelectedApp);
+    }
+
+    public async Task OpenOrDownloadAsync(StoreAppItem item)
+    {
+        if (item.IsDownloaded && TryGetDownloadedPath(item.Id, out var existingPath) && File.Exists(existingPath))
+        {
+            if (OpenInBrowser(existingPath))
+                StatusText = $"Launched \"{item.Name}\". Saved in {AppsDirectory}.";
+            else
+                StatusText = $"\"{item.Name}\" is saved in {AppsDirectory}, but no browser could be opened.";
+            return;
+        }
+
         IsLoading = true;
-        StatusText = $"Downloading \"{SelectedApp.Name}\"…";
+        StatusText = $"Downloading \"{item.Name}\"…";
         try
         {
-            var html = await SaveAppHtmlAsync(SelectedApp.Id, SelectedApp.Name, null, CancellationToken.None);
-            _ = _core.CountAppDownloadAsync(SelectedApp.Id, CancellationToken.None);
-            StatusText = $"Opened \"{SelectedApp.Name}\" in your browser.";
-            OpenInBrowser(html);
+            var html = await SaveAppHtmlAsync(item.Id, item.Name, null, CancellationToken.None);
+            _downloadedApps[item.Id] = Path.GetFileName(html);
+            SaveDownloadedApps();
+            item.IsDownloaded = true;
+            _ = _core.CountAppDownloadAsync(item.Id, CancellationToken.None);
+            var opened = OpenInBrowser(html);
+            StatusText = opened
+                ? $"Downloaded \"{item.Name}\". Saved in {AppsDirectory}. Opened in your browser."
+                : $"Downloaded \"{item.Name}\" to {AppsDirectory}, but no browser could be opened.";
         }
         catch (Exception ex)
         {
@@ -199,7 +224,9 @@ public class AppStoreViewModel : ViewModelBase
         if (safe.Length == 0) safe = "app";
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KindleHubPro", "apps");
         Directory.CreateDirectory(dir);
-        var htmlPath = Path.Combine(dir, safe + ".html");
+        var safeId = new string(appId.Where(char.IsLetterOrDigit).Take(40).ToArray());
+        if (safeId.Length == 0) safeId = "app";
+        var htmlPath = Path.Combine(dir, safe + "-" + safeId + ".html");
         var html = AddStandaloneAppSupport(downloaded.Html ?? "", appId);
         await File.WriteAllTextAsync(htmlPath, html, ct);
         return htmlPath;
@@ -372,8 +399,10 @@ private void RefreshMyApps()
         {
             StatusText = $"Loading \"{item.Name}\"…";
             var html = await SaveAppHtmlAsync(item.Id, item.Name, item.OwnerSecret, CancellationToken.None);
-            OpenInBrowser(html);
-            StatusText = $"Opened your app \"{item.Name}\".";
+            var opened = OpenInBrowser(html);
+            StatusText = opened
+                ? $"Opened your app \"{item.Name}\". Saved in {AppsDirectory}."
+                : $"Your app \"{item.Name}\" is saved in {AppsDirectory}, but no browser could be opened.";
         }
         catch (Exception ex)
         {
@@ -382,22 +411,59 @@ private void RefreshMyApps()
         }
     }
 
-    private void OpenInBrowser(string path)
+    private static string AppsDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KindleHubPro", "apps");
+
+    private static Dictionary<string, string> LoadDownloadedApps()
+    {
+        try
+        {
+            var json = File.ReadAllText(Path.Combine(AppsDirectory, "downloaded-apps.json"));
+            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+        }
+        catch (Exception) { return new Dictionary<string, string>(); }
+    }
+
+    private void SaveDownloadedApps()
+    {
+        Directory.CreateDirectory(AppsDirectory);
+        File.WriteAllText(Path.Combine(AppsDirectory, "downloaded-apps.json"),
+            System.Text.Json.JsonSerializer.Serialize(_downloadedApps));
+    }
+
+    private bool TryGetDownloadedPath(string appId, out string path)
+    {
+        if (_downloadedApps.TryGetValue(appId, out var fileName) && Path.GetFileName(fileName) == fileName)
+        {
+            path = Path.Combine(AppsDirectory, fileName);
+            if (File.Exists(path)) return true;
+        }
+        path = string.Empty;
+        return false;
+    }
+
+    private static bool OpenInBrowser(string path)
     {
         try
         {
             if (OperatingSystem.IsWindows())
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo($"@\"{path}\"") { UseShellExecute = true });
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
             else if (OperatingSystem.IsMacOS())
-                System.Diagnostics.Process.Start("open", $"@\"{path}\"");
+                StartBrowserProcess("open", path);
             else
-                System.Diagnostics.Process.Start("xdg-open", $"@\"{path}\"");
+                StartBrowserProcess("xdg-open", path);
+            return true;
         }
-        catch
+        catch (Exception)
         {
-            // Headless session: the file is still on disk.
-            StatusText = $"No browser available. The HTML was saved to: {path}";
+            return false;
         }
+    }
+
+    private static void StartBrowserProcess(string command, string path)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(command) { UseShellExecute = false };
+        start.ArgumentList.Add(path);
+        System.Diagnostics.Process.Start(start);
     }
 }
 
@@ -412,3 +478,26 @@ private void RefreshMyApps()
         public string OwnerSecret { get; }
         public bool Pending => true; // server auto-review approves within ~15 s for clean apps
     }
+
+public sealed class StoreAppItem : ViewModelBase
+{
+    private bool _isDownloaded;
+    public StoreAppItem(AppCatalog app) => Catalog = app;
+    public AppCatalog Catalog { get; }
+    public string Id => Catalog.Id;
+    public string Name => Catalog.Name;
+    public string Author => Catalog.Author;
+    public string Category => Catalog.Category;
+    public string IconArt => Catalog.IconArt;
+    public bool HasIcon => Catalog.HasIcon;
+    public bool ShowInitials => Catalog.ShowInitials;
+    public string Initials => Catalog.Initials;
+    public string RatingFormatted => Catalog.RatingFormatted;
+    public string DownloadsFormatted => Catalog.DownloadsFormatted;
+    public bool IsDownloaded
+    {
+        get => _isDownloaded;
+        set { if (SetProperty(ref _isDownloaded, value)) OnPropertyChanged(nameof(ActionLabel)); }
+    }
+    public string ActionLabel => IsDownloaded ? "Launch" : "Download";
+}

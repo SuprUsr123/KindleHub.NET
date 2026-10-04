@@ -11,6 +11,7 @@
         <conv:ProfileAvatarCodeConverter x:Key="AvatarImage"/>
         <conv:AvatarFallbackVisibilityConverter x:Key="AvatarFallback"/>
         <conv:ProfileFrameBrushConverter x:Key="ProfileFrameBrush"/>
+        <conv:DataImageToBitmapConverter x:Key="MemeImage"/>
     </UserControl.Resources>
     <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="20">
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
@@ -88,7 +89,10 @@
                                         </Grid>
                                         <Image Source="{Binding ., Converter={StaticResource FlipbookPreview}}" IsVisible="{Binding IsFlipbook}"
                                                Width="150" Height="150" HorizontalAlignment="Left"/>
-                                        <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap"/>
+                                        <Image Source="{Binding ImageDataUri, Converter={StaticResource MemeImage}}"
+                                               IsVisible="{Binding IsImage}" MaxWidth="480" MaxHeight="480"
+                                               Stretch="Uniform" HorizontalAlignment="Left"/>
+                                        <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap" IsVisible="{Binding ShowPlainText}"/>
                                         <TextBlock Text="Important" IsVisible="{Binding Important}" Foreground="Orange" FontSize="11"/>
                                     </StackPanel>
                                 </Border>
@@ -139,6 +143,13 @@
                         <TextBlock Text="Choose an official scene or use one of your pictures. Each scene gets its own caption fields." Foreground="Gray" TextWrapping="Wrap"/>
                     </StackPanel>
                     <ComboBox ItemsSource="{Binding MemeSceneOptions}" SelectedItem="{Binding SelectedMemeScene}" HorizontalAlignment="Left" MinWidth="220"/>
+                    <TextBlock Text="Outside templates (Imgflip)" FontWeight="SemiBold"/>
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <ComboBox Grid.Column="0" ItemsSource="{Binding OutsideMemeTemplates}"
+                                  SelectedItem="{Binding SelectedOutsideMemeTemplate}"/>
+                        <Button Grid.Column="1" Content="Load list" Click="LoadOutsideTemplates_Click"/>
+                        <Button Grid.Column="2" Content="Use template" Click="UseOutsideTemplate_Click"/>
+                    </Grid>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button Content="Use a picture" Click="UseMemePicture_Click"/>
                         <Button Content="Back to scene" Click="ClearMemePicture_Click" IsVisible="{Binding HasMemePicture}"/>
@@ -149,14 +160,30 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBox Text="{Binding Text}" PlaceholderText="{Binding Label}"
-                                         MaxLength="60" Width="270" Margin="0,0,8,8"/>
+                                <Border Padding="8" Margin="0,0,8,8" CornerRadius="6"
+                                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                    <StackPanel Spacing="5">
+                                        <TextBox Text="{Binding Text}" PlaceholderText="{Binding Label}"
+                                                 MaxLength="60" Width="270"/>
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <TextBlock Text="X" VerticalAlignment="Center" FontSize="11"/>
+                                            <TextBox Text="{Binding LeftText}" Width="58" MaxLength="5" PlaceholderText="0–480"/>
+                                            <TextBlock Text="Y" VerticalAlignment="Center" FontSize="11" Margin="3,0,0,0"/>
+                                            <TextBox Text="{Binding TopText}" Width="58" MaxLength="5" PlaceholderText="0–480"/>
+                                            <ComboBox ItemsSource="{Binding AnchorOptions}" SelectedItem="{Binding At}"
+                                                      MinWidth="82" ToolTip.Tip="Text alignment within its area"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <views:MemePreviewControl x:Name="MemePreview" Width="480" Height="480"
                                               HorizontalAlignment="Left"/>
-                    <Button Content="Save meme as PNG" Click="SaveMeme_Click" HorizontalAlignment="Left" FontWeight="Bold"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Save meme as PNG" Click="SaveMeme_Click" FontWeight="Bold"/>
+                        <Button Content="Post meme" Click="PostMeme_Click" FontWeight="Bold"/>
+                    </StackPanel>
                 </StackPanel>
 
                 <StackPanel IsVisible="{Binding IsCloudSavesSection}" Spacing="10">

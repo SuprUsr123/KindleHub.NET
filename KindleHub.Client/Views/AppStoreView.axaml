@@ -50,8 +50,12 @@
                                             <TextBlock Text="{Binding DownloadsFormatted}" FontSize="12" Foreground="Gray"/>
                                         </StackPanel>
                                     </StackPanel>
-                                    <Button Grid.Column="2" Content="Download" VerticalAlignment="Center"
-                                            Padding="14,8" Click="Download_Click"/>
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="3">
+                                        <TextBlock Text="Downloaded" IsVisible="{Binding IsDownloaded}"
+                                                   FontSize="11" Foreground="Gray" HorizontalAlignment="Center"/>
+                                        <Button Content="{Binding ActionLabel}" VerticalAlignment="Center"
+                                                Padding="14,8" Click="Download_Click"/>
+                                    </StackPanel>
                                 </Grid>
                             </Border>
                         </DataTemplate>

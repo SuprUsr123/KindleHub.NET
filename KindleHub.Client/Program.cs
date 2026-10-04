@@ -4,6 +4,7 @@ using Avalonia.Wayland;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using KindleHub.Client.ViewModels;
 
 namespace KindleHub.Client;
@@ -19,7 +20,6 @@ class Program
         if (args.Length > 0)
         {
             var phrase = string.Join(' ', args).Trim();
-            Console.WriteLine("There was some text here, but I kinda sorta forgot. Probably not important.");
             try
             {
                 var desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -35,19 +35,48 @@ class Program
             {
                 try { Directory.CreateDirectory(Path.GetDirectoryName(marker)!); File.WriteAllText(marker, "1"); }
                 catch { }
+                Console.Error.WriteLine("Unhandled exception. System.InvalidOperationException: Unknown Command: INTERLOPE");
+                Console.Error.WriteLine("   at KindleHub.Client.Program.Main(String[] args)");
+                Environment.ExitCode = 1;
+                return;
             }
-            else if (phrase.Equals(string.Concat("-get s.interlope.", "pull:27015"), StringComparison.OrdinalIgnoreCase) && File.Exists(marker))
+            if (phrase.Equals(string.Concat("-get s.interlope.", "pull:27015"), StringComparison.OrdinalIgnoreCase))
             {
-                try { File.Delete(marker); } catch { }
-                SettingsViewModel.NoteFound("INTERLOPER");
-                try { Process.Start(new ProcessStartInfo(string.Concat("https://www.youtube.com/watch?v=", "Imew", "MLwyjdE")) { UseShellExecute = true }); } catch { }
+                if (File.Exists(marker))
+                {
+                    try { File.Delete(marker); } catch { }
+                    RunInterloperTerminalSequence();
+                    SettingsViewModel.NoteFound("INTERLOPER");
+                    try { Process.Start(new ProcessStartInfo(string.Concat("https://www.youtube.com/watch?v=", "Imew", "MLwyjdE")) { UseShellExecute = true }); } catch { }
+                }
+                return;
             }
 
-            if (!phrase.Equals(string.Concat("-worldmachine", "edition"), StringComparison.OrdinalIgnoreCase)) return;
+            if (!phrase.Equals(string.Concat("-worldmachine", "edition"), StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("There was some text here, but I kinda sorta forgot. Probably not important.");
+                return;
+            }
+            Console.WriteLine("There was some text here, but I kinda sorta forgot. Probably not important.");
         }
 
         App.LaunchArguments = args;
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    private static void RunInterloperTerminalSequence()
+    {
+        Console.WriteLine("getting socket for s.interlope.pull:27015...");
+        Thread.Sleep(TimeSpan.FromSeconds(2));
+        Console.WriteLine("extracting data from terminal");
+        Thread.Sleep(TimeSpan.FromSeconds(7));
+        Console.WriteLine("submitting envelope");
+        Thread.Sleep(TimeSpan.Zero);
+        Console.WriteLine("received");
+        Thread.Sleep(TimeSpan.FromSeconds(1));
+        Console.WriteLine("request from archive submitted");
+        Thread.Sleep(TimeSpan.FromSeconds(5));
+        Console.WriteLine("message from server administrator: CONGRATULATIONS AND WELCOME PLEASE ENTER WITH CAUTION YOU ARE NOT WELCOME HERE");
     }
 
     // Avalonia configuration, don't remove; also used by visual designer.

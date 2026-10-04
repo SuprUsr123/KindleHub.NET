@@ -108,6 +108,9 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
       - name: Download all platform packages
         uses: actions/download-artifact@v4
         with:

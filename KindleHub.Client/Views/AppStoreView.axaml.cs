@@ -19,10 +19,10 @@ public partial class AppStoreView : UserControl
 
     private async void Download_Click(object? sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: AppCatalog app } && DataContext is AppStoreViewModel vm)
+        if (sender is Button { DataContext: StoreAppItem app } && DataContext is AppStoreViewModel vm)
         {
             vm.SelectedApp = app;
-            await vm.DownloadAndOpenAsync();
+            await vm.OpenOrDownloadAsync(app);
         }
     }
 

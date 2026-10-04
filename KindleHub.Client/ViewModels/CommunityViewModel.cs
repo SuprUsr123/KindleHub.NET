@@ -4,6 +4,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using System.Diagnostics;
 using Avalonia.Media.Imaging;
@@ -20,6 +23,7 @@ namespace KindleHub.Client.ViewModels;
 /// </summary>
 public class CommunityViewModel : ViewModelBase
 {
+    private static readonly HttpClient MemeTemplateHttp = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly KindleHubCore _core;
     private readonly ILogger<CommunityViewModel> _logger;
     private readonly MainViewModel _nav;
@@ -44,6 +48,7 @@ public class CommunityViewModel : ViewModelBase
     private string _cloudRoom = "world";
     private MemeSceneOption _selectedMemeScene = null!;
     private Bitmap? _memePicture;
+    private OutsideMemeTemplate? _selectedOutsideMemeTemplate;
     private bool _socialLoading;
     private string _profileName = "";
     private string _profilePronouns = "";
@@ -88,6 +93,12 @@ public class CommunityViewModel : ViewModelBase
     public ObservableCollection<CloudSave> CloudSaves { get; } = new();
     public string[] Sections { get; } = { "Posts", "People", "Memes", "Cloud saves", "Stars & notes", "Flipbooks", "My profile", "Topics" };
     public MemeSceneOption[] MemeSceneOptions { get; } = MemeSceneOption.All;
+    public ObservableCollection<OutsideMemeTemplate> OutsideMemeTemplates { get; } = new();
+    public OutsideMemeTemplate? SelectedOutsideMemeTemplate
+    {
+        get => _selectedOutsideMemeTemplate;
+        set => SetProperty(ref _selectedOutsideMemeTemplate, value);
+    }
     public ObservableCollection<MemeCaptionSlot> MemeCaptions { get; } = new();
     public Bitmap? MemePicture => _memePicture;
     public bool HasMemePicture => _memePicture is not null;
@@ -227,6 +238,88 @@ public class CommunityViewModel : ViewModelBase
         });
     }
 
+    public async Task LoadOutsideMemeTemplatesAsync()
+    {
+        StatusText = "Loading outside meme templates…";
+        try
+        {
+            using var response = await MemeTemplateHttp.GetAsync("https://api.imgflip.com/get_memes", CancellationToken.None);
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var document = await JsonDocument.ParseAsync(stream);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("success", out var success) || !success.GetBoolean() ||
+                !root.TryGetProperty("data", out var data) || !data.TryGetProperty("memes", out var memes))
+                throw new InvalidDataException("Imgflip returned an unexpected template list.");
+
+            var templates = new List<OutsideMemeTemplate>();
+            foreach (var meme in memes.EnumerateArray().Take(100))
+            {
+                var id = meme.TryGetProperty("id", out var idNode) ? idNode.ToString() : "";
+                var name = meme.TryGetProperty("name", out var nameNode) ? nameNode.GetString() : null;
+                var urlText = meme.TryGetProperty("url", out var urlNode) ? urlNode.GetString() : null;
+                if (!int.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out _) ||
+                    string.IsNullOrWhiteSpace(name) || !Uri.TryCreate(urlText, UriKind.Absolute, out var url) ||
+                    url.Scheme != Uri.UriSchemeHttps || !string.Equals(url.Host, "i.imgflip.com", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var boxCount = meme.TryGetProperty("box_count", out var boxes) && boxes.TryGetInt32(out var count) ? count : 2;
+                templates.Add(new OutsideMemeTemplate(id, name, url, Math.Clamp(boxCount, 1, 8)));
+            }
+
+            OutsideMemeTemplates.Clear();
+            foreach (var template in templates) OutsideMemeTemplates.Add(template);
+            SelectedOutsideMemeTemplate = OutsideMemeTemplates.FirstOrDefault();
+            StatusText = templates.Count == 0 ? "No outside templates were returned." : $"Loaded {templates.Count} outside templates from Imgflip.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not load outside meme templates");
+            StatusText = "Couldn't load outside templates. Check your internet connection and try again.";
+        }
+    }
+
+    public async Task UseSelectedOutsideMemeTemplateAsync()
+    {
+        var template = SelectedOutsideMemeTemplate;
+        if (template is null) { StatusText = "Load and select an outside template first."; return; }
+        try
+        {
+            using var response = await MemeTemplateHttp.GetAsync(template.ImageUrl, CancellationToken.None);
+            response.EnsureSuccessStatusCode();
+            if (response.Content.Headers.ContentLength is > 10_000_000)
+                throw new InvalidDataException("The selected template image is too large.");
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            if (bytes.Length == 0 || bytes.Length > 10_000_000)
+                throw new InvalidDataException("The selected template image is empty or too large.");
+            using var stream = new System.IO.MemoryStream(bytes);
+            ReplaceMemePicture(new Bitmap(stream));
+
+            var count = template.BoxCount;
+            var slotHeight = 460d / count;
+            var definitions = Enumerable.Range(0, count).Select(index => new MemeCaptionDefinition(
+                $"Caption {index + 1}", 15, 10 + index * slotHeight, 450, Math.Max(50, slotHeight),
+                index == 0 ? "top" : index == count - 1 ? "bottom" : "middle"));
+            SetMemeCaptions(definitions);
+            StatusText = $"Loaded outside template: {template.Name}. Adjust each caption's X/Y and alignment.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not load outside meme template {TemplateId}", template.Id);
+            StatusText = "Couldn't download that template image.";
+        }
+    }
+
+    public sealed class OutsideMemeTemplate
+    {
+        public string Id { get; }
+        public string Name { get; }
+        public Uri ImageUrl { get; }
+        public int BoxCount { get; }
+        public OutsideMemeTemplate(string id, string name, Uri imageUrl, int boxCount)
+        { Id = id; Name = name; ImageUrl = imageUrl; BoxCount = boxCount; }
+        public override string ToString() => Name;
+    }
+
     public void ClearMemePicture()
     {
         ReplaceMemePicture(null);
@@ -260,10 +353,57 @@ public class CommunityViewModel : ViewModelBase
     public sealed class MemeCaptionSlot : ViewModelBase
     {
         private string _text = "";
+        private string _leftText;
+        private string _topText;
+        private string _at;
+        private double _left;
+        private double _top;
         public MemeCaptionDefinition Definition { get; }
         public string Label => Definition.Label;
         public string Text { get => _text; set => SetProperty(ref _text, value); }
-        public MemeCaptionSlot(MemeCaptionDefinition definition) => Definition = definition;
+        public double Left => _left;
+        public double Top => _top;
+        public string[] AnchorOptions { get; } = { "top", "middle", "bottom" };
+        public string LeftText
+        {
+            get => _leftText;
+            set
+            {
+                if (!SetProperty(ref _leftText, value)) return;
+                if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    _left = Math.Clamp(parsed, 0, 480);
+                    OnPropertyChanged(nameof(Left));
+                }
+            }
+        }
+        public string TopText
+        {
+            get => _topText;
+            set
+            {
+                if (!SetProperty(ref _topText, value)) return;
+                if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    _top = Math.Clamp(parsed, 0, 480);
+                    OnPropertyChanged(nameof(Top));
+                }
+            }
+        }
+        public string At
+        {
+            get => _at;
+            set { if (AnchorOptions.Contains(value, StringComparer.Ordinal)) SetProperty(ref _at, value); }
+        }
+        public MemeCaptionSlot(MemeCaptionDefinition definition)
+        {
+            Definition = definition;
+            _left = definition.X;
+            _top = definition.Y;
+            _leftText = definition.X.ToString("0", CultureInfo.InvariantCulture);
+            _topText = definition.Y.ToString("0", CultureInfo.InvariantCulture);
+            _at = definition.At;
+        }
     }
 
     public sealed record MemeCaptionDefinition(string Label, double X, double Y, double Width, double Height, string At);
@@ -544,6 +684,32 @@ public class CommunityViewModel : ViewModelBase
             await RefreshPostsAsync();
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Neighbourhood post failed"); StatusText = "Couldn't publish the post."; }
+    }
+
+    public async Task PostMemeAsync(byte[] jpegBytes)
+    {
+        if (!TryAuthed()) return;
+        var dataUri = "data:image/jpeg;base64," + Convert.ToBase64String(jpegBytes);
+        var wire = ChatMedia.EncodeImage(dataUri);
+        if (wire is null)
+        {
+            StatusText = "This meme is too large to post. Try a smaller picture or simpler template.";
+            return;
+        }
+
+        try
+        {
+            var code = NeighbourhoodCode(0);
+            await _core.JoinGroupByCodeAsync(code, CancellationToken.None);
+            await _core.SendMessageAsync(code, wire, false, null, CancellationToken.None);
+            StatusText = "Meme posted to the neighbourhood.";
+            await RefreshPostsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Neighbourhood meme post failed");
+            StatusText = "Couldn't publish the meme.";
+        }
     }
 
     private async Task PostFlipbookAsync(SavedFlipbook? book)

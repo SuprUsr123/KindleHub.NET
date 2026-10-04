@@ -79,6 +79,44 @@ public partial class CommunityView : UserControl
         }
     }
 
+    private async void PostMeme_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is not CommunityViewModel vm) return;
+        try
+        {
+            var width = Math.Max(1, (int)Math.Ceiling(MemePreview.Bounds.Width));
+            var height = Math.Max(1, (int)Math.Ceiling(MemePreview.Bounds.Height));
+            using var bitmap = new RenderTargetBitmap(new PixelSize(width, height));
+            bitmap.Render(MemePreview);
+
+            byte[] jpegBytes = Array.Empty<byte>();
+            foreach (var quality in new[] { 82, 68, 54, 42 })
+            {
+                using var stream = new MemoryStream();
+                bitmap.Save(stream, new JpegBitmapEncoderOptions { Quality = quality });
+                jpegBytes = stream.ToArray();
+                if (jpegBytes.Length <= 80_000) break;
+            }
+            await vm.PostMemeAsync(jpegBytes);
+        }
+        catch (Exception)
+        {
+            vm.StatusText = "Couldn't render the meme for posting.";
+        }
+    }
+
+    private async void LoadOutsideTemplates_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is CommunityViewModel vm)
+            await vm.LoadOutsideMemeTemplatesAsync();
+    }
+
+    private async void UseOutsideTemplate_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is CommunityViewModel vm)
+            await vm.UseSelectedOutsideMemeTemplateAsync();
+    }
+
     private async void UseMemePicture_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is not CommunityViewModel vm) return;

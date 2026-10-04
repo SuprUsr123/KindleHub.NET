@@ -60,9 +60,11 @@ public sealed class MemePreviewControl : Control
     {
         var width = bitmap.PixelSize.Width;
         var height = bitmap.PixelSize.Height;
-        var side = Math.Min(width, height);
-        var source = new Rect((width - side) / 2d, (height - side) / 2d, side, side);
-        dc.DrawImage(bitmap, new Rect(0, 0, CanvasSize, CanvasSize), source);
+        var scale = Math.Min(CanvasSize / width, CanvasSize / height);
+        var drawWidth = width * scale;
+        var drawHeight = height * scale;
+        var destination = new Rect((CanvasSize - drawWidth) / 2, (CanvasSize - drawHeight) / 2, drawWidth, drawHeight);
+        dc.DrawImage(bitmap, new Rect(0, 0, width, height), destination);
     }
 
     private static void DrawScene(DrawingContext dc, string id)
@@ -201,28 +203,29 @@ public sealed class MemePreviewControl : Control
     {
         if (string.IsNullOrWhiteSpace(caption.Text)) return;
         var box = caption.Definition;
-        var typeface = new Typeface("Impact", FontStyle.Normal, FontWeight.Black, FontStretch.Normal);
+        var typeface = new Typeface("Inter", FontStyle.Normal, FontWeight.Black, FontStretch.Normal);
         FormattedText? text = null;
-        for (var fontSize = 58d; fontSize >= 20; fontSize -= 2)
+        var maxWidth = Math.Max(1, box.Width - 20);
+        for (var fontSize = 48d; fontSize >= 18; fontSize -= 2)
         {
             text = new FormattedText(caption.Text.ToUpperInvariant(), CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight, typeface, fontSize, Brushes.White)
             {
                 TextAlignment = TextAlignment.Center,
-                MaxTextWidth = box.Width,
-                MaxLineCount = 3,
-                Trimming = TextTrimming.CharacterEllipsis,
-                LineHeight = fontSize * 1.08
+                MaxTextWidth = maxWidth,
+                MaxLineCount = 4,
+                Trimming = TextTrimming.WordEllipsis,
+                LineHeight = fontSize * 1.02
             };
-            if (text.Height <= box.Height - 8) break;
+            if (text.Height <= box.Height - 14 && text.Width <= maxWidth) break;
         }
         if (text is null) return;
-        var y = box.At == "bottom" ? box.Y + box.Height - text.Height - 5
-            : box.At == "middle" ? box.Y + (box.Height - text.Height) / 2
-            : box.Y + 4;
-        var glyphs = text.BuildGeometry(new Point(box.X, y));
+        var y = caption.At == "bottom" ? caption.Top + box.Height - text.Height - 7
+            : caption.At == "middle" ? caption.Top + (box.Height - text.Height) / 2
+            : caption.Top + 7;
+        var glyphs = text.BuildGeometry(new Point(caption.Left, y));
         if (glyphs is not null)
-            dc.DrawGeometry(Brushes.White, new Pen(Brushes.Black, 8), glyphs);
+            dc.DrawGeometry(Brushes.White, new Pen(Brushes.Black, 3), glyphs);
     }
 
     private static void Rect(DrawingContext dc, double x, double y, double width, double height, Pen pen) =>
