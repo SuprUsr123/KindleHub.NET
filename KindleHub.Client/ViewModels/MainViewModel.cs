@@ -80,10 +80,6 @@ public class MainViewModel : ViewModelBase
             OnPropertyChanged(nameof(UserDisplayName));
         };
 
-        _core.MessageReceived += (s, e) => 
-        {
-            _logger.LogInformation("New message in {Group}: {User}: {Text}", e.GroupCode, e.DisplayName, e.Text);
-        };
     }
 
     public async Task InitializeAsync()

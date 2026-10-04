@@ -43,6 +43,7 @@ Public Class FetchMessagesRequest
     Public Property Limit As Integer = 50
     Public Property Offset As Integer = 0
     Public Property AfterId As String
+    Public Property AfterTimestamp As DateTimeOffset?
     ''' <summary>Decrypt text as chat ciphertext (True) or treat it as a plaintext relay event.</summary>
     Public Property Encrypted As Boolean = True
 End Class

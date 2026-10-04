@@ -75,6 +75,7 @@ Public Interface IKindleHubApiClient
     Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry))
     Function FetchAvatarCodesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, String))
     Function FetchPublicProfilesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, PublicProfileDetails))
+    Function SearchFriendUsersAsync(query As String, authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of FriendUser))
 
     ' Multiplayer relay (JSON envelopes riding the encrypted chat transport)
     Function SendRoomEventAsync(groupCode As String, eventJson As String, displayName As String, authToken As String, cancellationToken As CancellationToken) As Task(Of Message)
@@ -98,6 +99,11 @@ Public Interface IKindleHubApiClient
     ' Unsend: only the sending device can remove its own mail (owner_secret gate).
     Function DeleteMailAsync(mailId As String, ownerSecret As String, cancellationToken As CancellationToken) As Task(Of Boolean)
 End Interface
+
+Public Class FriendUser
+    Public Property Hash As String
+    Public Property Name As String
+End Class
 
 ''' <summary>One mail row, body already decrypted.</summary>
 Public Class MailItem
@@ -329,8 +335,12 @@ Public Class KindleHubApiClient
                   $"&select=id,group_code,user_id,display_name,text,ts,edited,important,reactions,reply_to,device_hint,location_hint"
         If request.Offset > 0 Then url &= $"&offset={request.Offset}"
         If Not String.IsNullOrEmpty(request.AfterId) Then url &= "&id=gt." & Uri.EscapeDataString(request.AfterId)
+        If request.AfterTimestamp.HasValue Then
+            Dim afterTimestamp = request.AfterTimestamp.Value.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", Globalization.CultureInfo.InvariantCulture)
+            url &= "&ts=gte." & Uri.EscapeDataString(afterTimestamp)
+        End If
 
-        Dim rows = Await GetRowsAsync(url, cancellationToken)
+        Dim rows = Await GetRowsAsync(url, authToken, cancellationToken)
         Dim results As New List(Of Message)()
         If rows Is Nothing Then Return results
         For Each row In rows
@@ -1020,6 +1030,20 @@ Public Class KindleHubApiClient
             Catch
             End Try
             result(id) = details
+        Next
+        Return result
+    End Function
+
+    Public Async Function SearchFriendUsersAsync(query As String, authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of FriendUser)) Implements IKindleHubApiClient.SearchFriendUsersAsync
+        Dim result As New List(Of FriendUser)()
+        Dim term = If(query, "").Trim().Replace("%", "").Replace("_", "")
+        If term.Length < 2 Then Return result
+        Dim rows = Await GetRowsAsync("rest/v1/kh_users?email=ilike." & Uri.EscapeDataString("*" & term & "*") & "&select=hash,email&limit=20", cancellationToken)
+        For Each row In rows
+            Dim hash = JsonStr(row, "hash"), email = JsonStr(row, "email")
+            If hash.Length >= 6 AndAlso hash.Length <= 16 AndAlso Regex.IsMatch(hash, "^[a-fA-F0-9]+$") AndAlso email.Contains("@") AndAlso Not authToken.StartsWith(hash, StringComparison.OrdinalIgnoreCase) Then
+                result.Add(New FriendUser With {.Hash = hash, .Name = email.Substring(0, email.IndexOf("@"c))})
+            End If
         Next
         Return result
     End Function

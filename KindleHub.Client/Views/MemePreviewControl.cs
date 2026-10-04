@@ -1,9 +1,11 @@
 using System;
 using System.ComponentModel;
 using System.Globalization;
+using System.Linq;
 using System.Collections.Specialized;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using KindleHub.Client.ViewModels;
 
@@ -15,9 +17,21 @@ public sealed class MemePreviewControl : Control
     private const double CanvasSize = 480;
     private static readonly Pen Ink = new(Brushes.Black, 5);
     private static readonly Pen FineInk = new(Brushes.Black, 3);
+    private static readonly Pen SelectionPen = new(Brushes.DodgerBlue, 2);
+    private CommunityViewModel.MemeCaptionSlot? _dragCaption;
+    private bool _resizingCaption;
+    private Point _pointerStart;
+    private double _startLeft;
+    private double _startTop;
+    private double _startWidth;
+    private double _startHeight;
     private CommunityViewModel? _viewModel;
 
-    public MemePreviewControl() => ClipToBounds = true;
+    public MemePreviewControl()
+    {
+        ClipToBounds = true;
+        Focusable = true;
+    }
 
     protected override void OnDataContextChanged(EventArgs e)
     {
@@ -53,7 +67,70 @@ public sealed class MemePreviewControl : Control
                 DrawScene(context, _viewModel.SelectedMemeScene.Id);
             foreach (var caption in _viewModel.MemeCaptions)
                 DrawCaption(context, caption);
+            if (_viewModel.SelectedMemeCaption is { } selected && _viewModel.MemeCaptions.Contains(selected))
+                DrawCaptionSelection(context, selected);
         }
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        if (_viewModel is null || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed || Bounds.Width <= 0 || Bounds.Height <= 0)
+            return;
+
+        var point = ToCanvasPoint(e.GetPosition(this));
+        foreach (var caption in _viewModel.MemeCaptions.Reverse())
+        {
+            var rect = new Rect(caption.Left, caption.Top, caption.Width, caption.Height);
+            if (!rect.Contains(point)) continue;
+
+            _viewModel.SelectedMemeCaption = caption;
+            _dragCaption = caption;
+            _resizingCaption = point.X >= rect.Right - 18 && point.Y >= rect.Bottom - 18;
+            _pointerStart = point;
+            _startLeft = caption.Left;
+            _startTop = caption.Top;
+            _startWidth = caption.Width;
+            _startHeight = caption.Height;
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            return;
+        }
+
+        _viewModel.SelectedMemeCaption = null;
+        InvalidateVisual();
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        if (_dragCaption is not { } caption) return;
+        var point = ToCanvasPoint(e.GetPosition(this));
+        var delta = point - _pointerStart;
+        if (_resizingCaption)
+            caption.ResizeTo(_startWidth + delta.X, _startHeight + delta.Y);
+        else
+            caption.MoveTo(_startLeft + delta.X, _startTop + delta.Y);
+        e.Handled = true;
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        if (_dragCaption is null) return;
+        _dragCaption = null;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    private Point ToCanvasPoint(Point point) => new(point.X * CanvasSize / Bounds.Width, point.Y * CanvasSize / Bounds.Height);
+
+    private static void DrawCaptionSelection(DrawingContext dc, CommunityViewModel.MemeCaptionSlot caption)
+    {
+        var rect = new Rect(caption.Left, caption.Top, caption.Width, caption.Height);
+        dc.DrawRectangle(null, SelectionPen, rect);
+        dc.DrawRectangle(Brushes.DodgerBlue, new Pen(Brushes.White, 1),
+            new Rect(rect.Right - 8, rect.Bottom - 8, 12, 12));
     }
 
     private static void DrawPicture(DrawingContext dc, Avalonia.Media.Imaging.Bitmap bitmap)
@@ -202,10 +279,9 @@ public sealed class MemePreviewControl : Control
     private static void DrawCaption(DrawingContext dc, CommunityViewModel.MemeCaptionSlot caption)
     {
         if (string.IsNullOrWhiteSpace(caption.Text)) return;
-        var box = caption.Definition;
         var typeface = new Typeface("Inter", FontStyle.Normal, FontWeight.Black, FontStretch.Normal);
         FormattedText? text = null;
-        var maxWidth = Math.Max(1, box.Width - 20);
+        var maxWidth = Math.Max(1, caption.Width - 20);
         for (var fontSize = 48d; fontSize >= 18; fontSize -= 2)
         {
             text = new FormattedText(caption.Text.ToUpperInvariant(), CultureInfo.CurrentCulture,
@@ -217,11 +293,11 @@ public sealed class MemePreviewControl : Control
                 Trimming = TextTrimming.WordEllipsis,
                 LineHeight = fontSize * 1.02
             };
-            if (text.Height <= box.Height - 14 && text.Width <= maxWidth) break;
+            if (text.Height <= caption.Height - 14 && text.Width <= maxWidth) break;
         }
         if (text is null) return;
-        var y = caption.At == "bottom" ? caption.Top + box.Height - text.Height - 7
-            : caption.At == "middle" ? caption.Top + (box.Height - text.Height) / 2
+        var y = caption.At == "bottom" ? caption.Top + caption.Height - text.Height - 7
+            : caption.At == "middle" ? caption.Top + (caption.Height - text.Height) / 2
             : caption.Top + 7;
         var glyphs = text.BuildGeometry(new Point(caption.Left, y));
         if (glyphs is not null)
@@ -257,7 +333,8 @@ public sealed class MemePreviewControl : Control
 
     private void ViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(CommunityViewModel.SelectedMemeScene) or nameof(CommunityViewModel.MemeCaptions) or nameof(CommunityViewModel.MemePicture))
+        if (e.PropertyName is nameof(CommunityViewModel.SelectedMemeScene) or nameof(CommunityViewModel.MemeCaptions) or
+            nameof(CommunityViewModel.MemePicture) or nameof(CommunityViewModel.SelectedMemeCaption))
             InvalidateVisual();
     }
 

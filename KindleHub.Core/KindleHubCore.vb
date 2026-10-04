@@ -221,6 +221,21 @@ Public Class KindleHubCore
             Return list
         End Function
 
+        ''' <summary>Fetches a short overlapping time window for active-chat polling.</summary>
+        Public Async Function FetchMessagesSinceAsync(groupCode As String, afterTimestamp As DateTimeOffset, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of Message))
+            Dim request = New FetchMessagesRequest With {
+                .GroupCode = groupCode,
+                .Limit = limit,
+                .Encrypted = True,
+                .AfterTimestamp = afterTimestamp
+            }
+            Dim list = Await _apiClient.FetchMessagesAsync(request, If(_currentProfile?.AuthToken, ""), cancellationToken)
+            For Each m In list
+                RaiseEvent MessageReceived(Me, m)
+            Next
+            Return list
+        End Function
+
         Public Async Function EditMessageAsync(groupCode As String, messageId As String, ownerSecret As String, newText As String, cancellationToken As CancellationToken) As Task(Of Boolean)
             Return Await _apiClient.EditMessageAsync(groupCode, messageId, ownerSecret, newText, cancellationToken)
         End Function
@@ -643,6 +658,28 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
                 found.Add(g)
             Next
             Return found
+        End Function
+
+        Public Function SearchFriendUsersAsync(query As String, cancellationToken As CancellationToken) As Task(Of List(Of FriendUser))
+            If Not IsAuthenticated Then Return Task.FromResult(New List(Of FriendUser)())
+            Return _apiClient.SearchFriendUsersAsync(query, _currentProfile.AuthToken, cancellationToken)
+        End Function
+
+        Public Async Function SendFriendInboxEventAsync(targetHash As String, eventType As String, cancellationToken As CancellationToken) As Task
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to manage friends.")
+            Dim hash = If(targetHash, "").ToLowerInvariant()
+            If Not System.Text.RegularExpressions.Regex.IsMatch(hash, "^[a-f0-9]{6,16}$") Then Throw New ArgumentException("Invalid friend account.")
+            Dim suffix As String = ""
+            For i = 0 To 5
+                suffix &= (Convert.ToInt32(hash(i).ToString(), 16) Mod 10).ToString()
+            Next
+            Dim inbox = "800000" & suffix
+            Try
+                Await _apiClient.CreateGroupAsync(New CreateGroupRequest With {.Code = inbox, .Name = "inbox-" & hash.Substring(0, 8), .Creator = _currentProfile.DisplayName}, _currentProfile.AuthToken, cancellationToken)
+            Catch
+            End Try
+            Dim payload = New With {.type = eventType, .fromName = _currentProfile.DisplayName, .fromUserId = _currentProfile.UserId, .fromHash = _currentProfile.AuthToken.Substring(0, Math.Min(16, _currentProfile.AuthToken.Length))}
+            Await _apiClient.SendRoomEventAsync(inbox, System.Text.Json.JsonSerializer.Serialize(payload), _currentProfile.DisplayName, _currentProfile.AuthToken, cancellationToken)
         End Function
 
         Private Function RoomIsOpen(code As String) As Boolean

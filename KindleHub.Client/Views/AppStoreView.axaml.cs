@@ -4,6 +4,7 @@ using System.IO;
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
+using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using KindleHub.Client.ViewModels;
 using KindleHub.Core;
@@ -21,9 +22,16 @@ public partial class AppStoreView : UserControl
     {
         if (sender is Button { DataContext: StoreAppItem app } && DataContext is AppStoreViewModel vm)
         {
+            vm.DetailsOpen = false;
             vm.SelectedApp = app;
             await vm.OpenOrDownloadAsync(app);
         }
+    }
+
+    private void App_DoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is ListBox { SelectedItem: StoreAppItem app } && DataContext is AppStoreViewModel vm)
+            vm.ShowAppDetails(app);
     }
 
     private async void ChooseHtml_Click(object? sender, RoutedEventArgs e)

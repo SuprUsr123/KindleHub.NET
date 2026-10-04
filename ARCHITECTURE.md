@@ -59,13 +59,22 @@ request URL.
 Account-state JSON is encrypted client-side. Unknown keys must survive edits so
 newer web-client preferences are not erased by an older desktop client. Current
 shared keys include `profileName`, `profileAvatar`, `fontSize`, `theme`,
-`simpleMode`, `syncEnabled`, `notes`, `msgGroups`, and `leftGroups`. The official
+`simpleMode`, `syncEnabled`, `notes`, `msgGroups`, `leftGroups`, `friends`,
+`friendRequests`, and `friendReqTombs`. Friend rows use `{hash,uid,name,since,mid}`;
+pending requests use `{hash,uid,name,ts,msgTs,mid}`. The official
 Messages client stores joined chat rooms as `msgGroups`, an array of
 `{code,name,joinedAt}` rows, and excludes rooms in `leftGroups`. Desktop room
 joins use that same shape and sync it through the encrypted `kh_users.state`
 account vault so the joined room list follows the account to other clients.
 Global/fixed chats, inbox rooms, and multiplayer relay rooms are not user-joined
 message groups and are not written to `msgGroups`.
+
+Friend lists and requests are encrypted account-state data, not presence rows.
+The desktop Friends section refreshes synced state and polls the signed-in
+account's inbox for friend-request and acceptance events. Resolving requests or
+removing friends records the event id in `friendReqTombs` to prevent old inbox
+replays from restoring resolved state. Preserve these keys when editing other
+account-state fields.
 
 ## Profile pictures and online presence
 
@@ -119,9 +128,13 @@ The desktop Messages view resolves message authors through this same batch
 lookup, keyed by each message's `user_id`; chat message payloads do not include
 avatar snapshots. The client caches codes for the active session and falls back
 to the sender's initial when a presence row or valid picture is unavailable.
-Transcript rows group consecutive messages from the same author for five
-minutes, align the signed-in user's messages to the right, and add local-date
-separators. These are presentation rules and do not change the message API.
+The desktop polls the active room every two seconds and keeps a bottom-follow
+anchor as messages, reply previews, and images change transcript height. It
+stops following when the reader scrolls away. Replies are independent message
+rows with `reply_to` pointing to the parent id, show a quoted preview, and are
+not visually grouped into the preceding message. Consecutive non-reply messages
+from one author may share a sender header for five minutes; local-date dividers
+are presentation only.
 
 ## Scores and leaderboards
 
@@ -168,8 +181,9 @@ and lists request only the relevant codes or bounded directory rows.
 | `reactions` | JSON reaction counts |
 | `device_hint`, `location_hint` | Moderation hints where supplied |
 
-Normal message text is encrypted client-side before it is written. The desktop
-wire envelopes are `enc1:<iv>.<ciphertext>.<tag>` for AES-GCM and `enc2:` for
+Normal message text is encrypted client-side before it is written. Bounded
+message reads include the caller's `X-KH-Secret` and the required exact
+`group_code` filter. The desktop wire envelopes are `enc1:<iv>.<ciphertext>.<tag>` for AES-GCM and `enc2:` for
 gzip-compressed AES-GCM payloads. Room keys and message keys are client-side;
 the service relays ciphertext and room metadata.
 
@@ -220,6 +234,20 @@ Public listing is limited to approved apps. Authors may fetch their own pending
 app when the matching `owner_secret` is supplied. HTML is run locally after the
 download; it is not executed by the API.
 
+The desktop App Store is a native Avalonia surface for catalogue search,
+category filters, app metadata, downloads, publishing, and local app management.
+Downloaded HTML is stored under the user's application-data
+`KindleHubPro/apps` directory and launched through the operating-system browser;
+the desktop client does not embed app content in a webview. A standalone shim
+provides app-scoped local storage and a restrictive content security policy.
+
+Portable app codes use the official `KHAPP1:` prefix and base64-encoded UTF-8
+JSON containing `{label,color,icon,html}`. The native Import/Share dialog accepts
+these codes, enforces the 512 KiB HTML limit, stores imported apps locally, and
+can export a downloaded app in the same format. This is a device-local transfer,
+not a catalogue publish. Publishing accepts an HTML file or clipboard content
+and uses the shared store API.
+
 ## Desktop API mapping
 
 | Layer | Responsibility |
@@ -230,6 +258,9 @@ download; it is not executed by the API.
 | `LeaderboardViewModel.cs` | Loads scores and presence, then resolves leaderboard avatar codes in one bounded batch |
 | `SettingsViewModel.cs` | Edits the shared pixel grid and stores its official avatar code under `profileAvatar` |
 | `ProfileAvatar.cs` | Validates, encodes, and renders the shared KHAV1/KHAV2 formats |
+| `CommunityViewModel.cs` | Loads/syncs friend rows and processes inbox friend events |
+| `MessagesViewModel.cs` | Polls active rooms and sends replies as separate `reply_to` messages |
+| `AppStoreViewModel.cs` | Native catalogue, downloads, publishing, and KHAPP1 transfer |
 
 When changing an API contract, update this reference and the official-client
 interop behavior together. Keep requests bounded, do not weaken gateway filters,

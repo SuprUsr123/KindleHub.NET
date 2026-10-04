@@ -50,6 +50,10 @@ public class AppStoreViewModel : ViewModelBase
     private string _publishHtmlPath = "";
     private int _publishHtmlSize;
     private bool _publishing;
+    private string _importCode = "";
+    private string _shareCode = "";
+    private bool _showTransfer;
+    private bool _detailsOpen;
 
     // my published apps
     private ObservableCollection<OwnAppItem> _myApps = new();
@@ -62,7 +66,10 @@ public class AppStoreViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _selectedApp, value))
+            {
                 DownloadAndOpenCommand.RaiseCanExecuteChanged();
+                ExportSelectedAppCommand.RaiseCanExecuteChanged();
+            }
         }
     }
 
@@ -80,11 +87,15 @@ public class AppStoreViewModel : ViewModelBase
 
     public bool IsLoading { get => _isLoading; set => SetProperty(ref _isLoading, value); }
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
-    public string[] Categories { get; } = { "All", "Games", "Fun", "Tools", "News & Media", "Education" };
+    public string[] Categories { get; } = { "All", "Productivity", "Reference", "Utilities", "Creativity", "Lifestyle", "News & Media", "Community", "Games", "Fun", "Tools", "Education" };
 
     public bool PublishOpen { get => _publishOpen; set { _publishOpen = value; OnPropertyChanged(); CancelPublishCommand.RaiseCanExecuteChanged(); } }
     public string PublishName { get => _publishName; set { if (SetProperty(ref _publishName, value)) PublishAppCommand.RaiseCanExecuteChanged(); } }
     public string PublishCategory { get => _publishCategory; set => SetProperty(ref _publishCategory, value); }
+    public string ImportCode { get => _importCode; set => SetProperty(ref _importCode, value); }
+    public string ShareCode { get => _shareCode; set => SetProperty(ref _shareCode, value); }
+    public bool ShowTransfer { get => _showTransfer; set => SetProperty(ref _showTransfer, value); }
+    public bool DetailsOpen { get => _detailsOpen; set => SetProperty(ref _detailsOpen, value); }
     public string PublishHtmlPath { get => _publishHtmlPath; set => SetProperty(ref _publishHtmlPath, value); }
     public int PublishHtmlSize { get => _publishHtmlSize; set => SetProperty(ref _publishHtmlSize, value); }
     public bool Publishing { get => _publishing; set => SetProperty(ref _publishing, value); }
@@ -116,6 +127,11 @@ public class AppStoreViewModel : ViewModelBase
     public RelayCommand RefreshMyAppsCommand { get; }
     public RelayCommand<OwnAppItem> RemoveAppCommand { get; }
     public RelayCommand<OwnAppItem> RunOwnAppCommand { get; }
+    public RelayCommand RefreshStoreCommand { get; }
+    public RelayCommand ShowTransferCommand { get; }
+    public RelayCommand ImportAppCommand { get; }
+    public RelayCommand ExportSelectedAppCommand { get; }
+    public RelayCommand CloseDetailsCommand { get; }
 
     public AppStoreViewModel(KindleHubCore core, ILogger<AppStoreViewModel> logger)
     {
@@ -133,6 +149,11 @@ public class AppStoreViewModel : ViewModelBase
         RefreshMyAppsCommand = new RelayCommand(() => RefreshMyApps());
         RemoveAppCommand = new RelayCommand<OwnAppItem>(async a => await RemoveOwnAppAsync(a));
         RunOwnAppCommand = new RelayCommand<OwnAppItem>(async a => await RunOwnAppAsync(a));
+        ShowTransferCommand = new RelayCommand(() => ShowTransfer = !ShowTransfer);
+        ImportAppCommand = new RelayCommand(ImportApp);
+        ExportSelectedAppCommand = new RelayCommand(async () => await ExportSelectedAppAsync(), () => SelectedApp != null && SelectedApp.IsDownloaded);
+        RefreshStoreCommand = new RelayCommand(async () => await SearchAppsAsync(forceRefresh: true));
+        CloseDetailsCommand = new RelayCommand(() => DetailsOpen = false);
 
         RefreshMyApps();
         Dispatcher.UIThread.Post(async () => await SearchAppsAsync());
@@ -144,7 +165,7 @@ public class AppStoreViewModel : ViewModelBase
         _logger.LogError(ex, "[KindleHub Debug] {Context}", context);
     }
 
-    public async Task SearchAppsAsync()
+    public async Task SearchAppsAsync(bool forceRefresh = false)
     {
         if (IsLoading) return;
         IsLoading = true;
@@ -177,6 +198,58 @@ public class AppStoreViewModel : ViewModelBase
     {
         if (SelectedApp == null) return;
         await OpenOrDownloadAsync(SelectedApp);
+    }
+
+    public void ShowAppDetails(StoreAppItem? app)
+    {
+        if (app == null) return;
+        SelectedApp = app;
+        DetailsOpen = true;
+    }
+
+    private void ImportApp()
+    {
+        const string prefix = "KHAPP1:";
+        try
+        {
+            var code = ImportCode.Trim();
+            if (!code.StartsWith(prefix, StringComparison.Ordinal)) throw new InvalidDataException("App codes start with KHAPP1:.");
+            var payload = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(code[prefix.Length..]));
+            using var document = System.Text.Json.JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("html", out var htmlNode) || htmlNode.ValueKind != System.Text.Json.JsonValueKind.String) throw new InvalidDataException("This app code has no HTML app.");
+            var html = htmlNode.GetString() ?? "";
+            if (html.Length == 0 || html.Length > 512 * 1024) throw new InvalidDataException("The app must be between 1 byte and 512 KB.");
+            var name = root.TryGetProperty("label", out var label) ? (label.GetString() ?? "Imported app") : "Imported app";
+            var id = "import_" + Guid.NewGuid().ToString("N");
+            var safe = new string(name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)).ToArray()).Trim();
+            if (safe.Length == 0) safe = "Imported app";
+            Directory.CreateDirectory(AppsDirectory);
+            var file = safe + "-" + id + ".html";
+            File.WriteAllText(Path.Combine(AppsDirectory, file), AddStandaloneAppSupport(html, id));
+            _downloadedApps[id] = file;
+            SaveDownloadedApps();
+            ImportCode = "";
+            StatusText = $"Imported {safe}. It is saved in {AppsDirectory}.";
+            MyApps.Add(new OwnAppItem(id, safe, "", file));
+            OnPropertyChanged(nameof(HasMyApps));
+        }
+        catch (Exception ex) { StatusText = "Couldn't import that app code: " + ex.Message; }
+    }
+
+    private async Task ExportSelectedAppAsync()
+    {
+        var selected = SelectedApp;
+        if (selected == null || !TryGetDownloadedPath(selected.Id, out var path)) return;
+        try
+        {
+            var html = await File.ReadAllTextAsync(path);
+            var json = System.Text.Json.JsonSerializer.Serialize(new { label = selected.Name, color = "#2563eb", icon = "", html });
+            ShareCode = "KHAPP1:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
+            ShowTransfer = true;
+            StatusText = "Share code ready. Copy the KHAPP1 text to send the app to someone.";
+        }
+        catch (Exception ex) { StatusText = "Couldn't create the share code: " + ex.Message; }
     }
 
     public async Task OpenOrDownloadAsync(StoreAppItem item)
@@ -369,18 +442,39 @@ public class AppStoreViewModel : ViewModelBase
     }
 
 private void RefreshMyApps()
+{
+    MyApps.Clear();
+    foreach (var a in _core.OwnPublishedApps())
+        MyApps.Add(new OwnAppItem(a.Id, a.Name, a.OwnerSecret));
+    foreach (var pair in _downloadedApps.Where(pair => pair.Key.StartsWith("import_", StringComparison.Ordinal)))
     {
-        MyApps.Clear();
-        foreach (var a in _core.OwnPublishedApps())
-            MyApps.Add(new OwnAppItem(a.Id, a.Name, a.OwnerSecret));
-        RemoveAppCommand.RaiseCanExecuteChanged();
+        if (Path.GetFileName(pair.Value) != pair.Value) continue;
+        var path = Path.Combine(AppsDirectory, pair.Value);
+        if (!File.Exists(path)) continue;
+        var name = Path.GetFileNameWithoutExtension(pair.Value);
+        var suffix = "-" + pair.Key;
+        if (name.EndsWith(suffix, StringComparison.Ordinal)) name = name[..^suffix.Length];
+        MyApps.Add(new OwnAppItem(pair.Key, name, "", path));
     }
+    OnPropertyChanged(nameof(HasMyApps));
+    RemoveAppCommand.RaiseCanExecuteChanged();
+}
 
     public async Task RemoveOwnAppAsync(OwnAppItem? item)
     {
         if (item == null) return;
         try
         {
+            if (!string.IsNullOrEmpty(item.LocalPath))
+            {
+                if (File.Exists(item.LocalPath)) File.Delete(item.LocalPath);
+                _downloadedApps.Remove(item.Id);
+                SaveDownloadedApps();
+                MyApps.Remove(item);
+                OnPropertyChanged(nameof(HasMyApps));
+                StatusText = $"Removed local app {item.Name}.";
+                return;
+            }
             var ok = await _core.UnpublishAppAsync(item.Id, CancellationToken.None);
             StatusText = ok ? $"Removed \"{item.Name}\"." : "Couldn't remove that app.";
             if (ok) RefreshMyApps();
@@ -397,6 +491,11 @@ private void RefreshMyApps()
         if (item == null) return;
         try
         {
+            if (!string.IsNullOrEmpty(item.LocalPath) && File.Exists(item.LocalPath))
+            {
+                StatusText = OpenInBrowser(item.LocalPath) ? $"Launched {item.Name}." : $"Couldn't open {item.Name}.";
+                return;
+            }
             StatusText = $"Loading \"{item.Name}\"…";
             var html = await SaveAppHtmlAsync(item.Id, item.Name, item.OwnerSecret, CancellationToken.None);
             var opened = OpenInBrowser(html);
@@ -472,10 +571,11 @@ private void RefreshMyApps()
 /// so the row can be re-fetched while still review='pending'.</summary>
     public sealed class OwnAppItem
     {
-        public OwnAppItem(string id, string name, string ownerSecret) { Id = id; Name = name; OwnerSecret = ownerSecret; }
+        public OwnAppItem(string id, string name, string ownerSecret, string localPath = "") { Id = id; Name = name; OwnerSecret = ownerSecret; LocalPath = localPath; }
         public string Id { get; }
         public string Name { get; }
         public string OwnerSecret { get; }
+        public string LocalPath { get; }
         public bool Pending => true; // server auto-review approves within ~15 s for clean apps
     }
 
@@ -494,6 +594,7 @@ public sealed class StoreAppItem : ViewModelBase
     public string Initials => Catalog.Initials;
     public string RatingFormatted => Catalog.RatingFormatted;
     public string DownloadsFormatted => Catalog.DownloadsFormatted;
+    public string AgeRating => string.IsNullOrWhiteSpace(Catalog.AgeRating) ? "Not specified" : Catalog.AgeRating;
     public bool IsDownloaded
     {
         get => _isDownloaded;

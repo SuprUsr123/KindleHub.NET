@@ -48,17 +48,20 @@ public class MessagesViewModel : ViewModelBase, IDisposable
 
     private readonly KindleHubCore _core;
     private readonly ILogger<MessagesViewModel> _logger;
-    private readonly List<Message> _pendingHydrate = new();
-    private readonly DispatcherTimer _settleTimer;
     private readonly Timer _pollTimer;
     private readonly SemaphoreSlim _roomSyncLock = new(1, 1);
+    private readonly SemaphoreSlim _avatarHydrationLock = new(1, 1);
+    private readonly Dictionary<string, List<Message>> _roomMessageCache = new(StringComparer.Ordinal);
+    private readonly LinkedList<string> _roomCacheLru = new();
     private readonly HashSet<string> _seenInvites = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarCodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PublicProfileDetails> _profileDetails = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _avatarLookups = new(StringComparer.OrdinalIgnoreCase);
     private DateTimeOffset _inboxSince = DateTimeOffset.UtcNow;
+    private DateTimeOffset _lastInboxPollUtc = DateTimeOffset.MinValue;
     private Control? _host;
     private int _polling;
+    private int _inboxPolling;
     private bool _disposed;
 
     private ObservableCollection<Group> _groups = new();
@@ -146,8 +149,10 @@ public class MessagesViewModel : ViewModelBase, IDisposable
         get => _selectedGroup;
         set
         {
+            var previous = _selectedGroup;
             if (SetProperty(ref _selectedGroup, value))
             {
+                if (previous != null) RememberRoomMessages(previous);
                 ClearActiveMessage();
                 _messages.Clear();
                 StatusText = value == null ? "Select a room." : $"#{value.Code}";
@@ -321,8 +326,6 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     {
         _core = core;
         _logger = logger;
-        _core.MessageReceived += OnMessageReceived;
-
         SendCommand = new RelayCommand(async () => await SendMessageAsync(), () => !IsSending && SelectedGroup != null && !string.IsNullOrWhiteSpace(NewMessageText));
         JoinCommand = new RelayCommand(async () => await JoinByCodeAsync(), () => !string.IsNullOrWhiteSpace(JoinCode));
         ReloadCommand = new RelayCommand(async () => await ReloadRoomAsync(), () => SelectedGroup != null);
@@ -379,15 +382,11 @@ public class MessagesViewModel : ViewModelBase, IDisposable
         RefreshFilteredGroups();
 
         RoomRegistry.ActiveRoomChanged += OnActiveRoomChanged;
-        // Must exist before SelectedGroup is assigned: the setter synchronously
-        // starts ReloadRoomAsync, which touches the timer.
-        _settleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
-        _settleTimer.Tick += SettleTimer_Tick;
         var activeRoom = RoomRegistry.ActiveRoom;
         SelectedGroup = (activeRoom != null
             ? Groups.FirstOrDefault(g => string.Equals(g.Code, activeRoom.Code, StringComparison.Ordinal))
             : null) ?? Groups[0];
-        _pollTimer = new Timer(async _ => await PollTickAsync(), null, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8));
+        _pollTimer = new Timer(async _ => await PollTickAsync(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
     }
 
     private async Task SaveOpenedRoomAsync(Group room)
@@ -436,31 +435,26 @@ private async Task SelectedFromRegistryAsync()
         IsLoading = true;
         try
         {
-            // A room switch invalidates any batch queued for the previous room.
-            // Kept inside the try so a failure here can never strand IsLoading.
-            _pendingHydrate.Clear();
-            _settleTimer.Stop();
+            // Reopening a room paints its last snapshot immediately while the fresh
+            // server page is fetched in the background of the visible transcript.
+            if (_roomMessageCache.TryGetValue(room.Code, out var cached))
+            {
+                TouchRoomCache(room.Code);
+                ApplyStars(cached);
+                PopulateRoomMessages(cached, room);
+                StatusText = $"{_messages.Count} messages · #{room.Code} · refreshing";
+                ForceScroll();
+            }
 
             var pageSize = RecentWindowSizeFor(room);
             var list = await _core.FetchMessagesAsync(room.Code, pageSize, 0, CancellationToken.None);
+            if (SelectedGroup == null || !string.Equals(SelectedGroup.Code, room.Code, StringComparison.Ordinal)) return;
             ApplyStars(list);
-            await _core.HydrateReplyPreviewsAsync(list, room.Code, CancellationToken.None);
-            _messages.Clear();
-            _pollVotes.Clear();
-            // The API returns ts.desc (newest first), but the transcript is
-            // rendered oldest-first and appended to as messages arrive, so it has
-            // to be sorted ascending here. Without this the newest message sits at
-            // the top and "scroll to bottom" lands on the oldest one.
-            foreach (var m in list.OrderBy(x => x.Timestamp))
-            {
-                if (IsRelay(m.Text, room) || IsVoteMessage(m.Text)) { _pollVotes.Add(m); continue; }
-                _messages.Add(m);
-            }
-            TrimMessagesToRecent(room);
-            ApplyVisualGrouping(_messages);
-            await HydrateMessageAvatarsAsync(_messages.ToList());
+            PopulateRoomMessages(list, room);
+            RememberRoomMessages(room);
             StatusText = $"{_messages.Count} messages · #{room.Code}";
-            UpdateActivePolls();
+            var visibleMessages = list.Where(message => !IsRelay(message.Text, room) && !IsVoteMessage(message.Text)).ToList();
+            _ = HydrateLoadedMessagesAsync(visibleMessages, room.Code);
         }
         catch (Exception ex)
         {
@@ -471,6 +465,58 @@ private async Task SelectedFromRegistryAsync()
         {
             IsLoading = false;
             ForceScroll(); // opening a room always lands on the newest row
+        }
+    }
+
+    private void PopulateRoomMessages(IEnumerable<Message> messages, Group room)
+    {
+        _messages.Clear();
+        _pollVotes.Clear();
+        foreach (var message in messages.OrderBy(item => item.Timestamp))
+        {
+            if (IsRelay(message.Text, room) || IsVoteMessage(message.Text)) _pollVotes.Add(message);
+            else _messages.Add(message);
+        }
+        TrimMessagesToRecent(room);
+        ApplyVisualGrouping(_messages);
+        UpdateActivePolls();
+    }
+
+    private void RememberRoomMessages(Group room)
+    {
+        if (string.IsNullOrWhiteSpace(room.Code)) return;
+        _roomMessageCache[room.Code] = _messages.Concat(_pollVotes)
+            .Where(message => string.Equals(message.GroupCode, room.Code, StringComparison.Ordinal))
+            .OrderBy(message => message.Timestamp)
+            .TakeLast(RecentWindowSizeFor(room))
+            .ToList();
+        TouchRoomCache(room.Code);
+        while (_roomCacheLru.Count > 4)
+        {
+            var oldest = _roomCacheLru.First!.Value;
+            _roomCacheLru.RemoveFirst();
+            _roomMessageCache.Remove(oldest);
+        }
+    }
+
+    private void TouchRoomCache(string roomCode)
+    {
+        var node = _roomCacheLru.Find(roomCode);
+        if (node != null) _roomCacheLru.Remove(node);
+        _roomCacheLru.AddLast(roomCode);
+    }
+
+    private async Task HydrateLoadedMessagesAsync(List<Message> messages, string roomCode)
+    {
+        try
+        {
+            await Task.WhenAll(
+                _core.HydrateReplyPreviewsAsync(messages, roomCode, CancellationToken.None),
+                HydrateMessageAvatarsAsync(messages));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Background message decoration failed for {RoomCode}", roomCode);
         }
     }
 
@@ -1170,109 +1216,11 @@ _messages.Clear();
         return s.Length > 2 && s[0] == '{' && s[^1] == '}' && s.Contains("\"type\"", StringComparison.Ordinal);
     }
 
-    /// <summary>Inserts a fetched message into the list.
-    ///
-    /// FetchMessagesAsync raises MessageReceived once for <em>every</em> row in the
-    /// page it returns, so this runs for the whole backlog on every poll — not just
-    /// for genuinely new traffic. It therefore has to be cheap and, above all, must
-    /// not touch rows it has already seen: the previous version removed and re-added
-    /// each existing message, which rebuilt every row container and made the list
-    /// visibly thrash on each tick.
-    ///
-    /// Only genuinely new ids are inserted; everything else is ignored. The
-    /// follow-up work (reply previews, poll tallies, scrolling) is coalesced into a
-    /// single debounced pass by <see cref="ScheduleSettle"/>.
-    /// </summary>
-    private void OnMessageReceived(object? sender, Message e)
-    {
-        var room = SelectedGroup;
-        if (room == null || !string.Equals(e.GroupCode, room.Code, StringComparison.Ordinal)) return;
-        if (string.IsNullOrEmpty(e.Id)) return;
-        if (IsRelay(e.Text, room)) return;
-
-        Dispatcher.UIThread.Post(() =>
-        {
-            // The room may have changed while this was queued.
-            var current = SelectedGroup;
-            if (current == null || !string.Equals(e.GroupCode, current.Code, StringComparison.Ordinal)) return;
-
-            if (IsVoteMessage(e.Text))
-            {
-                // A vote's payload is fixed for its id, so a repeat fetch of the
-                // same vote cannot change any tally — only settle for new ones,
-                // otherwise every tick would wake the timer for the whole backlog.
-                var existing = _pollVotes.FindIndex(v => string.Equals(v.Id, e.Id, StringComparison.Ordinal));
-                if (existing >= 0) { _pollVotes[existing] = e; return; }
-                _pollVotes.Add(e);
-                ScheduleSettle();
-                return;
-            }
-
-            if (_messages.Any(m => string.Equals(m.Id, e.Id, StringComparison.Ordinal)))
-            {
-                // Already displayed. Editing in place would be nice, but re-adding
-                // is what caused the jumping, so leave the row completely alone.
-                return;
-            }
-
-            e.IsStarred = ChatPrefsStore.Current.IsStarred(e.GroupCode + "|" + e.Id);
-            _messages.Add(e);
-            TrimMessagesToRecent(current);
-            _pendingHydrate.Add(e);
-            ScheduleSettle();
-        });
-    }
-
     private void TrimMessagesToRecent(Group? room)
     {
         var maxMessages = RecentWindowSizeFor(room);
         while (_messages.Count > maxMessages)
             _messages.RemoveAt(0);
-    }
-
-    /// <summary>Coalesce the burst of rows from one fetch into a single pass, so a
-    /// poll performs one hydrate, one poll-tally refresh and at most one scroll.</summary>
-    private void ScheduleSettle()
-    {
-        _settleTimer.Stop();
-        _settleTimer.Start();
-    }
-
-    private async void SettleTimer_Tick(object? sender, EventArgs e)
-    {
-        _settleTimer.Stop();
-
-        // A vote adds no visible row to the transcript — it only changes the poll
-        // tallies. Refresh those but do not scroll and do not count it as an
-        // unread message, or the "new" tally drifts upwards on every tick.
-        if (_pendingHydrate.Count == 0) { UpdateActivePolls(); return; }
-
-        var batch = _pendingHydrate.ToList();
-        _pendingHydrate.Clear();
-        var room = SelectedGroup;
-        if (room == null) return;
-
-        try
-        {
-            // Only the newly-arrived rows need their reply previews resolved.
-            await _core.HydrateReplyPreviewsAsync(batch, room.Code, CancellationToken.None);
-        }
-
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Reply preview hydration failed");
-        }
-
-        ApplyVisualGrouping(_messages);
-        await HydrateMessageAvatarsAsync(batch);
-
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            if (SelectedGroup == null) return;
-            StatusText = $"{_messages.Count} messages · #{SelectedGroup.Code}";
-            UpdateActivePolls();
-            RequestScroll();
-        });
     }
 
     private static bool IsVoteMessage(string? text)
@@ -1313,24 +1261,34 @@ _messages.Clear();
         if (Interlocked.Exchange(ref _polling, 1) == 1) return;
         try
         {
-            await PollInboxAsync();
-            var room = SelectedGroup;
-            if (room == null) return;
-
-            // Global chat should not keep polling a newer 60-message window while the
-            // user is reading older history. A follow state is explicit in the view,
-            // so the background refresh must stop as soon as the user scrolls up.
-            if (!IsFollowing)
+            var now = DateTimeOffset.UtcNow;
+            if (now - _lastInboxPollUtc >= TimeSpan.FromSeconds(30))
             {
-                _polling = 0;
-                return;
+                _lastInboxPollUtc = now;
+                _ = PollInboxAsync();
             }
 
-            var list = await _core.FetchMessagesAsync(room.Code, RecentWindowSizeFor(room), 0, CancellationToken.None);
-            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(async () =>
+            var pollState = await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                var known = new HashSet<string>(_messages.Select(m => m.Id), StringComparer.Ordinal);
-                var fresh = new List<Message>();
+                var selected = SelectedGroup;
+                var latest = _messages.Concat(_pollVotes)
+                    .Select(message => message.Timestamp)
+                    .DefaultIfEmpty(now.AddSeconds(-10))
+                    .Max();
+                return (Room: selected, LatestTimestamp: latest);
+            });
+            var room = pollState.Room;
+            if (room == null) return;
+
+            var afterTimestamp = pollState.LatestTimestamp.AddSeconds(-5);
+            if (afterTimestamp > now) afterTimestamp = now.AddSeconds(-5);
+            var list = await _core.FetchMessagesSinceAsync(room.Code, afterTimestamp, 200, CancellationToken.None);
+            var fresh = new List<Message>();
+            var changed = false;
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (SelectedGroup == null || !string.Equals(SelectedGroup.Code, room.Code, StringComparison.Ordinal)) return;
+                var known = new HashSet<string>(_messages.Select(message => message.Id), StringComparer.Ordinal);
                 foreach (var m in list.OrderBy(x => x.Timestamp))
                 {
                     if (IsRelay(m.Text, room) || !known.Add(m.Id)) continue;
@@ -1338,26 +1296,31 @@ _messages.Clear();
                     if (IsVoteMessage(m.Text))
                     {
                         var existing = _pollVotes.FindIndex(v => string.Equals(v.Id, m.Id, StringComparison.Ordinal));
-                        if (existing >= 0) { _pollVotes[existing] = m; continue; }
+                        if (existing >= 0) { _pollVotes[existing] = m; changed = true; continue; }
                         _pollVotes.Add(m);
+                        changed = true;
                     }
                     else
                     {
                         _messages.Add(m);
                         fresh.Add(m);
+                        changed = true;
                     }
                 }
                 if (fresh.Count > 0)
                 {
                     ApplyVisualGrouping(_messages);
-                    // Resolve previews for the rows that just arrived, not the whole backlog.
-                    await _core.HydrateReplyPreviewsAsync(fresh, room.Code, CancellationToken.None);
-                    await HydrateMessageAvatarsAsync(fresh);
                     StatusText = $"{_messages.Count} messages · #{room.Code}";
                     RequestScroll();
+                }
+                if (changed)
+                {
+                    RememberRoomMessages(room);
                     UpdateActivePolls();
                 }
             });
+            if (fresh.Count > 0)
+                _ = HydrateLoadedMessagesAsync(fresh, room.Code);
         }
         catch (Exception ex)
         {
@@ -1377,7 +1340,9 @@ _messages.Clear();
                 (string.IsNullOrEmpty(message.UserId)
                     ? string.Equals(previous.DisplayName, message.DisplayName, StringComparison.OrdinalIgnoreCase)
                     : string.Equals(previous.UserId, message.UserId, StringComparison.OrdinalIgnoreCase));
-            message.IsContinuation = sameSender && previous!.IsMine == message.IsMine &&
+            // A reply is a separate conversational turn: keep its own sender
+            // line and avatar even when sent by the same person moments later.
+            message.IsContinuation = !message.HasReply && sameSender && previous!.IsMine == message.IsMine &&
                                      message.Timestamp - previous.Timestamp >= TimeSpan.Zero &&
                                      message.Timestamp - previous.Timestamp <= TimeSpan.FromMinutes(5);
             message.ShowDateDivider = previousDate != localDate;
@@ -1389,6 +1354,9 @@ _messages.Clear();
     private async Task HydrateMessageAvatarsAsync(IReadOnlyCollection<Message> messages)
     {
         if (messages.Count == 0) return;
+        await _avatarHydrationLock.WaitAsync();
+        try
+        {
         var ownAvatar = _core.CurrentPrefs().ProfileAvatar;
         var ids = messages.Where(m => !m.IsMine && !string.IsNullOrWhiteSpace(m.UserId))
             .Select(m => m.UserId).Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1446,30 +1414,44 @@ _messages.Clear();
                 else message.AvatarCode = "";
             }
         });
+        }
+        finally
+        {
+            _avatarHydrationLock.Release();
+        }
     }
 
     private async Task PollInboxAsync()
     {
-        if (!_core.IsAuthenticated) return;
+        if (Interlocked.Exchange(ref _inboxPolling, 1) == 1) return;
+        if (!_core.IsAuthenticated)
+        {
+            Volatile.Write(ref _inboxPolling, 0);
+            return;
+        }
         try
         {
             var invited = await _core.PollInboxForInvitesAsync(_inboxSince, CancellationToken.None);
-            foreach (var g in invited)
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (!_seenInvites.Add(g.Code)) continue;
-                _inboxSince = DateTimeOffset.UtcNow;
-                if (!Groups.Any(x => string.Equals(x?.Code, g.Code, StringComparison.Ordinal)))
+                foreach (var g in invited)
                 {
-                    Groups.Add(g);
-                    StatusText = (g.Creator ?? "Someone") + " started a DM — now in the Rooms list.";
+                    if (!_seenInvites.Add(g.Code)) continue;
+                    _inboxSince = DateTimeOffset.UtcNow;
+                    if (!Groups.Any(x => string.Equals(x?.Code, g.Code, StringComparison.Ordinal)))
+                    {
+                        Groups.Add(g);
+                        StatusText = (g.Creator ?? "Someone") + " started a DM — now in the Rooms list.";
+                    }
+                    RoomRegistry.AddRoom(g);
                 }
-                RoomRegistry.AddRoom(g);
-            }
+            });
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Inbox poll failed");
         }
+        finally { Volatile.Write(ref _inboxPolling, 0); }
     }
 
     public void Dispose()
@@ -1477,7 +1459,6 @@ _messages.Clear();
         if (_disposed) return;
         _disposed = true;
         _pollTimer.Dispose();
-        _core.MessageReceived -= OnMessageReceived;
         RoomRegistry.ActiveRoomChanged -= OnActiveRoomChanged;
         GC.SuppressFinalize(this);
     }

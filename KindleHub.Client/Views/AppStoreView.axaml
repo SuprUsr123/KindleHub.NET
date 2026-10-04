@@ -12,8 +12,10 @@
     <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16">
         <StackPanel Grid.Row="0" Orientation="Horizontal">
             <TextBlock Text="App Store" FontSize="28" FontWeight="Bold"/>
-            <Button Content="Publish an app" Margin="16,0,0,0" VerticalAlignment="Center"
+            <Button Content="Import / share" Margin="16,0,0,0" VerticalAlignment="Center" Command="{Binding ShowTransferCommand}"/>
+            <Button Content="Publish an app" Margin="8,0,0,0" VerticalAlignment="Center"
                     Command="{Binding ShowPublishCommand}"/>
+            <Button Content="Refresh" Margin="8,0,0,0" VerticalAlignment="Center" Command="{Binding RefreshStoreCommand}"/>
             <ProgressBar IsVisible="{Binding IsLoading}" Width="70" IsIndeterminate="True"
                          VerticalAlignment="Center" Margin="16,0,0,0"/>
         </StackPanel>
@@ -26,7 +28,7 @@
 
         <Border Grid.Row="3" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="6">
             <Panel>
-                <ListBox ItemsSource="{Binding Apps}" SelectedItem="{Binding SelectedApp}">
+                <ListBox ItemsSource="{Binding Apps}" SelectedItem="{Binding SelectedApp}" DoubleTapped="App_DoubleTapped">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Border Padding="14" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
@@ -62,12 +64,36 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
+                <Border Background="#B8000000" IsVisible="{Binding DetailsOpen}">
+                    <Border Margin="20" Padding="18" CornerRadius="10" MaxWidth="520"
+                            Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                            HorizontalAlignment="Center" VerticalAlignment="Center" DataContext="{Binding SelectedApp}">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="{Binding Name}" FontSize="21" FontWeight="Bold" TextWrapping="Wrap"/>
+                                <Button Grid.Column="1" Content="Close" Command="{Binding $parent[UserControl].DataContext.CloseDetailsCommand}"/>
+                            </Grid>
+                            <TextBlock Text="{Binding Category}" Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                            <TextBlock TextWrapping="Wrap"><Run Text="Publisher: "/><Run Text="{Binding Author}"/></TextBlock>
+                            <TextBlock TextWrapping="Wrap"><Run Text="Rating: "/><Run Text="{Binding RatingFormatted}"/></TextBlock>
+                            <TextBlock TextWrapping="Wrap"><Run Text="Downloads: "/><Run Text="{Binding DownloadsFormatted}"/></TextBlock>
+                            <TextBlock TextWrapping="Wrap"><Run Text="Age rating: "/><Run Text="{Binding AgeRating}"/></TextBlock>
+                            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                <Button Content="{Binding ActionLabel}" Click="Download_Click" Padding="16,8"/>
+                                <Button Content="Close" Command="{Binding $parent[UserControl].DataContext.CloseDetailsCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Border>
+
                 <!-- publish dialog (overlays the grid) -->
-                <Border Margin="30" CornerRadius="8" MaxWidth="480" Background="{DynamicResource ControlFillColorDefault}"
-                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        IsVisible="{Binding PublishOpen}">
-                    <StackPanel Spacing="10" Margin="18">
+                <Border Background="#B8000000" IsVisible="{Binding PublishOpen}">
+                    <Border Margin="20" Padding="18" CornerRadius="10" MaxWidth="520"
+                            Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                            HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel Spacing="10">
                         <TextBlock Text="Publish an app" FontSize="20" FontWeight="Bold"/>
                         <TextBlock Foreground="Gray" FontSize="12" TextWrapping="Wrap"
                                    Text="Upload the app's single HTML file, or paste it straight from the clipboard. The store reviews it first (same as the web client), then it appears for everyone."/>
@@ -88,8 +114,27 @@
                             <ProgressBar IsVisible="{Binding Publishing}" Width="60" IsIndeterminate="True" VerticalAlignment="Center"/>
                         </StackPanel>
                     </StackPanel>
+                    </Border>
                 </Border>
             </Panel>
+        </Border>
+
+        <Border Grid.Row="3" Background="#B8000000" IsVisible="{Binding ShowTransfer}">
+            <Border Margin="20" Padding="16" CornerRadius="10" MaxWidth="560" Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+            <StackPanel Spacing="9">
+                <TextBlock Text="Share or import an app" FontSize="19" FontWeight="Bold"/>
+                <TextBlock Text="Use the official KHAPP1 app code format. Imported HTML is stored locally and launched in your system browser with the app sandbox shim." TextWrapping="Wrap" Foreground="Gray"/>
+                <TextBox Text="{Binding ImportCode}" AcceptsReturn="True" MinHeight="70" TextWrapping="Wrap" PlaceholderText="Paste KHAPP1: app code"/>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Import app" Command="{Binding ImportAppCommand}"/>
+                    <Button Content="Export selected downloaded app" Command="{Binding ExportSelectedAppCommand}"/>
+                    <Button Content="Close" Command="{Binding ShowTransferCommand}"/>
+                </StackPanel>
+                <TextBox Text="{Binding ShareCode}" IsReadOnly="True" AcceptsReturn="True" MinHeight="72" TextWrapping="Wrap" PlaceholderText="Exported code appears here"/>
+            </StackPanel>
+            </Border>
         </Border>
 
         <!-- my published apps -->

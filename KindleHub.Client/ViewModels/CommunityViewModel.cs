@@ -8,6 +8,7 @@ using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Diagnostics;
 using Avalonia.Media.Imaging;
 using KindleHub.Client.Converters;
@@ -48,6 +49,7 @@ public class CommunityViewModel : ViewModelBase
     private string _cloudRoom = "world";
     private MemeSceneOption _selectedMemeScene = null!;
     private Bitmap? _memePicture;
+    private MemeCaptionSlot? _selectedMemeCaption;
     private OutsideMemeTemplate? _selectedOutsideMemeTemplate;
     private bool _socialLoading;
     private string _profileName = "";
@@ -55,6 +57,8 @@ public class CommunityViewModel : ViewModelBase
     private string _profileHobbies = "";
     private string _profileBio = "";
     private string _profileStatus = "";
+    private string _friendSearch = "";
+    private readonly HashSet<string> _friendInboxSeen = new(StringComparer.Ordinal);
     private ProfileDecoration _selectedFrame = ProfileFrames[0];
     private ProfileDecoration _selectedNameEffect = NameEffects[0];
 
@@ -90,8 +94,11 @@ public class CommunityViewModel : ViewModelBase
     public ObservableCollection<CommunityNote> Notes { get; } = new();
     public ObservableCollection<SavedFlipbook> SavedFlipbooks { get; } = new();
     public ObservableCollection<CommunityMember> Members { get; } = new();
+    public ObservableCollection<FriendUser> FriendResults { get; } = new();
+    public ObservableCollection<FriendEntry> Friends { get; } = new();
+    public ObservableCollection<FriendEntry> FriendRequests { get; } = new();
     public ObservableCollection<CloudSave> CloudSaves { get; } = new();
-    public string[] Sections { get; } = { "Posts", "People", "Memes", "Cloud saves", "Stars & notes", "Flipbooks", "My profile", "Topics" };
+    public string[] Sections { get; } = { "Posts", "People", "Friends", "Memes", "Cloud saves", "Stars & notes", "Flipbooks", "My profile", "Topics" };
     public MemeSceneOption[] MemeSceneOptions { get; } = MemeSceneOption.All;
     public ObservableCollection<OutsideMemeTemplate> OutsideMemeTemplates { get; } = new();
     public OutsideMemeTemplate? SelectedOutsideMemeTemplate
@@ -100,6 +107,11 @@ public class CommunityViewModel : ViewModelBase
         set => SetProperty(ref _selectedOutsideMemeTemplate, value);
     }
     public ObservableCollection<MemeCaptionSlot> MemeCaptions { get; } = new();
+    public MemeCaptionSlot? SelectedMemeCaption
+    {
+        get => _selectedMemeCaption;
+        set => SetProperty(ref _selectedMemeCaption, value);
+    }
     public Bitmap? MemePicture => _memePicture;
     public bool HasMemePicture => _memePicture is not null;
     public ProfileDecoration[] FrameOptions => ProfileFrames;
@@ -118,6 +130,8 @@ public class CommunityViewModel : ViewModelBase
     }
     public bool IsPostsSection => Section == "Posts";
     public bool IsPeopleSection => Section == "People";
+    public bool IsFriendsSection => Section == "Friends";
+    public string FriendSearch { get => _friendSearch; set => SetProperty(ref _friendSearch, value); }
     public bool IsMemesSection => Section == "Memes";
     public bool IsCloudSavesSection => Section == "Cloud saves";
     public bool IsStarsNotesSection => Section == "Stars & notes";
@@ -178,6 +192,11 @@ public class CommunityViewModel : ViewModelBase
     public RelayCommand CreateFlipbookCommand { get; }
     public RelayCommand<SavedFlipbook> PostFlipbookCommand { get; }
     public RelayCommand LoadCloudSavesCommand { get; }
+    public RelayCommand SearchFriendsCommand { get; }
+    public RelayCommand<FriendUser> AddFriendCommand { get; }
+    public RelayCommand<FriendEntry> AcceptFriendCommand { get; }
+    public RelayCommand<FriendEntry> DeclineFriendCommand { get; }
+    public RelayCommand<FriendEntry> RemoveFriendCommand { get; }
     public event Action? OpenFlipbookEditorRequested;
 
     public CommunityViewModel(KindleHubCore core, ILogger<CommunityViewModel> logger, MainViewModel nav)
@@ -204,10 +223,111 @@ public class CommunityViewModel : ViewModelBase
         CreateFlipbookCommand = new RelayCommand(() => OpenFlipbookEditorRequested?.Invoke());
         PostFlipbookCommand = new RelayCommand<SavedFlipbook>(async book => await PostFlipbookAsync(book), book => book != null);
         LoadCloudSavesCommand = new RelayCommand(async () => await LoadCloudSavesAsync());
+        SearchFriendsCommand = new RelayCommand(async () => await SearchFriendsAsync());
+        AddFriendCommand = new RelayCommand<FriendUser>(async user => { if (user != null) await SendFriendRequestAsync(user); }, user => user != null);
+        AcceptFriendCommand = new RelayCommand<FriendEntry>(async friend => { if (friend != null) await ResolveFriendRequestAsync(friend, true); }, friend => friend != null);
+        DeclineFriendCommand = new RelayCommand<FriendEntry>(async friend => { if (friend != null) await ResolveFriendRequestAsync(friend, false); }, friend => friend != null);
+        RemoveFriendCommand = new RelayCommand<FriendEntry>(async friend => { if (friend != null) await RemoveFriendAsync(friend); }, friend => friend != null);
 
         SelectedMemeScene = MemeSceneOptions[0];
         LoadProfile();
         _ = RefreshCommunityAsync();
+    }
+
+    private JsonObject FriendState()
+    {
+        try { return JsonNode.Parse(_core.AccountStateJson ?? "{}") as JsonObject ?? new JsonObject(); }
+        catch { return new JsonObject(); }
+    }
+    private void LoadFriends()
+    {
+        var state = FriendState();
+        Friends.Clear(); FriendRequests.Clear();
+        foreach (var node in SafeArray(state["friends"]))
+            if (node is JsonObject obj) { var hash = ReadFriendValue(obj, "hash", "uid", "userId"); if (!string.IsNullOrWhiteSpace(hash)) Friends.Add(new FriendEntry(hash, ReadFriendValue(obj, "name", "displayName") is { Length: > 0 } name ? name : "Friend", ReadFriendValue(obj, "uid", "userId"), ReadFriendValue(obj, "mid", "messageId"))); }
+        foreach (var node in SafeArray(state["friendRequests"]))
+            if (node is JsonObject obj) { var hash = ReadFriendValue(obj, "hash", "uid", "userId"); if (!string.IsNullOrWhiteSpace(hash)) FriendRequests.Add(new FriendEntry(hash, ReadFriendValue(obj, "name", "displayName") is { Length: > 0 } name ? name : "Someone", ReadFriendValue(obj, "uid", "userId"), ReadFriendValue(obj, "mid", "messageId"))); }
+    }
+    private static JsonArray SafeArray(JsonNode? node) => node is JsonArray array ? array : new JsonArray();
+    private static string ReadFriendValue(JsonObject obj, params string[] keys)
+    {
+        foreach (var key in keys) if (obj[key] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)) return text;
+        return "";
+    }
+    private async Task SaveFriendsAsync(JsonArray friends, JsonArray requests, JsonArray? tombstones = null)
+    {
+        var state = FriendState(); state["friends"] = friends.DeepClone(); state["friendRequests"] = requests.DeepClone();
+        if (tombstones != null) state["friendReqTombs"] = tombstones.DeepClone();
+        _core.SetAccountState(state.ToJsonString()); await _core.SyncAccountAsync(_core.AccountStateJson, CancellationToken.None); LoadFriends();
+    }
+    private async Task SearchFriendsAsync()
+    {
+        if (!_core.IsAuthenticated) { StatusText = "Sign in to find friends."; return; }
+        try { var results = await _core.SearchFriendUsersAsync(FriendSearch, CancellationToken.None); FriendResults.Clear(); foreach (var result in results) FriendResults.Add(result); StatusText = $"Found {results.Count} account(s)."; }
+        catch { StatusText = "Couldn't search for accounts."; }
+    }
+    private async Task SendFriendRequestAsync(FriendUser user)
+    {
+        await _core.SendFriendInboxEventAsync(user.Hash, "FRIEND_REQUEST", CancellationToken.None);
+        StatusText = $"Friend request sent to {user.Name}.";
+    }
+    private async Task ResolveFriendRequestAsync(FriendEntry req, bool accept)
+    {
+        var state = FriendState(); var friends = state["friends"] as JsonArray ?? new JsonArray(); var requests = state["friendRequests"] as JsonArray ?? new JsonArray();
+        var match = requests.FirstOrDefault(n => string.Equals((string?)n?["hash"], req.Hash, StringComparison.OrdinalIgnoreCase)); if (match == null) return;
+        requests.Remove(match);
+        var tombs = state["friendReqTombs"] as JsonArray ?? new JsonArray(); if (!string.IsNullOrEmpty(req.MessageId) && !tombs.Any(n => string.Equals((string?)n, req.MessageId, StringComparison.Ordinal))) tombs.Add(req.MessageId);
+        if (accept)
+        {
+            if (!friends.Any(n => string.Equals((string?)n?["hash"], req.Hash, StringComparison.OrdinalIgnoreCase))) friends.Add(new JsonObject { ["hash"] = req.Hash, ["uid"] = req.UserId, ["name"] = req.Name, ["since"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ["mid"] = req.MessageId });
+            await _core.SendFriendInboxEventAsync(req.Hash, "FRIEND_ACCEPT", CancellationToken.None);
+        }
+        await SaveFriendsAsync(friends, requests, tombs);
+    }
+    private async Task RemoveFriendAsync(FriendEntry entry)
+    {
+        var state = FriendState(); var friends = state["friends"] as JsonArray ?? new JsonArray(); var requests = state["friendRequests"] as JsonArray ?? new JsonArray();
+        foreach (var node in friends.Where(n => string.Equals((string?)n?["hash"], entry.Hash, StringComparison.OrdinalIgnoreCase)).ToArray()) friends.Remove(node);
+        var tombs = state["friendReqTombs"] as JsonArray ?? new JsonArray();
+        if (!string.IsNullOrEmpty(entry.MessageId) && !tombs.Any(n => string.Equals((string?)n, entry.MessageId, StringComparison.Ordinal))) tombs.Add(entry.MessageId);
+        await SaveFriendsAsync(friends, requests, tombs);
+    }
+    private async Task PollFriendInboxAsync()
+    {
+        if (!_core.IsAuthenticated) return;
+        List<RoomMessageEnvelope> events;
+        try { events = await _core.PollGameEventsAsync(_core.MyInboxRoomCode, CancellationToken.None); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Friend inbox refresh failed");
+            StatusText = "Couldn't refresh friend requests right now. Your saved friends are still available.";
+            LoadFriends();
+            return;
+        }
+        var state = FriendState(); var friends = state["friends"] as JsonArray ?? new JsonArray(); var requests = state["friendRequests"] as JsonArray ?? new JsonArray(); var tombs = state["friendReqTombs"] as JsonArray ?? new JsonArray();
+        var changed = false;
+        foreach (var evt in events.Where(e => e.Type == "FRIEND_REQUEST" || e.Type == "FRIEND_ACCEPT"))
+        {
+            var id = evt.Message?.Id ?? ""; if (!_friendInboxSeen.Add(id) || tombs.Any(n => string.Equals((string?)n, id, StringComparison.Ordinal))) continue;
+            var hash = evt.Str("fromHash"); if (hash.Length < 6 || hash.Length > 16 || !hash.All(Uri.IsHexDigit)) continue;
+            var name = evt.Str("fromName"); var uid = evt.Str("fromUserId");
+            if (evt.Type == "FRIEND_REQUEST")
+            {
+                if (!friends.Any(n => string.Equals((string?)n?["hash"], hash, StringComparison.OrdinalIgnoreCase)) && !requests.Any(n => string.Equals((string?)n?["hash"], hash, StringComparison.OrdinalIgnoreCase)))
+                { requests.Add(new JsonObject { ["hash"] = hash, ["uid"] = uid, ["name"] = name, ["ts"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ["mid"] = id }); changed = true; }
+            }
+            else
+            {
+                if (!friends.Any(n => string.Equals((string?)n?["hash"], hash, StringComparison.OrdinalIgnoreCase))) friends.Add(new JsonObject { ["hash"] = hash, ["uid"] = uid, ["name"] = name, ["since"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ["mid"] = id });
+                changed = true;
+            }
+        }
+        if (changed) await SaveFriendsAsync(friends, requests, tombs); else LoadFriends();
+    }
+    public sealed class FriendEntry
+    {
+        public string Hash { get; } public string Name { get; } public string UserId { get; } public string MessageId { get; }
+        public FriendEntry(string hash, string name, string userId, string messageId = "") { Hash = hash; Name = name; UserId = userId; MessageId = messageId; }
     }
 
     private async Task LoadCloudSavesAsync()
@@ -337,6 +457,7 @@ public class CommunityViewModel : ViewModelBase
 
     private void SetMemeCaptions(IEnumerable<MemeCaptionDefinition> definitions)
     {
+        SelectedMemeCaption = null;
         foreach (var caption in MemeCaptions) caption.PropertyChanged -= MemeCaptionChanged;
         MemeCaptions.Clear();
         foreach (var definition in definitions)
@@ -358,11 +479,15 @@ public class CommunityViewModel : ViewModelBase
         private string _at;
         private double _left;
         private double _top;
+        private double _width;
+        private double _height;
         public MemeCaptionDefinition Definition { get; }
         public string Label => Definition.Label;
         public string Text { get => _text; set => SetProperty(ref _text, value); }
         public double Left => _left;
         public double Top => _top;
+        public double Width => _width;
+        public double Height => _height;
         public string[] AnchorOptions { get; } = { "top", "middle", "bottom" };
         public string LeftText
         {
@@ -372,7 +497,7 @@ public class CommunityViewModel : ViewModelBase
                 if (!SetProperty(ref _leftText, value)) return;
                 if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
                 {
-                    _left = Math.Clamp(parsed, 0, 480);
+                    _left = Math.Clamp(parsed, 0, Math.Max(0, 480 - _width));
                     OnPropertyChanged(nameof(Left));
                 }
             }
@@ -385,7 +510,7 @@ public class CommunityViewModel : ViewModelBase
                 if (!SetProperty(ref _topText, value)) return;
                 if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
                 {
-                    _top = Math.Clamp(parsed, 0, 480);
+                    _top = Math.Clamp(parsed, 0, Math.Max(0, 480 - _height));
                     OnPropertyChanged(nameof(Top));
                 }
             }
@@ -400,9 +525,31 @@ public class CommunityViewModel : ViewModelBase
             Definition = definition;
             _left = definition.X;
             _top = definition.Y;
+            _width = definition.Width;
+            _height = definition.Height;
             _leftText = definition.X.ToString("0", CultureInfo.InvariantCulture);
             _topText = definition.Y.ToString("0", CultureInfo.InvariantCulture);
             _at = definition.At;
+        }
+
+        public void MoveTo(double left, double top)
+        {
+            _left = Math.Clamp(left, 0, Math.Max(0, 480 - _width));
+            _top = Math.Clamp(top, 0, Math.Max(0, 480 - _height));
+            _leftText = _left.ToString("0", CultureInfo.InvariantCulture);
+            _topText = _top.ToString("0", CultureInfo.InvariantCulture);
+            OnPropertyChanged(nameof(Left));
+            OnPropertyChanged(nameof(Top));
+            OnPropertyChanged(nameof(LeftText));
+            OnPropertyChanged(nameof(TopText));
+        }
+
+        public void ResizeTo(double width, double height)
+        {
+            _width = Math.Clamp(width, 60, Math.Max(60, 480 - _left));
+            _height = Math.Clamp(height, 40, Math.Max(40, 480 - _top));
+            OnPropertyChanged(nameof(Width));
+            OnPropertyChanged(nameof(Height));
         }
     }
 
@@ -437,7 +584,17 @@ public class CommunityViewModel : ViewModelBase
         SocialLoading = true;
         try
         {
-            await Task.WhenAll(RefreshAsync(), RefreshPostsAsync(), RefreshSavedAsync(), RefreshPeopleAsync());
+            if (_core.IsAuthenticated)
+            {
+                try
+                {
+                    var cloudState = await _core.FetchAccountStateAsync(CancellationToken.None);
+                    if (!string.IsNullOrWhiteSpace(cloudState)) _core.SetAccountState(cloudState);
+                }
+                catch (Exception ex) { _logger.LogDebug(ex, "Could not refresh synced social account state"); }
+            }
+            LoadFriends();
+            await Task.WhenAll(RefreshAsync(), RefreshPostsAsync(), RefreshSavedAsync(), RefreshPeopleAsync(), PollFriendInboxAsync());
             RefreshFlipbooks();
         }
         finally { SocialLoading = false; }

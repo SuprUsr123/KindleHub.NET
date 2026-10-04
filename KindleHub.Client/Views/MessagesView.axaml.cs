@@ -121,6 +121,15 @@ public partial class MessagesView : UserControl
     {
         var viewModel = DataContext as MessagesViewModel;
 
+        // Content can grow after an append (reply previews/images are hydrated
+        // asynchronously). Preserve the bottom anchor across that layout change.
+        if (!_selfScrolling && _following && e.ExtentDelta.Y > 0)
+        {
+            _missed = 0;
+            JumpToBottom(force: true);
+            return;
+        }
+
         if (_selfScrolling)
         {
             if (IsAtBottom)
