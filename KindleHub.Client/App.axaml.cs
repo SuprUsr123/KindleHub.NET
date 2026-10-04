@@ -1,7 +1,15 @@
 using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
+using Avalonia.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -13,6 +21,7 @@ namespace KindleHub.Client;
 
 public partial class App : Application
 {
+    public static string[] LaunchArguments { get; set; } = Array.Empty<string>();
     public static IHost? Host { get; private set; }
     public static IServiceProvider? Services => Host?.Services;
 
@@ -23,6 +32,14 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime argumentDesktop && LaunchArguments.Length > 0)
+        {
+            argumentDesktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            base.OnFrameworkInitializationCompleted();
+            _ = RunArgumentSequenceAsync(argumentDesktop);
+            return;
+        }
+
         Host = CreateHostBuilder().Build();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -30,7 +47,12 @@ public partial class App : Application
             // Apply the saved theme before the window exists, so the app never
             // flashes the system theme on the way in. Safe when signed out — the
             // default applies until a profile is restored.
-            try { AppTheme.Apply(Services!.GetRequiredService<KindleHubCore>().CurrentPrefs().Theme); }
+            try
+            {
+                var prefs = Services!.GetRequiredService<KindleHubCore>().CurrentPrefs();
+                AppTheme.Apply(prefs.Theme);
+                FontSizeScaler.SetFontSizePx(prefs.FontSizePx);
+            }
             catch { AppTheme.Apply(AppTheme.Light); }
 
             var mainViewModel = Services!.GetRequiredService<MainViewModel>();
@@ -38,12 +60,78 @@ public partial class App : Application
             {
                 DataContext = mainViewModel
             };
+            desktop.MainWindow.Opened += async (_, _) =>
+            {
+                if (!SettingsViewModel.HasFound("Grass, Mr. Freeman?") && TryFindLongSessions(out _))
+                {
+                    await ShowMessageAsync(string.Concat("JESUS CHRIST WHO THE FUCK DEVOTES ", "THEMSELVES TO GMOD LIKE THAT"));
+                    SettingsViewModel.NoteFound("Grass, Mr. Freeman?");
+                }
+            };
             
             _ = mainViewModel.InitializeAsync();
             mainViewModel.NavigateTo("Home");
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static async Task RunArgumentSequenceAsync(IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        foreach (var line in new[] { "...", "......", string.Concat("Why are you", " still here?"), "...", string.Concat("So you really want to know ", "who I am, huh?"), string.Concat("Okay ", "then...") })
+            await ShowMessageAsync(line);
+        SettingsViewModel.NoteFound("TheWorldMachine");
+        try { Process.Start(new ProcessStartInfo(string.Concat("https://store.steampowered.com/app/", "2915460", "/OneShot_World_Machine_Edition/")) { UseShellExecute = true }); } catch { }
+        try { Process.Start(new ProcessStartInfo(string.Concat("steam://", "2915460")) { UseShellExecute = true }); } catch { }
+        desktop.Shutdown();
+    }
+
+    private static Task ShowMessageAsync(string message)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.UIThread.Post(() =>
+        {
+            var panel = new StackPanel { Margin = new Thickness(20), Spacing = 18, VerticalAlignment = VerticalAlignment.Center };
+            panel.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
+            var ok = new Button { Content = "OK", MinWidth = 90, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right };
+            panel.Children.Add(ok);
+            var box = new Window { Title = "KindleHub Pro", Width = 420, Height = 170, CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterScreen, Content = panel };
+            ok.Click += (_, _) => box.Close();
+            box.Closed += (_, _) => done.TrySetResult();
+            box.Show();
+        });
+        return done.Task;
+    }
+
+    private static bool TryFindLongSessions(out double hours)
+    {
+        hours = 0;
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var roots = OperatingSystem.IsWindows()
+            ? new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Steam"), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Steam") }
+            : OperatingSystem.IsMacOS()
+                ? new[] { Path.Combine(home, "Library/Application Support/Steam") }
+                : new[] { Path.Combine(home, ".steam/steam"), Path.Combine(home, ".local/share/Steam"), Path.Combine(home, ".var/app/com.valvesoftware.Steam/.local/share/Steam") };
+
+        foreach (var root in roots)
+        {
+            var users = Path.Combine(root, "userdata");
+            if (!Directory.Exists(users)) continue;
+            foreach (var user in Directory.GetDirectories(users))
+            {
+                var local = Path.Combine(user, "config", "localconfig.vdf");
+                if (!File.Exists(local)) continue;
+                try
+                {
+                    var text = File.ReadAllText(local);
+                    var appKey = string.Concat("40", "00");
+                    var entry = Regex.Match(text, "\\\"" + Regex.Escape(appKey) + "\\\"\\s*\\{[^}]*\\\"Playtime\\\"\\s*\\\"(?<minutes>\\d+)\\\"", RegexOptions.Singleline);
+                    if (entry.Success && double.TryParse(entry.Groups["minutes"].Value, out var minutes)) hours = Math.Max(hours, minutes / 60d);
+                }
+                catch { }
+            }
+        }
+        return hours >= 1000;
     }
 
     private static IHostBuilder CreateHostBuilder()

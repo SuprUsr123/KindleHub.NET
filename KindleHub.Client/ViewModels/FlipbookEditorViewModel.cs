@@ -24,6 +24,8 @@ public class FlipbookEditorViewModel : INotifyPropertyChanged
 
     /// <summary>Raised when the author picks "Send to chat"; carries the KHFLIP1 wire.</summary>
     public Action<string>? SendFlipbook { get; set; }
+    public Action<string>? SaveToCommunity { get; set; }
+    public bool CanSaveToCommunity => SaveToCommunity != null;
 
     public Action? CloseWindow { get; set; }
     public Views.FlipbookEditorView? View { get; set; }
@@ -526,6 +528,7 @@ public class FlipbookEditorViewModel : INotifyPropertyChanged
     public ICommand Grid14Command { get; }
     public ICommand Grid28Command { get; }
     public ICommand SendCommand { get; }
+    public ICommand SaveCommunityCommand { get; }
     public ICommand CopyCodeCommand { get; }
     public ICommand CloseCommand { get; }
 
@@ -552,10 +555,20 @@ public class FlipbookEditorViewModel : INotifyPropertyChanged
         Grid14Command = new RelayCommand(() => SetGrid(14));
         Grid28Command = new RelayCommand(() => SetGrid(28));
         SendCommand = new RelayCommand(Send);
+        SaveCommunityCommand = new RelayCommand(SaveToCommunityBook);
         CopyCodeCommand = new RelayCommand(CopyCode);
         CloseCommand = new RelayCommand(Close);
 
         _frames.Add(BlankFrame());
         Refresh();
+    }
+
+    private void SaveToCommunityBook()
+    {
+        if (!HasDrawing()) { StatusText = "Draw something first."; return; }
+        var wire = BuildWire();
+        if (string.IsNullOrEmpty(wire)) { StatusText = "Couldn't pack that flipbook."; return; }
+        if (SaveToCommunity == null) { StatusText = "Open the editor from Community to save to your account."; return; }
+        SaveToCommunity.Invoke(wire);
     }
 }

@@ -10,66 +10,95 @@
         <conv:FlipbookPreviewConverter x:Key="Flip"/>
         <conv:ProfileAvatarCodeConverter x:Key="AvatarImage"/>
         <conv:AvatarFallbackVisibilityConverter x:Key="AvatarFallback"/>
-        <conv:OwnMessageAlignmentConverter x:Key="MessageAlignment"/>
+        <conv:ProfileFrameBrushConverter x:Key="ProfileFrameBrush"/>
     </UserControl.Resources>
-    <Grid RowDefinitions="Auto,*" Margin="16">
-        <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,10">
-            <TextBlock Text="Messages" FontSize="28" FontWeight="Bold"/>
-            <TextBlock Text="{Binding StatusText}" Foreground="Gray" FontSize="13"/>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-                <TextBox Text="{Binding JoinCode}" Width="220" PlaceholderText="Join room by 12-digit code…"
-                         KeyDown="JoinBox_KeyDown"/>
-                <Button Content="Join" Command="{Binding JoinCommand}"/>
-                <Button Content="Refresh" Command="{Binding ReloadCommand}"/>
-                <ProgressBar IsVisible="{Binding IsLoading}" Width="70" IsIndeterminate="True" VerticalAlignment="Center"/>
-            </StackPanel>
-        </StackPanel>
+    <UserControl.Styles>
+        <Style Selector="Border.chat-message:pointerover">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondary}"/>
+        </Style>
+        <Style Selector="Button.composer-tool">
+            <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondary}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AppTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Padding" Value="12,0"/>
+        </Style>
+    </UserControl.Styles>
+    <Grid RowDefinitions="Auto,*" Margin="12">
+        <TextBlock Grid.Row="0" Text="Messages" FontSize="24" FontWeight="Bold" Margin="4,0,0,8"/>
 
-        <Grid Grid.Row="1" ColumnDefinitions="240,*">
-            <TabControl Grid.Column="0" Margin="0,0,12,0">
-                <TabItem Header="Rooms">
-                    <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
-                            CornerRadius="6">
-                        <DockPanel>
-                            <ListBox ItemsSource="{Binding Groups}" SelectedItem="{Binding SelectedGroup}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="2,6">
-                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
-                                            <TextBlock Text="{Binding Code}" FontSize="11" Foreground="Gray"/>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </DockPanel>
-                    </Border>
-                </TabItem>
-                <TabItem Header="Polls">
-                    <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
-                            CornerRadius="6">
-                        <ScrollViewer>
+        <Grid Grid.Row="1" ColumnDefinitions="250,*" ColumnSpacing="12">
+            <!-- Persistent channel sidebar, like a server's channel list. -->
+            <Border Grid.Column="0" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" Padding="10">
+                <Grid RowDefinitions="Auto,Auto,*,Auto">
+                    <TextBlock Grid.Row="0" Text="CHANNELS" FontSize="12" FontWeight="Bold"
+                               Foreground="Gray" Margin="4,2,4,8"/>
+                    <StackPanel Grid.Row="1" Spacing="5" Margin="0,0,0,8">
+                        <TextBox Text="{Binding RoomSearchText}" PlaceholderText="Find a room…"/>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox Grid.Column="0" Text="{Binding JoinCode}" PlaceholderText="12-digit room code"
+                                     KeyDown="JoinBox_KeyDown"/>
+                            <Button Grid.Column="1" Content="Join" Command="{Binding JoinCommand}" Margin="5,0,0,0"/>
+                        </Grid>
+                    </StackPanel>
+                    <ListBox Grid.Row="2" ItemsSource="{Binding FilteredGroups}" SelectedItem="{Binding SelectedGroup}"
+                             Background="Transparent" BorderThickness="0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid ColumnDefinitions="18,*" Margin="2,5">
+                                    <TextBlock Text="#" Foreground="Gray" FontSize="16" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" Spacing="1">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Code}" FontSize="10" Foreground="Gray"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <Expander Grid.Row="3" Header="Active polls" MaxHeight="180" Margin="0,8,0,0">
+                        <ScrollViewer MaxHeight="150">
                             <ItemsControl ItemsSource="{Binding ActivePolls}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Padding="8,4" Margin="4" CornerRadius="4"
+                                        <Border Padding="8,5" Margin="2" CornerRadius="5"
                                                 Background="{DynamicResource ControlFillColorSecondary}"
                                                 PointerPressed="Bubble_PointerPressed">
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12"/>
-                                                <TextBlock Text="{Binding DisplayText}" FontSize="11" Foreground="Gray"
-                                                           TextWrapping="Wrap"/>
+                                            <StackPanel Spacing="2">
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="11"/>
+                                                <TextBlock Text="{Binding DisplayText}" FontSize="10" Foreground="Gray"
+                                                           TextWrapping="Wrap" MaxHeight="42"/>
                                             </StackPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </ScrollViewer>
-                    </Border>
-                </TabItem>
-            </TabControl>
+                    </Expander>
+                </Grid>
+            </Border>
+
+            <!-- The active channel header stays above the transcript while its room is selected. -->
+            <Grid Grid.Column="1" RowDefinitions="Auto,*">
+                <Border Grid.Row="0" Padding="12,8" Margin="0,0,0,8" CornerRadius="8"
+                        Background="{DynamicResource ControlFillColorDefault}"
+                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                        <TextBlock Text="#" FontSize="22" Foreground="Gray" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding SelectedGroup.Name}" FontSize="16" FontWeight="Bold"/>
+                            <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="Gray" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                        <ProgressBar Grid.Column="2" IsVisible="{Binding IsLoading}" Width="42" IsIndeterminate="True"
+                                     VerticalAlignment="Center"/>
+                        <Button Grid.Column="3" Content="Refresh" Command="{Binding ReloadCommand}" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
 
             <!-- Chat column -->
-            <Grid Grid.Column="1" RowDefinitions="*,Auto,Auto,Auto,Auto">
+            <Grid Grid.Row="1" RowDefinitions="*,Auto,Auto,Auto,Auto">
 
                 <Panel Grid.Row="0">
                     <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="6">
@@ -90,45 +119,45 @@
                                             <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:dddd, MMMM d}'}"
                                                        HorizontalAlignment="Center" FontSize="11" Foreground="Gray"/>
                                         </Border>
-                                        <!-- message bubble (tap to open the action bar) -->
-                                        <Grid ColumnDefinitions="36,*,36" MinHeight="34">
-                                        <Border Grid.Column="0" Width="30" Height="30" CornerRadius="15"
-                                                Background="{DynamicResource ControlFillColorSecondary}"
-                                                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" ClipToBounds="True"
-                                                IsVisible="{Binding ShowIncomingAvatar}"
-                                                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,4,0">
-                                            <Grid>
-                                                <Image Source="{Binding AvatarCode, Converter={StaticResource AvatarImage}}"
-                                                       Stretch="Fill"/>
-                                                <TextBlock Text="{Binding AvatarInitial}" HorizontalAlignment="Center"
-                                                           VerticalAlignment="Center" FontWeight="Bold" FontSize="12"
-                                                           IsVisible="{Binding AvatarCode, Converter={StaticResource AvatarFallback}}"/>
-                                            </Grid>
-                                        </Border>
-                                        <Border Grid.Column="2" Width="30" Height="30" CornerRadius="15"
-                                                Background="{DynamicResource ControlFillColorSecondary}"
-                                                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" ClipToBounds="True"
-                                                IsVisible="{Binding ShowOwnAvatar}"
-                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4,2,0,0">
-                                            <Grid>
-                                                <Image Source="{Binding AvatarCode, Converter={StaticResource AvatarImage}}" Stretch="Fill"/>
-                                                <TextBlock Text="{Binding AvatarInitial}" HorizontalAlignment="Center"
-                                                           VerticalAlignment="Center" FontWeight="Bold" FontSize="12"
-                                                           IsVisible="{Binding AvatarCode, Converter={StaticResource AvatarFallback}}"/>
-                                            </Grid>
-                                        </Border>
-                                        <StackPanel Grid.Column="1" MaxWidth="620" HorizontalAlignment="{Binding IsMine, Converter={StaticResource MessageAlignment}}" Spacing="2">
-                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="12,0,12,1">
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" IsVisible="{Binding ShowSenderName}"/>
+                                        <!-- Discord-style grouped message row; clicking selects its action bar. -->
+                                        <Border Classes="chat-message" Background="Transparent" CornerRadius="5"
+                                                Padding="4,3" Margin="0,1" PointerPressed="Bubble_PointerPressed"
+                                                Cursor="Hand" HorizontalAlignment="Stretch">
+                                        <Grid ColumnDefinitions="52,Auto,*" MinHeight="48">
+                                        <Grid Grid.Column="0" Width="48" Height="48" ClipToBounds="False"
+                                              IsVisible="{Binding ShowIncomingAvatar}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,0,4,0">
+                                            <Border Width="30" Height="30" CornerRadius="15" ClipToBounds="True"
+                                                    Background="{DynamicResource ControlFillColorSecondary}"
+                                                    BorderBrush="{Binding ProfileFrame, Converter={StaticResource ProfileFrameBrush}}" BorderThickness="2"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Grid>
+                                                    <Image Source="{Binding AvatarCode, Converter={StaticResource AvatarImage}}" Stretch="Fill"/>
+                                                    <TextBlock Text="{Binding AvatarInitial}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               FontWeight="Bold" FontSize="12"
+                                                               IsVisible="{Binding AvatarCode, Converter={StaticResource AvatarFallback}}"/>
+                                                </Grid>
+                                            </Border>
+                                            <Image Source="{Binding ProfileFrameImage}" Width="48" Height="48" Stretch="Fill"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding HasProfileFrame}"/>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1" MaxWidth="620" HorizontalAlignment="Left" Spacing="1">
+                                            <StackPanel Orientation="Horizontal" Spacing="7" IsVisible="{Binding ShowSenderName}">
+                                                <TextBlock Text="{Binding StyledDisplayName}" FontWeight="Bold" FontSize="13"
+                                                           Foreground="{DynamicResource AppTextPrimaryBrush}"/>
+                                                <Border IsVisible="{Binding HasProfileRole}" Padding="5,1" CornerRadius="5"
+                                                        Background="{DynamicResource ControlFillColorSecondary}"
+                                                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                                    <TextBlock Text="{Binding ProfileRoleLabel}" FontSize="10" FontWeight="SemiBold"
+                                                               Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                                                </Border>
+                                                <TextBlock Text="{Binding TimestampFormatted}" FontSize="11"
+                                                           Foreground="Gray" VerticalAlignment="Center"/>
                                             </StackPanel>
-                                            <Border PointerPressed="Bubble_PointerPressed" Cursor="Hand"
-                                                    MaxWidth="620" Padding="13,8" CornerRadius="14"
-                                                    BorderBrush="{DynamicResource AppTextPrimaryBrush}" BorderThickness="2"
-                                                    Background="{DynamicResource ControlFillColorDefault}">
                                             <StackPanel Spacing="2">
-                                                <!-- Reply context sits inside the bubble, as in the official client. -->
+                                                <!-- Compact reply quote above the message text. -->
                                                 <Border IsVisible="{Binding HasReplyPreview}" Background="{DynamicResource ControlFillColorSecondary}"
-                                                        CornerRadius="4" Padding="7,4" Margin="0,0,0,3">
+                                                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="2,0,0,0"
+                                                        CornerRadius="3" Padding="7,4" Margin="0,0,0,2">
                                                     <TextBlock Text="{Binding ReplyPreview}" FontSize="11" Foreground="Gray"
                                                                TextTrimming="WordEllipsis"/>
                                                 </Border>
@@ -213,11 +242,11 @@
                                                 <TextBlock Text="{Binding ReactionsText}" FontSize="12" Foreground="Gray"
                                                            IsVisible="{Binding HasReactions}"/>
                                             </StackPanel>
-                                            </Border>
-                                            <TextBlock Text="{Binding TimestampFormatted}" FontSize="11" Foreground="Gray"
-                                                       Margin="12,0" HorizontalAlignment="{Binding IsMine, Converter={StaticResource MessageAlignment}}"/>
+                                            <TextBlock Text="{Binding TimestampFormatted}" FontSize="10" Foreground="Gray"
+                                                       IsVisible="{Binding IsContinuation}" Margin="0,1,0,0"/>
                                         </StackPanel>
                                         </Grid>
+                                        </Border>
                                     </StackPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -432,18 +461,26 @@
                 </Border>
 
                 <!-- composer -->
-                <Grid Grid.Row="4" Margin="0,4,0,0" ColumnDefinitions="3*,Auto,Auto,Auto,Auto,Auto,Auto">
-                    <TextBox Grid.Column="0" x:Name="ComposerBox" Text="{Binding NewMessageText}"
-                             PlaceholderText="Message…  (start your line with ! to mark it important)"
+                <Grid Grid.Row="4" Margin="0,8,0,0" RowDefinitions="Auto,Auto" RowSpacing="6">
+                    <TextBox Grid.Row="0" x:Name="ComposerBox" Text="{Binding NewMessageText}"
+                             PlaceholderText="Message…  Enter to send · Shift+Enter for a new line"
+                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="42" MaxHeight="100"
                              KeyDown="Composer_KeyDown"/>
-                    <Button Grid.Column="1" Margin="4,0,0,0" Content="📷" ToolTip.Tip="Photo" Click="Attach_Click"/>
-                    <Button Grid.Column="2" Margin="4,0,0,0" Content="😊" ToolTip.Tip="Sticker" Command="{Binding ToggleStickerPanelCommand}"/>
-                    <Button Grid.Column="3" Margin="4,0,0,0" Content="📊" ToolTip.Tip="Poll" Command="{Binding TogglePollPanelCommand}"/>
-                    <Button Grid.Column="4" Margin="4,0,0,0" Content="🎞" ToolTip.Tip="Flipbook" Command="{Binding ToggleFlipbookPanelCommand}"/>
-                    <Button Grid.Column="5" Margin="4,0,0,0" Content="📖" ToolTip.Tip="Story" Command="{Binding ToggleStoryPanelCommand}"/>
-                    <Button Grid.Column="6" Margin="4,0,0,0" Content="🧩" ToolTip.Tip="App" Command="{Binding ToggleAppPanelCommand}"/>
+                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <Button Classes="composer-tool" Content="Photo" ToolTip.Tip="Attach a photo" Click="Attach_Click"/>
+                        <Button Classes="composer-tool" Content="Sticker" ToolTip.Tip="Send a sticker" Command="{Binding ToggleStickerPanelCommand}"/>
+                        <Button Classes="composer-tool" Content="Poll" ToolTip.Tip="Create a poll" Command="{Binding TogglePollPanelCommand}"/>
+                        <Button Classes="composer-tool" Content="Flipbook" ToolTip.Tip="Send a flipbook" Command="{Binding ToggleFlipbookPanelCommand}"/>
+                        <Button Classes="composer-tool" Content="Story" ToolTip.Tip="Send a story" Command="{Binding ToggleStoryPanelCommand}"/>
+                        <Button Classes="composer-tool" Content="App" ToolTip.Tip="Share an app" Command="{Binding ToggleAppPanelCommand}"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" IsEnabled="{Binding !IsSending}"
+                                MinWidth="68" Height="40" Padding="14,0" VerticalAlignment="Center"/>
+                    </Grid>
                 </Grid>
             </Grid>
         </Grid>
+    </Grid>
     </Grid>
 </UserControl>

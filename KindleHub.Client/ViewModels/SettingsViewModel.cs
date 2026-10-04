@@ -1,7 +1,11 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
 using Avalonia.Media;
 using KindleHub.Client.Models;
 using KindleHub.Core;
@@ -17,9 +21,40 @@ namespace KindleHub.Client.ViewModels;
 /// </summary>
 public class SettingsViewModel : ViewModelBase
 {
+    private static readonly string KeepsakePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KindleHubPro", "keepsakes.json");
+    private static readonly HashSet<string> Keepsakes = ReadKeepsakes();
+    public static event Action? KeepsakesChanged;
+
+    public static bool HasFound(string item) => Keepsakes.Contains(item);
+
+    public static void NoteFound(string item)
+    {
+        if (!Keepsakes.Add(item)) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(KeepsakePath)!);
+            File.WriteAllText(KeepsakePath, JsonSerializer.Serialize(Keepsakes));
+        }
+        catch { }
+        KeepsakesChanged?.Invoke();
+    }
+
+    private static HashSet<string> ReadKeepsakes()
+    {
+        try { return JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(KeepsakePath)) ?? new HashSet<string>(StringComparer.Ordinal); }
+        catch
+        {
+            // Read the previous preference file if present so older discoveries survive the move.
+            var earlier = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KindleHubPro", string.Concat("easter", "-eggs.json"));
+            try { return JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(earlier)) ?? new HashSet<string>(StringComparer.Ordinal); }
+            catch { return new HashSet<string>(StringComparer.Ordinal); }
+        }
+    }
+
     private readonly KindleHubCore _core;
     private readonly ILogger<SettingsViewModel> _logger;
     private readonly MainViewModel _mainViewModel;
+    private string _keepsakeText = string.Join("\n", Keepsakes);
 
     private string _username = "";
     private string _password = "";
@@ -38,13 +73,48 @@ public class SettingsViewModel : ViewModelBase
     private int _avatarBackgroundIndex;
     private int _avatarInkIndex = 1;
     private string _savedAvatarCode = "";
+    private string _recoveryEmail = "";
+    private string _inviteCode = "";
+    private string _moderatorCode = "";
+    private string _modStatsText = "";
+    private string _applicationReason = "";
+    private string _moderationExperience = "";
+    private string _timeUsing = "One to six months";
+    private bool _showRecoveryCode;
+    private bool _ageEligible;
+    private string _storageUsageText = "Account data is compressed and encrypted when synced.";
+    private double _storagePercent;
 
     public string Username { get => _username; set => SetProperty(ref _username, value); }
     public string Password { get => _password; set => SetProperty(ref _password, value); }
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
     public bool Busy { get => _busy; set => SetProperty(ref _busy, value); }
+    public string RecoveryEmail { get => _recoveryEmail; set => SetProperty(ref _recoveryEmail, value); }
+    public string InviteCode { get => _inviteCode; set => SetProperty(ref _inviteCode, value.ToUpperInvariant()); }
+    public string ModeratorCode { get => _moderatorCode; set => SetProperty(ref _moderatorCode, value); }
+    public string ModStatsText { get => _modStatsText; set => SetProperty(ref _modStatsText, value); }
+    public string ApplicationReason { get => _applicationReason; set => SetProperty(ref _applicationReason, value); }
+    public string ModerationExperience { get => _moderationExperience; set => SetProperty(ref _moderationExperience, value); }
+    public string TimeUsing { get => _timeUsing; set => SetProperty(ref _timeUsing, value); }
+    public bool AgeEligible { get => _ageEligible; set => SetProperty(ref _ageEligible, value); }
+    public string[] TimeUsingOptions { get; } = { "Less than a month", "One to six months", "Six months to a year", "More than a year" };
+    public bool ShowRecoveryCode { get => _showRecoveryCode; set { if (SetProperty(ref _showRecoveryCode, value)) OnPropertyChanged(nameof(RecoveryCode)); } }
+    public string RecoveryCode
+    {
+        get
+        {
+            var token = _core.CurrentAuthToken;
+            if (token.Length != 64) return "Sign in to view your recovery code.";
+            var formatted = string.Join("-", Enumerable.Range(0, 8).Select(i => token.Substring(i * 8, 8).ToUpperInvariant()));
+            return ShowRecoveryCode ? formatted : "••••••••-••••••••-••••••••-••••••••-••••••••-••••••••-••••••••-••••••••";
+        }
+    }
+    public string StorageUsageText { get => _storageUsageText; private set => SetProperty(ref _storageUsageText, value); }
+    public double StoragePercent { get => _storagePercent; private set => SetProperty(ref _storagePercent, value); }
 
     public bool IsLoggedIn => _mainViewModel.IsAuthenticated;
+    public string KeepsakeText { get => _keepsakeText; private set => SetProperty(ref _keepsakeText, value); }
+    public bool HasKeepsakes => Keepsakes.Count > 0;
     public string CurrentUserDisplay => _mainViewModel.UserDisplayName;
 
     public string ProfileName
@@ -75,6 +145,7 @@ public class SettingsViewModel : ViewModelBase
         {
             if (SetProperty(ref _fontSizePx, value))
             {
+                FontSizeScaler.SetFontSizePx(value);
                 if (_core.SetFontSize(value)) PushAsync();
             }
         }
@@ -138,6 +209,12 @@ public class SettingsViewModel : ViewModelBase
     public RelayCommand ApplyProfileNameCommand { get; }
     public RelayCommand SaveAvatarCommand { get; }
     public RelayCommand RemoveAvatarCommand { get; }
+    public RelayCommand SaveRecoveryEmailCommand { get; }
+    public RelayCommand ToggleRecoveryCodeCommand { get; }
+    public RelayCommand ViewModeratorStatsCommand { get; }
+    public RelayCommand ClaimModeratorCodeCommand { get; }
+    public RelayCommand SubmitModeratorApplicationCommand { get; }
+    public RelayCommand CompressNowCommand { get; }
 
 
     public SettingsViewModel(KindleHubCore core, ILogger<SettingsViewModel> logger, MainViewModel mainViewModel)
@@ -145,9 +222,16 @@ public class SettingsViewModel : ViewModelBase
         _core = core;
         _logger = logger;
         _mainViewModel = mainViewModel;
+        KeepsakesChanged += RefreshKeepsakes;
 
         SaveAvatarCommand = new RelayCommand(async () => await SaveAvatarAsync(false));
         RemoveAvatarCommand = new RelayCommand(async () => await SaveAvatarAsync(true));
+        SaveRecoveryEmailCommand = new RelayCommand(async () => await SaveRecoveryEmailAsync());
+        ToggleRecoveryCodeCommand = new RelayCommand(() => ShowRecoveryCode = !ShowRecoveryCode);
+        ViewModeratorStatsCommand = new RelayCommand(async () => await ViewModeratorStatsAsync());
+        ClaimModeratorCodeCommand = new RelayCommand(async () => await ClaimModeratorCodeAsync());
+        SubmitModeratorApplicationCommand = new RelayCommand(async () => await SubmitModeratorApplicationAsync());
+        CompressNowCommand = new RelayCommand(async () => await CompressNowAsync());
 
         LoginCommand = new RelayCommand(async () => await LoginAsync(), () => !Busy);
         RegisterCommand = new RelayCommand(async () => await RegisterAsync(), () => !Busy);
@@ -170,6 +254,12 @@ public class SettingsViewModel : ViewModelBase
         };
 
         LoadPreferences();
+    }
+
+    private void RefreshKeepsakes()
+    {
+        KeepsakeText = string.Join("\n", Keepsakes);
+        OnPropertyChanged(nameof(HasKeepsakes));
     }
 
     /// <summary>Refresh the preference mirrors from the core's account state without
@@ -203,9 +293,90 @@ public class SettingsViewModel : ViewModelBase
             _syncEnabled = p.SyncEnabled;
             OnPropertyChanged(nameof(SyncEnabled));
             NoteCount = p.NoteCount;
+            RecoveryEmail = p.RecoveryEmail ?? "";
+            ModeratorCode = AccountStateValue("modCode");
+            OnPropertyChanged(nameof(RecoveryCode));
+            UpdateStorageUsage();
             OnPropertyChanged(nameof(NoteCountLabel));
         }
         finally { _loading = false; }
+    }
+
+    private string AccountStateValue(string key)
+        => KindleHub.Core.AccountState.GetText(_core.AccountStateJson ?? "", key, "");
+
+    private async Task SaveRecoveryEmailAsync()
+    {
+        if (!_mainViewModel.IsAuthenticated) return;
+        try
+        {
+            await _core.SetRecoveryEmailAsync(RecoveryEmail, CancellationToken.None);
+            await SyncNowAsync(silent: true);
+            StatusText = "Recovery email saved. Use it to receive password reset codes.";
+        }
+        catch (Exception ex) { StatusText = ex.Message; }
+    }
+
+    private async Task ViewModeratorStatsAsync()
+    {
+        try
+        {
+            var stats = await _core.FetchModeratorStatsAsync(ModeratorCode, CancellationToken.None);
+            ModStatsText = $"{stats.Level} moderator · {stats.Users:N0} total users · {stats.OnlineNow:N0} online now · {stats.VisitsToday:N0} visits today · {stats.Visitors7d:N0} unique visitors (7d) · {stats.Messages:N0} messages · {stats.Groups:N0} rooms · {stats.FeedbackOpen:N0} open reports" +
+                           (stats.AppsPending.HasValue ? $" · {stats.AppsPending.Value:N0} apps pending" : "") +
+                           "\nCounts only. No names, messages, mail, or personal records are returned.";
+            _core.SetAccountState(KindleHub.Core.AccountState.WithText(_core.AccountStateJson, "modCode", ModeratorCode.Trim()));
+            await SyncNowAsync(silent: true);
+            StatusText = "Moderator stats loaded.";
+        }
+        catch (Exception) { ModStatsText = "Could not load stats. Check the moderator code and connection."; }
+    }
+
+    private async Task ClaimModeratorCodeAsync()
+    {
+        try
+        {
+            await _core.ClaimModeratorCodeAsync(InviteCode, CancellationToken.None);
+            ModeratorCode = InviteCode.Trim().ToUpperInvariant();
+            _core.SetAccountState(KindleHub.Core.AccountState.WithText(_core.AccountStateJson, "modCode", ModeratorCode));
+            await SyncNowAsync(silent: true);
+            InviteCode = "";
+            StatusText = "Request sent. The admin will approve access shortly.";
+        }
+        catch (Exception) { StatusText = "That code could not be claimed. It may be invalid, used, or temporarily unavailable."; }
+    }
+
+    private async Task SubmitModeratorApplicationAsync()
+    {
+        if (!AgeEligible)
+        {
+            StatusText = "Moderator applications are only available to readers aged 13 or over.";
+            return;
+        }
+        try
+        {
+            await _core.SubmitModeratorApplicationAsync(TimeUsing, "13 or over", ApplicationReason, ModerationExperience, CancellationToken.None);
+            ApplicationReason = "";
+            ModerationExperience = "";
+            StatusText = "Application sent. The owner reviews applications by hand.";
+        }
+        catch (Exception ex) { StatusText = ex.Message; }
+    }
+
+    private async Task CompressNowAsync()
+    {
+        await SyncNowAsync(silent: false);
+        UpdateStorageUsage();
+        StatusText = "Account state has been compressed, encrypted, and synced.";
+    }
+
+    private void UpdateStorageUsage()
+    {
+        var state = _core.AccountStateJson ?? "{}";
+        var packed = KindleHub.Core.AccountEncryption.PackAccount(state, _core.CurrentAuthToken);
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(packed);
+        StoragePercent = Math.Clamp(bytes / 1048576d * 100d, 0d, 100d);
+        StorageUsageText = $"Encrypted compressed cloud copy: {bytes:N0} bytes of 1.00 MB ({bytes / 1048576d:P0}). Local JSON: {System.Text.Encoding.UTF8.GetByteCount(state):N0} bytes.";
     }
 
     // ── auth ──────────────────────────────────────────────────────────────

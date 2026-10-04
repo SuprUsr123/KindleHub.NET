@@ -15,6 +15,7 @@ using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Threading;
 using KindleHub.Client.Media;
+using KindleHub.Client.Converters;
 using KindleHub.Core;
 using Microsoft.Extensions.Logging;
 
@@ -50,8 +51,10 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     private readonly List<Message> _pendingHydrate = new();
     private readonly DispatcherTimer _settleTimer;
     private readonly Timer _pollTimer;
+    private readonly SemaphoreSlim _roomSyncLock = new(1, 1);
     private readonly HashSet<string> _seenInvites = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarCodes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PublicProfileDetails> _profileDetails = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _avatarLookups = new(StringComparer.OrdinalIgnoreCase);
     private DateTimeOffset _inboxSince = DateTimeOffset.UtcNow;
     private Control? _host;
@@ -59,6 +62,8 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     private bool _disposed;
 
     private ObservableCollection<Group> _groups = new();
+    private readonly ObservableCollection<Group> _filteredGroups = new();
+    private string _roomSearchText = "";
     private Group? _selectedGroup;
     private ObservableCollection<Message> _messages = new();
     private ObservableCollection<Message> _activePolls = new();
@@ -106,6 +111,35 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     public enum MediaSendMode { None, Sticker, Poll, Flipbook, Story, App }
 
     public ObservableCollection<Group> Groups { get => _groups; set => SetProperty(ref _groups, value); }
+    public ObservableCollection<Group> FilteredGroups => _filteredGroups;
+    public string RoomSearchText
+    {
+        get => _roomSearchText;
+        set
+        {
+            if (SetProperty(ref _roomSearchText, value)) RefreshFilteredGroups();
+        }
+    }
+
+    private void Groups_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (Dispatcher.UIThread.CheckAccess()) RefreshFilteredGroups();
+        else Dispatcher.UIThread.Post(RefreshFilteredGroups);
+    }
+
+    private void RefreshFilteredGroups()
+    {
+        var query = (_roomSearchText ?? "").Trim();
+        var visible = string.IsNullOrEmpty(query)
+            ? Groups.ToList()
+            : Groups.Where(group => (group.Name ?? "").Contains(query, StringComparison.OrdinalIgnoreCase)
+                                    || (group.Code ?? "").Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        _filteredGroups.Clear();
+        foreach (var group in visible) _filteredGroups.Add(group);
+        OnPropertyChanged(nameof(HasVisibleGroups));
+    }
+
+    public bool HasVisibleGroups => _filteredGroups.Count > 0;
 
     public Group? SelectedGroup
     {
@@ -122,6 +156,8 @@ public class MessagesViewModel : ViewModelBase, IDisposable
                 OnPropertyChanged(nameof(IsChatting));
                 IsGlobalChat = IsGlobalRoom(value?.Code);
                 OnPropertyChanged(nameof(IsGlobalChat));
+                if (value != null)
+                    _ = SaveOpenedRoomAsync(value);
                 _ = ReloadRoomAsync();
             }
         }
@@ -324,13 +360,23 @@ public class MessagesViewModel : ViewModelBase, IDisposable
 
         LoadStickers();
 
+        Groups.CollectionChanged += Groups_CollectionChanged;
+
         Groups.Add(new Group { Code = KindleHubCore.GlobalGroupCode, Name = "Global Chat", Creator = "KindleHub" });
         Groups.Add(new Group { Code = KindleHubCore.CrossChatGroupCode, Name = "Crosschat", Creator = "KindleHub" });
+        foreach (var g in _core.GetOpenedMessageRooms())
+        {
+            if (string.IsNullOrWhiteSpace(g?.Code)) continue;
+            if (!Groups.Any(x => string.Equals(x?.Code, g.Code, StringComparison.Ordinal)))
+                Groups.Add(g);
+            RoomRegistry.AddRoom(g);
+        }
         foreach (var g in RoomRegistry.Rooms)
         {
             if (!string.IsNullOrEmpty(g?.Code) && !Groups.Any(x => string.Equals(x?.Code, g!.Code, StringComparison.Ordinal)))
                 Groups.Add(g);
         }
+        RefreshFilteredGroups();
 
         RoomRegistry.ActiveRoomChanged += OnActiveRoomChanged;
         // Must exist before SelectedGroup is assigned: the setter synchronously
@@ -342,6 +388,25 @@ public class MessagesViewModel : ViewModelBase, IDisposable
             ? Groups.FirstOrDefault(g => string.Equals(g.Code, activeRoom.Code, StringComparison.Ordinal))
             : null) ?? Groups[0];
         _pollTimer = new Timer(async _ => await PollTickAsync(), null, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8));
+    }
+
+    private async Task SaveOpenedRoomAsync(Group room)
+    {
+        try
+        {
+            await _roomSyncLock.WaitAsync();
+            try
+            {
+                var saved = await _core.SaveOpenedMessageRoomAsync(room, CancellationToken.None);
+                if (!saved && _core.IsAuthenticated)
+                    _logger.LogInformation("Couldn't sync opened message room {RoomCode} to the account.", room.Code);
+            }
+            finally { _roomSyncLock.Release(); }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(ex, "Couldn't sync opened message room {RoomCode} to the account.", room.Code);
+        }
     }
 
     private void OnActiveRoomChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() => _ = SelectedFromRegistryAsync());
@@ -1334,8 +1399,12 @@ _messages.Clear();
         {
             foreach (var batch in ids.Chunk(30))
             {
-                var fetched = await _core.FetchAvatarCodesAsync(batch, CancellationToken.None);
-                foreach (var pair in fetched) _avatarCodes[pair.Key] = pair.Value;
+                var profiles = await _core.FetchPublicProfilesAsync(batch, CancellationToken.None);
+                foreach (var pair in profiles)
+                {
+                    _profileDetails[pair.Key] = pair.Value;
+                    _avatarCodes[pair.Key] = pair.Value.Avatar ?? _avatarCodes.GetValueOrDefault(pair.Key, "");
+                }
             }
         }
         catch (Exception ex)
@@ -1343,13 +1412,37 @@ _messages.Clear();
             _logger.LogDebug(ex, "Message avatar lookup failed");
         }
 
+        var ownFrame = AccountState.GetText(_core.AccountStateJson, "profileFrame", "");
+        var frameIds = messages.Select(message => message.IsMine ? ownFrame :
+                _profileDetails.GetValueOrDefault(message.UserId ?? "")?.ProfileFrame ?? "")
+            .Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var frameTasks = frameIds.Select(async id => (Id: id, Image: await ProfileFrameImageLoader.LoadAsync(id))).ToArray();
+        var frameImages = (await Task.WhenAll(frameTasks))
+            .ToDictionary(item => item.Id, item => item.Image, StringComparer.OrdinalIgnoreCase);
+
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
             foreach (var message in messages)
             {
-                if (message.IsMine) message.AvatarCode = ownAvatar;
-                else if (!string.IsNullOrWhiteSpace(message.UserId) && _avatarCodes.TryGetValue(message.UserId, out var code))
-                    message.AvatarCode = code;
+                if (message.IsMine)
+                {
+                    message.AvatarCode = ownAvatar;
+                    message.NameStyle = AccountState.GetText(_core.AccountStateJson, "nameStyle", "");
+                    message.ProfileFrame = AccountState.GetText(_core.AccountStateJson, "profileFrame", "");
+                    message.ProfileFrameImage = frameImages.GetValueOrDefault(message.ProfileFrame ?? "");
+                }
+                else if (!string.IsNullOrWhiteSpace(message.UserId))
+                {
+                    message.AvatarCode = _avatarCodes.GetValueOrDefault(message.UserId, "");
+                    if (_profileDetails.TryGetValue(message.UserId, out var profile))
+                    {
+                        message.NameStyle = profile.NameStyle ?? "";
+                        message.ProfileFrame = profile.ProfileFrame ?? "";
+                        message.ProfileRole = profile.Role ?? "";
+                        message.ProfilePlan = profile.Plan ?? "";
+                        message.ProfileFrameImage = frameImages.GetValueOrDefault(message.ProfileFrame ?? "");
+                    }
+                }
                 else message.AvatarCode = "";
             }
         });

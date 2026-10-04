@@ -134,6 +134,58 @@
                 </StackPanel>
             </Border>
 
+            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18"
+                    IsVisible="{Binding IsLoggedIn}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Recovery email" FontSize="20" FontWeight="Bold"/>
+                    <TextBlock Text="Used to receive a one-time password reset code. Your recovery code is still needed to decrypt your saved data." Foreground="Gray" TextWrapping="Wrap"/>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBox Text="{Binding RecoveryEmail}" PlaceholderText="you@example.com" MaxLength="254"/>
+                        <Button Grid.Column="1" Content="Save" Command="{Binding SaveRecoveryEmailCommand}"/>
+                    </Grid>
+                    <TextBlock Text="Recovery code" FontWeight="SemiBold" Margin="0,5,0,0"/>
+                    <TextBlock Text="Keep this code in a password manager or another safe place. Anyone with it can restore your encrypted account data." Foreground="Gray" TextWrapping="Wrap"/>
+                    <TextBox Text="{Binding RecoveryCode}" IsReadOnly="True" FontFamily="monospace" TextWrapping="Wrap"/>
+                    <Button Content="Show / hide recovery code" Command="{Binding ToggleRecoveryCodeCommand}" HorizontalAlignment="Left"/>
+                </StackPanel>
+            </Border>
+
+            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18"
+                    IsVisible="{Binding IsLoggedIn}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Moderator tools" FontSize="20" FontWeight="Bold"/>
+                    <TextBlock Text="Moderator access shows counts only. It does not expose names, messages, mail, or personal data." Foreground="Gray" TextWrapping="Wrap"/>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBox Text="{Binding ModeratorCode}" PlaceholderText="Moderator code" PasswordChar="●" MaxLength="128"/>
+                        <Button Grid.Column="1" Content="View stats" Command="{Binding ViewModeratorStatsCommand}"/>
+                    </Grid>
+                    <TextBlock Text="{Binding ModStatsText}" TextWrapping="Wrap"/>
+                    <TextBlock Text="Want to help moderate? Applications are reviewed by the owner." FontWeight="SemiBold" Margin="0,5,0,0"/>
+                    <CheckBox IsChecked="{Binding AgeEligible}" Content="I am aged 13 or over"/>
+                    <ComboBox ItemsSource="{Binding TimeUsingOptions}" SelectedItem="{Binding TimeUsing}" HorizontalAlignment="Left" MinWidth="210"/>
+                    <TextBox Text="{Binding ApplicationReason}" PlaceholderText="Why do you want to help? (at least 20 characters)" AcceptsReturn="True" MinHeight="70" TextWrapping="Wrap" MaxLength="700"/>
+                    <TextBox Text="{Binding ModerationExperience}" PlaceholderText="Previous moderation experience (optional)" MaxLength="200"/>
+                    <Button Content="Apply to be a moderator" Command="{Binding SubmitModeratorApplicationCommand}" HorizontalAlignment="Left"/>
+                    <Separator Margin="0,4"/>
+                    <TextBlock Text="Have an invite code from the admin? Claim it to request moderator access." Foreground="Gray" TextWrapping="Wrap"/>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBox Text="{Binding InviteCode}" PlaceholderText="Invite code" MaxLength="128"/>
+                        <Button Grid.Column="1" Content="Request access" Command="{Binding ClaimModeratorCodeCommand}"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18"
+                    IsVisible="{Binding IsLoggedIn}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Storage" FontSize="20" FontWeight="Bold"/>
+                    <TextBlock Text="Account data is compressed and encrypted before upload. Compress now re-packs the current state and syncs it." Foreground="Gray" TextWrapping="Wrap"/>
+                    <ProgressBar Minimum="0" Maximum="100" Value="{Binding StoragePercent}" Height="12"/>
+                    <TextBlock Text="{Binding StorageUsageText}" TextWrapping="Wrap"/>
+                    <Button Content="Compress now" Command="{Binding CompressNowCommand}" HorizontalAlignment="Left"/>
+                </StackPanel>
+            </Border>
+
             <!-- about -->
             <Border BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="18">
                 <StackPanel Spacing="8">
@@ -141,6 +193,8 @@
                     <TextBlock Text="KindleHub Pro — desktop client for kindlehub.pro"/>
                     <TextBlock Text="Cross-platform (Windows · Linux · macOS), .NET 8 + Avalonia" Foreground="Gray"/>
                     <TextBlock Text="By SuprUsr123, with &lt;/3" Foreground="Gray" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBlock Text="Keepsakes" FontWeight="SemiBold" IsVisible="{Binding HasKeepsakes}" Margin="0,8,0,0"/>
+                    <TextBlock Text="{Binding KeepsakeText}" IsVisible="{Binding HasKeepsakes}" Foreground="Gray" TextWrapping="Wrap"/>
                     <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap"
                                Text="Source: github.com/SuprUsr123/KindleHub.NET"/>
                 </StackPanel>

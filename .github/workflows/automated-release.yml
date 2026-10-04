@@ -1,0 +1,126 @@
+name: Automated build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: automated-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Choose release number
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Find next 1.x release number
+        id: next
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          latest="$(gh release list --limit 100 --json tagName,isDraft,isPrerelease \
+            --jq '[.[] | select(.isDraft == false) | select(.isPrerelease == false) | .tagName | select(test("^v?[0-9]+\\.[0-9]+$"))][0] // ""')"
+
+          if [[ -z "$latest" ]]; then
+            version="1.0"
+          else
+            latest="${latest#v}"
+            IFS='.' read -r major minor <<< "$latest"
+            version="${major}.$((minor + 1))"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Next release: $version"
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Publish self-contained app
+        run: >-
+          dotnet publish KindleHub.Client/KindleHub.Client.csproj
+          --configuration Releases
+          --runtime ${{ matrix.rid }}
+          --self-contained true
+          --output publish/${{ matrix.rid }}
+
+      - name: Add Linux/macOS launcher
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cat > "publish/${{ matrix.rid }}/KindleHub" <<'EOF'
+          #!/bin/sh
+          DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          exec "$DIR/KindleHub.Client" "$@"
+          EOF
+          chmod +x "publish/${{ matrix.rid }}/KindleHub"
+          chmod +x "publish/${{ matrix.rid }}/KindleHub.Client"
+
+      - name: Package Windows build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "publish/${{ matrix.rid }}/*" -DestinationPath "KindleHub-${{ needs.version.outputs.version }}-${{ matrix.rid }}.zip"
+
+      - name: Package Linux/macOS build
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -czf "KindleHub-${{ needs.version.outputs.version }}-${{ matrix.rid }}.tar.gz" -C "publish/${{ matrix.rid }}" .
+
+      - name: Upload release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: KindleHub-${{ needs.version.outputs.version }}-${{ matrix.rid }}
+          path: KindleHub-${{ needs.version.outputs.version }}-${{ matrix.rid }}.*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: KindleHub-${{ needs.version.outputs.version }}-*
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --notes "Automated Release, use this if you don't want to compile."

@@ -1,4 +1,5 @@
 Imports System.IO
+Imports System.Linq
 Imports System.Text.Json
 
 ''' <summary>
@@ -108,6 +109,12 @@ Public Class ChatPrefsStore
     Public Function IsStarred(messageKey As String) As Boolean
         SyncLock _lock
             Return _starred.Contains(messageKey)
+        End SyncLock
+    End Function
+
+    Public Function StarredKeys() As List(Of String)
+        SyncLock _lock
+            Return _starred.ToList()
         End SyncLock
     End Function
 

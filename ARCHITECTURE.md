@@ -59,7 +59,13 @@ request URL.
 Account-state JSON is encrypted client-side. Unknown keys must survive edits so
 newer web-client preferences are not erased by an older desktop client. Current
 shared keys include `profileName`, `profileAvatar`, `fontSize`, `theme`,
-`simpleMode`, `syncEnabled`, and `notes`.
+`simpleMode`, `syncEnabled`, `notes`, `msgGroups`, and `leftGroups`. The official
+Messages client stores joined chat rooms as `msgGroups`, an array of
+`{code,name,joinedAt}` rows, and excludes rooms in `leftGroups`. Desktop room
+joins use that same shape and sync it through the encrypted `kh_users.state`
+account vault so the joined room list follows the account to other clients.
+Global/fixed chats, inbox rooms, and multiplayer relay rooms are not user-joined
+message groups and are not written to `msgGroups`.
 
 ## Profile pictures and online presence
 

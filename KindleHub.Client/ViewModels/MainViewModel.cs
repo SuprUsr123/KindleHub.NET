@@ -75,6 +75,7 @@ public class MainViewModel : ViewModelBase
         _core.ProfileChanged += (s, e) => 
         {
             CurrentUser = e;
+            FontSizeScaler.SetFontSizePx(_core.CurrentPrefs().FontSizePx);
             OnPropertyChanged(nameof(IsAuthenticated));
             OnPropertyChanged(nameof(UserDisplayName));
         };

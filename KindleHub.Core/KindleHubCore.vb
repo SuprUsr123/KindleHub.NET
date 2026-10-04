@@ -1,4 +1,5 @@
 Imports System.Collections.Generic
+Imports System.Linq
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports Microsoft.Extensions.Logging
@@ -61,6 +62,36 @@ Public Class KindleHubCore
         Public Sub SetAccountState(json As String)
             _currentAccountState = json
         End Sub
+
+        ''' <summary>Reads the account-synced list of rooms opened in Messages.</summary>
+        Public Function GetOpenedMessageRooms() As List(Of Group)
+            Return AccountState.GetMessageRooms(_currentAccountState)
+        End Function
+
+        Public Function GetCommunityNotes() As List(Of CommunityNote)
+            Return AccountState.GetNotes(_currentAccountState)
+        End Function
+
+        Public Function GetSavedFlipbooks() As List(Of SavedFlipbook)
+            Return AccountState.GetSavedFlipbooks(_currentAccountState)
+        End Function
+
+        Public Async Function SaveCommunityFlipbookAsync(wire As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+            If Not IsAuthenticated OrElse ChatMedia.TryParseFlipbook(wire) Is Nothing Then Return False
+            If Not MutateState(Function(s) AccountState.WithSavedFlipbook(s, wire)) Then Return False
+            Return Await SyncAccountAsync(_currentAccountState, cancellationToken)
+        End Function
+
+        ''' <summary>Adds an opened chat room to the encrypted account vault and syncs it.</summary>
+        Public Async Function SaveOpenedMessageRoomAsync(group As Group, cancellationToken As CancellationToken) As Task(Of Boolean)
+            If Not IsAuthenticated OrElse group Is Nothing Then Return False
+            If String.Equals(group.Code, GlobalGroupCode, StringComparison.Ordinal) OrElse
+               String.Equals(group.Code, CrossChatGroupCode, StringComparison.Ordinal) OrElse
+               group.Code.StartsWith("mp-", StringComparison.OrdinalIgnoreCase) OrElse
+               group.Code.StartsWith("800000", StringComparison.Ordinal) Then Return True
+            If Not MutateState(Function(s) AccountState.WithMessageRoom(s, group)) Then Return False
+            Return Await SyncAccountAsync(_currentAccountState, cancellationToken)
+        End Function
 
         Public Sub New(apiClient As IKindleHubApiClient, logger As ILogger(Of KindleHubCore), httpClient As HttpClient)
             _apiClient = apiClient
@@ -337,7 +368,8 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
 
         Public Async Function PingPresenceAsync(gameRoom As String, cancellationToken As CancellationToken) As Task
             If Not IsAuthenticated Then Return
-            Await _apiClient.PingPresenceAsync(_currentProfile.AuthToken, _currentProfile.DisplayName, gameRoom, CurrentPrefs().ProfileAvatar, cancellationToken)
+            Await _apiClient.PingPresenceAsync(_currentProfile.AuthToken, _currentProfile.DisplayName, gameRoom,
+                                               CurrentPrefs().ProfileAvatar, AccountState.ProfilePresenceJson(_currentAccountState), cancellationToken)
         End Function
 
         Public Async Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry))
@@ -346,6 +378,35 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
 
         Public Async Function FetchAvatarCodesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, String))
             Return Await _apiClient.FetchAvatarCodesAsync(userIds, cancellationToken)
+        End Function
+
+        Public Async Function FetchPublicProfilesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, PublicProfileDetails))
+            Return Await _apiClient.FetchPublicProfilesAsync(userIds, cancellationToken)
+        End Function
+
+        Public Async Function FetchCloudSavesAsync(appId As String, room As String, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of CloudSave))
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to view cloud saves.")
+            Return Await _apiClient.ListCloudSavesAsync(_currentProfile.AuthToken, appId, room, limit, cancellationToken)
+        End Function
+
+        Public Async Function SetRecoveryEmailAsync(email As String, cancellationToken As CancellationToken) As Task
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to set a recovery email.")
+            Await _apiClient.SetRecoveryEmailAsync(_currentProfile.AuthToken, email, cancellationToken)
+            MutateState(Function(s) AccountState.WithText(s, "recoveryEmail", If(email, "").Trim()))
+        End Function
+
+        Public Function FetchModeratorStatsAsync(code As String, cancellationToken As CancellationToken) As Task(Of ModeratorStats)
+            Return _apiClient.FetchModeratorStatsAsync(code, cancellationToken)
+        End Function
+
+        Public Function ClaimModeratorCodeAsync(code As String, cancellationToken As CancellationToken) As Task
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in first.")
+            Return _apiClient.ClaimModeratorCodeAsync(_currentProfile.AuthToken, _currentProfile.DisplayName, code, cancellationToken)
+        End Function
+
+        Public Function SubmitModeratorApplicationAsync(timeUsing As String, ageRange As String, reason As String, priorExperience As String, cancellationToken As CancellationToken) As Task
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in first.")
+            Return _apiClient.SubmitModeratorApplicationAsync(_currentProfile.AuthToken, _currentProfile.DisplayName, timeUsing, ageRange, reason, priorExperience, cancellationToken)
         End Function
 
         ' ───────────────────── multiplayer relay (over encrypted chat) ─────────────────────
@@ -600,6 +661,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
             Public Property SimpleMode As Boolean
             Public Property SyncEnabled As Boolean
             Public Property NoteCount As Integer
+            Public Property RecoveryEmail As String
         End Class
 
         Public Function CurrentPrefs() As AccountPrefs
@@ -611,6 +673,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
                 .Theme = AccountState.GetText(s, "theme", "light"),
                 .SimpleMode = AccountState.GetFlag(s, "simpleMode", False),
                 .SyncEnabled = AccountState.GetFlag(s, "syncEnabled", True),
+                .RecoveryEmail = AccountState.GetText(s, "recoveryEmail", ""),
                 .NoteCount = AccountState.CountNotes(s)
             }
         End Function

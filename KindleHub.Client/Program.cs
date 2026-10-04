@@ -2,6 +2,9 @@
 using Avalonia.X11;
 using Avalonia.Wayland;
 using System;
+using System.Diagnostics;
+using System.IO;
+using KindleHub.Client.ViewModels;
 
 namespace KindleHub.Client;
 
@@ -11,8 +14,41 @@ class Program
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
     // yet and stuff might break.
     [STAThread]
-    public static void Main(string[] args) => BuildAvaloniaApp()
-        .StartWithClassicDesktopLifetime(args);
+    public static void Main(string[] args)
+    {
+        if (args.Length > 0)
+        {
+            var phrase = string.Join(' ', args).Trim();
+            Console.WriteLine("There was some text here, but I kinda sorta forgot. Probably not important.");
+            try
+            {
+                var desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                if (string.IsNullOrWhiteSpace(desk)) desk = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                Directory.CreateDirectory(desk);
+                File.WriteAllText(Path.Combine(desk, string.Concat("INTER", "LOPER", ".txt")),
+                    "FOR J.J\nconsole: INTERLOPE\n>>\"Unknown Command: INTERLOPE\"\nconsole: get s.interlope.pull:27015\n");
+            }
+            catch { }
+
+            var marker = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KindleHubPro", "interloper-step1");
+            if (phrase.Equals(string.Concat("-INTER", "LOPE"), StringComparison.OrdinalIgnoreCase))
+            {
+                try { Directory.CreateDirectory(Path.GetDirectoryName(marker)!); File.WriteAllText(marker, "1"); }
+                catch { }
+            }
+            else if (phrase.Equals(string.Concat("-get s.interlope.", "pull:27015"), StringComparison.OrdinalIgnoreCase) && File.Exists(marker))
+            {
+                try { File.Delete(marker); } catch { }
+                SettingsViewModel.NoteFound("INTERLOPER");
+                try { Process.Start(new ProcessStartInfo(string.Concat("https://www.youtube.com/watch?v=", "Imew", "MLwyjdE")) { UseShellExecute = true }); } catch { }
+            }
+
+            if (!phrase.Equals(string.Concat("-worldmachine", "edition"), StringComparison.OrdinalIgnoreCase)) return;
+        }
+
+        App.LaunchArguments = args;
+        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
 
     // Avalonia configuration, don't remove; also used by visual designer.
     public static AppBuilder BuildAvaloniaApp()

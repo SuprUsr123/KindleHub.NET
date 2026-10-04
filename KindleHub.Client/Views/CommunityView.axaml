@@ -1,133 +1,353 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:KindleHub.Client.Converters"
+             xmlns:views="using:KindleHub.Client.Views"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="1050" d:DesignHeight="720"
              x:Class="KindleHub.Client.Views.CommunityView">
-    <Grid RowDefinitions="Auto,*,Auto" Margin="24">
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
-            <StackPanel Spacing="4">
-                <TextBlock Text="Community" FontSize="30" FontWeight="Bold"/>
-                <TextBlock Text="Find a topic, join the conversation, or start one of your own."
-                           Foreground="Gray" TextWrapping="Wrap"/>
+    <UserControl.Resources>
+        <conv:FlipbookPreviewConverter x:Key="FlipbookPreview"/>
+        <conv:ProfileAvatarCodeConverter x:Key="AvatarImage"/>
+        <conv:AvatarFallbackVisibilityConverter x:Key="AvatarFallback"/>
+        <conv:ProfileFrameBrushConverter x:Key="ProfileFrameBrush"/>
+    </UserControl.Resources>
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="20">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <StackPanel Spacing="3">
+                <TextBlock Text="Community" FontSize="28" FontWeight="Bold"/>
+                <TextBlock Text="Posts, saved messages, flipbooks, and your public profile." Foreground="Gray"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <ProgressBar IsVisible="{Binding IsLoading}" Width="56" IsIndeterminate="True"/>
-                <Button Content="Refresh" Command="{Binding RefreshCommand}"/>
-                <Button Content="New topic" Command="{Binding ShowCreateCommand}" FontWeight="Bold"/>
+                <ProgressBar IsVisible="{Binding SocialLoading}" Width="48" IsIndeterminate="True"/>
+                <Button Content="Refresh" Command="{Binding RefreshCommunityCommand}"/>
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="1" ColumnDefinitions="1.35*,*" ColumnSpacing="16">
-            <Border Grid.Column="0" BorderBrush="{DynamicResource ControlBorderBrush}"
-                    BorderThickness="1" CornerRadius="10" Background="{DynamicResource ControlFillColorDefault}">
-                <Grid RowDefinitions="Auto,*">
-                    <Border Grid.Row="0" Padding="12">
-                        <Grid ColumnDefinitions="*,200" ColumnSpacing="8">
-                            <TextBox Grid.Column="0" Text="{Binding SearchText}" PlaceholderText="Search topics or people…"/>
-                            <ComboBox Grid.Column="1" ItemsSource="{Binding AllCategories}"
-                                      SelectedItem="{Binding SelectedCategory}"/>
-                        </Grid>
+        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <Button Content="Posts" Command="{Binding SectionCommand}" CommandParameter="Posts"/>
+                <Button Content="People" Command="{Binding SectionCommand}" CommandParameter="People"/>
+                <Button Content="Memes" Command="{Binding SectionCommand}" CommandParameter="Memes"/>
+                <Button Content="Cloud saves" Command="{Binding SectionCommand}" CommandParameter="Cloud saves"/>
+                <Button Content="Stars &amp; notes" Command="{Binding SectionCommand}" CommandParameter="Stars &amp; notes"/>
+                <Button Content="Flipbooks" Command="{Binding SectionCommand}" CommandParameter="Flipbooks"/>
+                <Button Content="My profile" Command="{Binding SectionCommand}" CommandParameter="My profile"/>
+                <Button Content="Topics" Command="{Binding SectionCommand}" CommandParameter="Topics"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
+                <!-- Neighbourhood posts use the official rolling daily room format. -->
+                <StackPanel IsVisible="{Binding IsPostsSection}" Spacing="10">
+                    <Border Padding="12" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Share with the neighbourhood" FontWeight="Bold" FontSize="16"/>
+                            <TextBox Text="{Binding PostText}" AcceptsReturn="True" TextWrapping="Wrap"
+                                     MinHeight="76" MaxHeight="150" MaxLength="800"
+                                     PlaceholderText="Write a post (up to 800 characters)…"/>
+                            <Button Content="Post" Command="{Binding PostCommand}" HorizontalAlignment="Right"/>
+                        </StackPanel>
                     </Border>
-                    <Border Grid.Row="1" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,1,0,0">
-                        <Panel>
-                            <ListBox ItemsSource="{Binding Topics}" SelectedItem="{Binding SelectedTopic}"
-                                     DoubleTapped="Topic_DoubleTapped" IsVisible="{Binding HasTopics}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Padding="14,12" BorderBrush="{DynamicResource ControlBorderBrush}"
-                                                BorderThickness="0,0,0,1">
-                                            <Grid ColumnDefinitions="*,Auto">
-                                                <StackPanel Spacing="4">
-                                                    <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="16"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding Blurb}" Foreground="Gray" FontSize="12"
-                                                               TextWrapping="Wrap" MaxHeight="38"/>
-                                                    <TextBlock FontSize="11" Foreground="Gray">
-                                                        <Run Text="by "/><Run Text="{Binding Creator}"/>
-                                                        <Run Text="  ·  "/><Run Text="{Binding CategoryId}"/>
-                                                    </TextBlock>
-                                                </StackPanel>
-                                                <TextBlock Grid.Column="1" Text="›" FontSize="24" Foreground="Gray"
-                                                           VerticalAlignment="Center" Margin="8,0"/>
+                    <ItemsControl ItemsSource="{Binding Posts}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="8"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="12" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                    <StackPanel Spacing="5">
+                                        <Grid ColumnDefinitions="46,*,Auto" ColumnSpacing="8">
+                                            <Grid Width="44" Height="44" ClipToBounds="False">
+                                                <Border Width="26" Height="26" CornerRadius="13" ClipToBounds="True"
+                                                        BorderBrush="{Binding ProfileFrame, Converter={StaticResource ProfileFrameBrush}}" BorderThickness="2"
+                                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Grid>
+                                                    <Image Source="{Binding AvatarCode, Converter={StaticResource AvatarImage}}" Stretch="UniformToFill"/>
+                                                    <TextBlock Text="{Binding AvatarInitial}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               IsVisible="{Binding AvatarCode, Converter={StaticResource AvatarFallback}}" FontWeight="Bold" FontSize="11"/>
+                                                </Grid>
+                                                </Border>
+                                                <Image Source="{Binding ProfileFrameImage}" Width="44" Height="44" Stretch="Fill"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding HasProfileFrame}"/>
                                             </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <StackPanel IsVisible="{Binding !HasTopics}" HorizontalAlignment="Center"
-                                        VerticalAlignment="Center" Spacing="8" MaxWidth="300" Margin="20">
-                                <TextBlock Text="No topics found" FontSize="20" FontWeight="Bold"
-                                           HorizontalAlignment="Center"/>
-                                <TextBlock Text="Try another search or category, or create the first topic."
-                                           Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center"/>
-                            </StackPanel>
-                        </Panel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding StyledDisplayName}" FontWeight="Bold"/>
+                                                <Border IsVisible="{Binding HasProfileRole}" Padding="5,1" CornerRadius="5"
+                                                        Background="{DynamicResource ControlFillColorSecondary}"
+                                                        BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                                    <TextBlock Text="{Binding ProfileRoleLabel}" FontSize="10" FontWeight="SemiBold"
+                                                               Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                                                </Border>
+                                                <TextBlock FontSize="10" Foreground="Gray" IsVisible="{Binding HasProfileFrame}">
+                                                    <Run Text="Frame: "/><Run Text="{Binding ProfileFrame}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2" Text="{Binding Timestamp, StringFormat='{}{0:g}'}" Foreground="Gray" FontSize="11"/>
+                                        </Grid>
+                                        <Image Source="{Binding ., Converter={StaticResource FlipbookPreview}}" IsVisible="{Binding IsFlipbook}"
+                                               Width="150" Height="150" HorizontalAlignment="Left"/>
+                                        <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Important" IsVisible="{Binding Important}" Foreground="Orange" FontSize="11"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <StackPanel IsVisible="{Binding IsPeopleSection}" Spacing="10">
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="Community members" FontWeight="Bold" FontSize="20"/>
+                        <TextBlock Text="Public frames and roles from accounts active in the last 24 hours." Foreground="Gray"/>
+                    </StackPanel>
+                    <ItemsControl ItemsSource="{Binding Members}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel ItemWidth="250" ItemHeight="92"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate><DataTemplate>
+                            <Border Margin="4" Padding="10" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                <Grid ColumnDefinitions="62,*" ColumnSpacing="8">
+                                    <Grid Width="60" Height="60" ClipToBounds="False" VerticalAlignment="Center">
+                                    <Border Width="36" Height="36" CornerRadius="18" ClipToBounds="True" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            BorderBrush="{Binding ProfileFrameId, Converter={StaticResource ProfileFrameBrush}}" BorderThickness="2">
+                                        <Grid>
+                                            <Image Source="{Binding Avatar, Converter={StaticResource AvatarImage}}" Stretch="UniformToFill"/>
+                                            <TextBlock Text="{Binding Initial}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsVisible="{Binding Avatar, Converter={StaticResource AvatarFallback}}" FontWeight="Bold"/>
+                                        </Grid>
+                                    </Border>
+                                    <Image Source="{Binding ProfileFrameImage}" Width="60" Height="60" Stretch="Fill"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding HasProfileFrame}"/>
+                                    </Grid>
+                                    <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Role}" FontSize="12" Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                                        <TextBlock Text="{Binding ProfileFrame}" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding NameStyle}" FontSize="10" Foreground="Gray" IsVisible="{Binding HasNameStyle}"/>
+                                        <TextBlock Text="{Binding LastSeen}" FontSize="10" Foreground="Gray"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate></ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <StackPanel IsVisible="{Binding IsMemesSection}" Spacing="10">
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="Meme maker" FontWeight="Bold" FontSize="20"/>
+                        <TextBlock Text="Choose an official scene or use one of your pictures. Each scene gets its own caption fields." Foreground="Gray" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <ComboBox ItemsSource="{Binding MemeSceneOptions}" SelectedItem="{Binding SelectedMemeScene}" HorizontalAlignment="Left" MinWidth="220"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Use a picture" Click="UseMemePicture_Click"/>
+                        <Button Content="Back to scene" Click="ClearMemePicture_Click" IsVisible="{Binding HasMemePicture}"/>
+                    </StackPanel>
+                    <ItemsControl ItemsSource="{Binding MemeCaptions}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding Text}" PlaceholderText="{Binding Label}"
+                                         MaxLength="60" Width="270" Margin="0,0,8,8"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <views:MemePreviewControl x:Name="MemePreview" Width="480" Height="480"
+                                              HorizontalAlignment="Left"/>
+                    <Button Content="Save meme as PNG" Click="SaveMeme_Click" HorizontalAlignment="Left" FontWeight="Bold"/>
+                </StackPanel>
+
+                <StackPanel IsVisible="{Binding IsCloudSavesSection}" Spacing="10">
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="Cloud saves" FontWeight="Bold" FontSize="20"/>
+                        <TextBlock Text="Browse rows from the official app cloud storage. App IDs and rooms must match the app that wrote the save (for example, stronghold / world)." Foreground="Gray" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,*,Auto" ColumnSpacing="8">
+                        <TextBox Text="{Binding CloudAppId}" PlaceholderText="App ID (e.g. stronghold)"/>
+                        <TextBox Grid.Column="1" Text="{Binding CloudRoom}" PlaceholderText="Room (e.g. world)"/>
+                        <Button Grid.Column="2" Content="Load saves" Command="{Binding LoadCloudSavesCommand}"/>
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding CloudSaves}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="7"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate><DataTemplate>
+                            <Border Padding="10" CornerRadius="7" Background="{DynamicResource ControlFillColorDefault}"
+                                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                <StackPanel Spacing="4">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="{Binding Key, StringFormat='Key: {0}'}" FontWeight="Bold"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding SavedAt, StringFormat='{}{0:g}'}" Foreground="Gray" FontSize="11"/>
+                                    </Grid>
+                                    <TextBlock Text="{Binding Preview}" TextWrapping="Wrap" MaxHeight="110" FontFamily="monospace"/>
+                                    <TextBlock Text="{Binding ModifiedBy, StringFormat='Updated by {0}'}" Foreground="Gray" FontSize="10"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate></ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <Grid IsVisible="{Binding IsStarsNotesSection}" RowDefinitions="Auto,Auto" ColumnDefinitions="*,*" ColumnSpacing="12" RowSpacing="10">
+                    <Border Padding="12" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Starred messages" FontWeight="Bold" FontSize="17"/>
+                            <ItemsControl ItemsSource="{Binding StarredMessages}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="6"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate><DataTemplate>
+                                    <Border Padding="8" CornerRadius="6" Background="{DynamicResource ControlFillColorSecondary}">
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" MaxHeight="70"/>
+                                            <TextBlock Text="{Binding GroupCode}" Foreground="Gray" FontSize="10"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="Stars are stored on this device, like in the official client." Foreground="Gray" FontSize="11"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Padding="12" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Notes &amp; tags" FontWeight="Bold" FontSize="17"/>
+                            <ItemsControl ItemsSource="{Binding Notes}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="6"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate><DataTemplate>
+                                    <Border Padding="8" CornerRadius="6" Background="{DynamicResource ControlFillColorSecondary}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" MaxHeight="100"/>
+                                            <TextBlock Text="{Binding TagsLabel}" Foreground="{DynamicResource AccentFillColorDefaultBrush}" FontSize="11"/>
+                                            <TextBlock Text="{Binding DateText}" Foreground="Gray" FontSize="10"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Row="1" Grid.ColumnSpan="2" Padding="12" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Important messages" FontWeight="Bold" FontSize="17"/>
+                            <ItemsControl ItemsSource="{Binding ImportantMessages}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="6"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate><DataTemplate>
+                                    <Border Padding="8" CornerRadius="6" Background="{DynamicResource ControlFillColorSecondary}">
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="{Binding StyledDisplayName}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" MaxHeight="70"/>
+                                            <TextBlock Text="{Binding GroupCode}" Foreground="Gray" FontSize="10"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate></ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="Important messages are searched in your joined rooms and Global Chat." Foreground="Gray" FontSize="11"/>
+                        </StackPanel>
                     </Border>
                 </Grid>
-            </Border>
 
-            <Border Grid.Column="1" BorderBrush="{DynamicResource ControlBorderBrush}"
-                    BorderThickness="1" CornerRadius="10" Padding="20"
-                    Background="{DynamicResource ControlFillColorDefault}">
-                <Panel>
-                    <StackPanel IsVisible="{Binding HasSelection}" Spacing="12">
-                        <TextBlock Text="TOPIC" FontSize="11" FontWeight="Bold"
-                                   Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
-                        <TextBlock Text="{Binding SelectedTopic.Title}" FontSize="24" FontWeight="Bold"
-                                   TextWrapping="Wrap"/>
-                        <TextBlock Text="{Binding SelectedTopic.Blurb}" Foreground="Gray"
-                                   FontSize="14" TextWrapping="Wrap"/>
-                        <Border Height="1" Background="{DynamicResource ControlBorderBrush}" Margin="0,4"/>
-                        <StackPanel Spacing="5">
-                            <TextBlock Text="Started by" Foreground="Gray" FontSize="11"/>
-                            <TextBlock Text="{Binding SelectedTopic.Creator}" FontWeight="SemiBold"/>
+                <StackPanel IsVisible="{Binding IsFlipbooksSection}" Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="Your flipbooks" FontWeight="Bold" FontSize="20"/>
+                            <TextBlock Text="Draw, save to your account, and post one for everyone." Foreground="Gray"/>
                         </StackPanel>
-                        <StackPanel Spacing="5">
-                            <TextBlock Text="Category" Foreground="Gray" FontSize="11"/>
-                            <TextBlock Text="{Binding SelectedTopic.CategoryId}" FontWeight="SemiBold"/>
-                        </StackPanel>
-                        <StackPanel Spacing="5">
-                            <TextBlock Text="Room code" Foreground="Gray" FontSize="11"/>
-                            <TextBlock Text="{Binding SelectedTopic.Code}" FontFamily="monospace"/>
-                        </StackPanel>
-                        <Button Content="Open conversation" Command="{Binding OpenCommand}"
-                                HorizontalAlignment="Left" Margin="0,8,0,0" FontWeight="Bold"/>
-                    </StackPanel>
-                    <StackPanel IsVisible="{Binding !HasSelection}" HorizontalAlignment="Center"
-                                VerticalAlignment="Center" Spacing="8" MaxWidth="280">
-                        <TextBlock Text="Choose a topic" FontSize="20" FontWeight="Bold"
-                                   HorizontalAlignment="Center"/>
-                        <TextBlock Text="Select a community topic to see its details and open the conversation."
-                                   Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center"/>
-                    </StackPanel>
-                </Panel>
-            </Border>
-        </Grid>
-
-        <Border Grid.Row="2" IsVisible="{Binding ShowCreate}" Margin="0,14,0,0" Padding="14"
-                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="10"
-                Background="{DynamicResource ControlFillColorDefault}">
-            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,*,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
-                <TextBlock Grid.Row="0" Grid.ColumnSpan="4" Text="Start a topic" FontSize="17" FontWeight="Bold"/>
-                <TextBox Grid.Row="1" Grid.Column="0" Text="{Binding NewTitle}" PlaceholderText="Topic title"/>
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NewBlurb}" PlaceholderText="Short description (optional)"/>
-                <ComboBox Grid.Row="1" Grid.Column="2" ItemsSource="{Binding TopicCategories}"
-                          SelectedItem="{Binding NewCategory}" MinWidth="150"/>
-                <StackPanel Grid.Row="1" Grid.Column="3" Orientation="Horizontal" Spacing="6">
-                    <Button Content="Create &amp; open" Command="{Binding CreateCommand}" FontWeight="Bold"/>
-                    <Button Content="Cancel" Command="{Binding CancelCreateCommand}"/>
+                        <Button Grid.Column="1" Content="Create flipbook" Command="{Binding CreateFlipbookCommand}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding SavedFlipbooks}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Spacing="7"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate><DataTemplate>
+                            <Border Padding="10" CornerRadius="7" Background="{DynamicResource ControlFillColorDefault}"
+                                    BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Grid ColumnDefinitions="64,*" ColumnSpacing="9">
+                                        <Image Source="{Binding PreviewMessage, Converter={StaticResource FlipbookPreview}}" Width="64" Height="64"/>
+                                        <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}" FontWeight="Bold"/>
+                                            <TextBlock Text="Saved to your account" Foreground="Gray" FontSize="11"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <Button Grid.Column="1" Content="Post" Command="{Binding $parent[UserControl].DataContext.PostFlipbookCommand}"
+                                            CommandParameter="{Binding}" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate></ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
-            </Grid>
-        </Border>
 
-        <Border Grid.Row="2" IsVisible="{Binding !ShowCreate}" Margin="0,14,0,0" Padding="10,8"
-                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" CornerRadius="8">
-            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                <TextBlock Grid.Column="0" Text="{Binding StatusText}" Foreground="Gray" VerticalAlignment="Center"/>
-                <TextBox Grid.Column="1" Text="{Binding JoinCode}" Width="200" PlaceholderText="Join with 12-digit room code"/>
-                <Button Grid.Column="2" Content="Join room" Command="{Binding JoinCommand}"/>
-            </Grid>
-        </Border>
+                <Border IsVisible="{Binding IsProfileSection}" Padding="14" CornerRadius="8"
+                        Background="{DynamicResource ControlFillColorDefault}" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                    <StackPanel Spacing="9" MaxWidth="720">
+                        <TextBlock Text="Your public profile" FontWeight="Bold" FontSize="20"/>
+                        <TextBlock Text="These details appear when someone opens your profile. All profile frames and name/message effects are unlocked for everyone." Foreground="Gray" TextWrapping="Wrap"/>
+                        <TextBox Text="{Binding ProfileName}" MaxLength="40" PlaceholderText="Display name"/>
+                        <TextBox Text="{Binding ProfilePronouns}" MaxLength="28" PlaceholderText="Pronouns"/>
+                        <TextBox Text="{Binding ProfileHobbies}" MaxLength="160" PlaceholderText="What you’re into"/>
+                        <TextBox Text="{Binding ProfileStatus}" MaxLength="80" PlaceholderText="Status"/>
+                        <TextBox Text="{Binding ProfileBio}" MaxLength="320" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="140" PlaceholderText="About you"/>
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Profile frame" FontSize="12" Foreground="Gray"/>
+                                <ComboBox ItemsSource="{Binding FrameOptions}" SelectedItem="{Binding SelectedFrame}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <TextBlock Text="Name and message effect" FontSize="12" Foreground="Gray"/>
+                                <ComboBox ItemsSource="{Binding NameEffectOptions}" SelectedItem="{Binding SelectedNameEffect}"/>
+                            </StackPanel>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                            <Button Content="Edit profile picture in Settings" Command="{Binding EditAvatarCommand}"/>
+                            <Button Content="Save profile" Command="{Binding SaveProfileCommand}" FontWeight="Bold"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel IsVisible="{Binding IsTopicsSection}" Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                        <TextBox Text="{Binding SearchText}" PlaceholderText="Search topics or people…"/>
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding AllCategories}" SelectedItem="{Binding SelectedCategory}" MinWidth="150"/>
+                        <Button Grid.Column="2" Content="New topic" Command="{Binding ShowCreateCommand}"/>
+                        <Button Grid.Column="3" Content="Join" Command="{Binding JoinCommand}"/>
+                    </Grid>
+                    <TextBox Text="{Binding JoinCode}" PlaceholderText="12-digit room code" MaxLength="32"/>
+                    <Grid ColumnDefinitions="1.35*,*" ColumnSpacing="12">
+                        <ListBox Grid.Column="0" ItemsSource="{Binding Topics}" SelectedItem="{Binding SelectedTopic}" DoubleTapped="Topic_DoubleTapped" MaxHeight="460">
+                            <ListBox.ItemTemplate><DataTemplate>
+                                <Border Padding="10" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="15"/>
+                                        <TextBlock Text="{Binding Blurb}" Foreground="Gray" TextWrapping="Wrap" MaxHeight="40"/>
+                                        <TextBlock FontSize="11" Foreground="Gray"><Run Text="by "/><Run Text="{Binding Creator}"/><Run Text=" · "/><Run Text="{Binding CategoryId}"/></TextBlock>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate></ListBox.ItemTemplate>
+                        </ListBox>
+                        <Border Grid.Column="1" Padding="14" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
+                                BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                            <StackPanel IsVisible="{Binding HasSelection}" Spacing="8">
+                                <TextBlock Text="{Binding SelectedTopic.Title}" FontWeight="Bold" FontSize="21" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding SelectedTopic.Blurb}" Foreground="Gray" TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding SelectedTopic.Creator, StringFormat='Started by {0}'}"/>
+                                <TextBlock Text="{Binding SelectedTopic.Code}" FontFamily="monospace" Foreground="Gray"/>
+                                <Button Content="Open conversation" Command="{Binding OpenCommand}" HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <Border IsVisible="{Binding ShowCreate}" Padding="12" CornerRadius="8" BorderThickness="1" BorderBrush="{DynamicResource ControlBorderBrush}">
+                        <StackPanel Spacing="7">
+                            <TextBlock Text="Start a topic" FontWeight="Bold"/>
+                            <TextBox Text="{Binding NewTitle}" PlaceholderText="Topic title"/>
+                            <TextBox Text="{Binding NewBlurb}" PlaceholderText="Short description"/>
+                            <ComboBox ItemsSource="{Binding TopicCategories}" SelectedItem="{Binding NewCategory}"/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Content="Create &amp; open" Command="{Binding CreateCommand}"/>
+                                <Button Content="Cancel" Command="{Binding CancelCreateCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+        <TextBlock Grid.Row="3" Text="{Binding StatusText}" Foreground="Gray" Margin="0,8,0,0" TextWrapping="Wrap"/>
     </Grid>
 </UserControl>

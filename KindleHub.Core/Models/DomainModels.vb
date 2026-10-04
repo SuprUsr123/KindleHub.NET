@@ -66,6 +66,58 @@ Public Class Group
     End Property
 End Class
 
+Public Class CommunityNote
+    Public Property Id As String
+    Public Property Text As String
+    Public Property Tags As New List(Of String)()
+    Public Property DateText As String
+    Public Property Pinned As Boolean
+    Public ReadOnly Property TagsLabel As String
+        Get
+            Return String.Join(" · ", Tags)
+        End Get
+    End Property
+End Class
+
+Public Class SavedFlipbook
+    Public Property Id As String
+    Public Property Name As String
+    Public Property Wire As String
+    Public Property SavedAt As Long
+    Public ReadOnly Property PreviewMessage As Message
+        Get
+            Return New Message With {.Id = Id, .Text = Wire}
+        End Get
+    End Property
+End Class
+
+''' <summary>A key/value row returned by the official app cloud-save RPC.</summary>
+Public Class CloudSave
+    Public Property Key As String
+    Public Property Value As String
+    Public Property SavedAt As DateTimeOffset
+    Public Property ModifiedBy As String
+    Public ReadOnly Property Preview As String
+        Get
+            Dim text = If(Value, "").Replace(vbCr, " ").Replace(vbLf, " ")
+            Return If(text.Length > 700, text.Substring(0, 700) & "…", text)
+        End Get
+    End Property
+End Class
+
+''' <summary>Count-only response from the official moderator statistics endpoint.</summary>
+Public Class ModeratorStats
+    Public Property Level As String
+    Public Property Users As Integer
+    Public Property OnlineNow As Integer
+    Public Property VisitsToday As Integer
+    Public Property Visitors7d As Integer
+    Public Property Messages As Integer
+    Public Property Groups As Integer
+    Public Property FeedbackOpen As Integer
+    Public Property AppsPending As Integer?
+End Class
+
 ''' <summary>A row from the signed-in topic directory RPC (kh_app_list, app "khtopics").</summary>
 Public Class TopicListing
     Public Property Code As String
@@ -184,6 +236,118 @@ Public Class Message
     ''' <summary>Write token the sender uses to edit/unsend/react on their own row.</summary>
     Public Property OwnerSecret As String
     Public Property IsMine As Boolean
+    Private _nameStyle As String
+    Public Property NameStyle As String
+        Get
+            Return _nameStyle
+        End Get
+        Set(value As String)
+            If _nameStyle = value Then Return
+            _nameStyle = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(NameStyle)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(StyledDisplayName)))
+        End Set
+    End Property
+    Private _profileFrame As String
+    Public Property ProfileFrame As String
+        Get
+            Return _profileFrame
+        End Get
+        Set(value As String)
+            If _profileFrame = value Then Return
+            _profileFrame = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ProfileFrame)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(HasProfileFrame)))
+        End Set
+    End Property
+    Public ReadOnly Property HasProfileFrame As Boolean
+        Get
+            Return Not String.IsNullOrEmpty(ProfileFrame)
+        End Get
+    End Property
+    Private _profileFrameImage As Object
+    ''' <summary>UI supplied overlay image loaded from the official frame asset catalog.</summary>
+    Public Property ProfileFrameImage As Object
+        Get
+            Return _profileFrameImage
+        End Get
+        Set(value As Object)
+            If Object.Equals(_profileFrameImage, value) Then Return
+            _profileFrameImage = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ProfileFrameImage)))
+        End Set
+    End Property
+    Private _profileRole As String
+    Public Property ProfileRole As String
+        Get
+            Return _profileRole
+        End Get
+        Set(value As String)
+            If _profileRole = value Then Return
+            _profileRole = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ProfileRole)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ProfileRoleLabel)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(HasProfileRole)))
+        End Set
+    End Property
+    Private _profilePlan As String
+    Public Property ProfilePlan As String
+        Get
+            Return _profilePlan
+        End Get
+        Set(value As String)
+            If _profilePlan = value Then Return
+            _profilePlan = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ProfilePlan)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(ProfileRoleLabel)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(HasProfileRole)))
+        End Set
+    End Property
+    Public ReadOnly Property ProfileRoleLabel As String
+        Get
+            Dim roleLabel As String
+            Select Case If(ProfileRole, "").ToLowerInvariant()
+                Case "creator" : roleLabel = "Creator"
+                Case "ultra" : roleLabel = "Ultra"
+                Case "mod" : roleLabel = "Moderator"
+                Case Else : roleLabel = ""
+            End Select
+            Dim planLabel As String
+            Select Case If(ProfilePlan, "").ToLowerInvariant()
+                Case "plus" : planLabel = "Plus"
+                Case "pro" : planLabel = "Pro"
+                Case "max" : planLabel = "Max"
+                Case Else : planLabel = ""
+            End Select
+            If String.IsNullOrEmpty(roleLabel) Then Return planLabel
+            If String.IsNullOrEmpty(planLabel) Then Return roleLabel
+            Return roleLabel & " · " & planLabel
+        End Get
+    End Property
+    Public ReadOnly Property HasProfileRole As Boolean
+        Get
+            Return Not String.IsNullOrEmpty(ProfileRoleLabel)
+        End Get
+    End Property
+    Public ReadOnly Property StyledDisplayName As String
+        Get
+            Dim name = If(DisplayName, "Reader")
+            Select Case If(NameStyle, "")
+                Case "mark" : Return "◆ " & name
+                Case "bold" : Return name.ToUpperInvariant()
+                Case "rule" : Return "┃ " & name
+                Case "both" : Return "◆ ┃ " & name
+                Case "star" : Return "★ " & name
+                Case "box" : Return "【" & name & "】"
+                Case "serif" : Return "𝑺 " & name
+                Case "crown" : Return "♛ " & name
+                Case "chip" : Return "▣ " & name
+                Case "frame" : Return "▤ " & name
+                Case "under" : Return "＿ " & name
+                Case Else : Return name
+            End Select
+        End Get
+    End Property
 
     Private _avatarCode As String
     Public Property AvatarCode As String
@@ -224,12 +388,12 @@ Public Class Message
     End Property
     Public ReadOnly Property ShowSenderName As Boolean
         Get
-            Return Not IsMine AndAlso Not IsContinuation
+            Return Not IsContinuation
         End Get
     End Property
     Public ReadOnly Property ShowIncomingAvatar As Boolean
         Get
-            Return Not IsMine AndAlso Not IsContinuation
+            Return Not IsContinuation
         End Get
     End Property
     Public ReadOnly Property ShowOwnAvatar As Boolean
@@ -577,6 +741,7 @@ Public Class PresenceEntry
     Public Property UserId As String
     Public Property DisplayName As String
     Public Property Avatar As String
+    Public Property Profile As String
     Public Property LastSeen As DateTimeOffset
 
     Public ReadOnly Property AgeFormatted As String
@@ -584,6 +749,14 @@ Public Class PresenceEntry
             Return DisplayUtil.RelativeAge(LastSeen)
         End Get
     End Property
+End Class
+
+Public Class PublicProfileDetails
+    Public Property Avatar As String
+    Public Property ProfileFrame As String
+    Public Property NameStyle As String
+    Public Property Role As String
+    Public Property Plan As String
 End Class
 
 ''' <summary>App-store catalogue row (kh_store_apps minus the html body).

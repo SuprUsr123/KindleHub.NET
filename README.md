@@ -1,7 +1,5 @@
 # KindleHub.NET
-[WIP, and once released, aran, do NOT fuck with my code. It's all in the GPL. You legally have to commit back to this codebase.]
-
-# KindleHub Pro
+95% completed! Most functions are wired up now. Also, aran, do NOT fuck with the GPL.
 
 Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Runs on Windows, Linux, and macOS.
 
@@ -19,7 +17,7 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 
 ## Prerequisites
 
-- **.NET 9.0.300 SDK** or later ([download](https://dotnet.microsoft.com/download)). The app still targets .NET 8; the newer SDK is required by Avalonia 12's XAML compiler.
+- **.NET 10.0.100 SDK** or later ([download](https://dotnet.microsoft.com/download)). The app still targets .NET 8; the newer compiler is required by Avalonia 12.1's XAML analyzers.
 - **Git** (for cloning)
 
 ### Platform-specific notes

@@ -115,6 +115,203 @@ Public Module AccountState
         Return v.AsArray().Count
     End Function
 
+    Public Function GetNotes(stateJson As String) As List(Of CommunityNote)
+        Dim result As New List(Of CommunityNote)()
+        Dim root = TryParse(stateJson)
+        If root Is Nothing OrElse Not TypeOf root("notes") Is JsonArray Then Return result
+        For Each item In DirectCast(root("notes"), JsonArray)
+            If Not TypeOf item Is JsonObject Then Continue For
+            Dim note As New CommunityNote With {
+                .Id = NodeText(item("id")),
+                .Text = NodeText(item("text")),
+                .DateText = NodeText(item("date")),
+                .Pinned = NodeFlag(item("pinned"))
+            }
+            If TypeOf item("tags") Is JsonArray Then
+                For Each tag In DirectCast(item("tags"), JsonArray)
+                    Dim value = NodeText(tag)
+                    If Not String.IsNullOrWhiteSpace(value) Then note.Tags.Add(value)
+                Next
+            End If
+            result.Add(note)
+        Next
+        Return result
+    End Function
+
+    Public Function GetSavedFlipbooks(stateJson As String) As List(Of SavedFlipbook)
+        Dim result As New List(Of SavedFlipbook)()
+        Dim root = TryParse(stateJson)
+        If root Is Nothing OrElse Not TypeOf root("flipbooks") Is JsonArray Then Return result
+        For Each item In DirectCast(root("flipbooks"), JsonArray)
+            If Not TypeOf item Is JsonObject Then Continue For
+            Dim fb As New ChatMedia.Flipbook With {
+                .Name = NodeText(item("n")),
+                .Width = NodeNumber(item("w")),
+                .Height = NodeNumber(item("h")),
+                .Fps = NodeNumber(item("fps"))
+            }
+            If Not TypeOf item("f") Is JsonArray Then Continue For
+            fb.Frames = DirectCast(item("f"), JsonArray).Select(Function(frame) NodeText(frame)).ToArray()
+            Dim wire = ChatMedia.EncodeFlipbook(fb)
+            If String.IsNullOrEmpty(wire) Then Continue For
+            result.Add(New SavedFlipbook With {
+                .Id = NodeText(item("id")),
+                .Name = If(String.IsNullOrWhiteSpace(fb.Name), "Flipbook", fb.Name),
+                .Wire = wire,
+                .SavedAt = NodeLong(item("at"))
+            })
+        Next
+        Return result
+    End Function
+
+    Public Function WithSavedFlipbook(stateJson As String, wire As String) As String
+        Dim fb = ChatMedia.TryParseFlipbook(wire)
+        If fb Is Nothing Then Return If(stateJson, "{}")
+        Dim root = TryParse(stateJson)
+        If root Is Nothing Then root = New JsonObject()
+        Dim books = TryCast(root("flipbooks"), JsonArray)
+        If books Is Nothing Then
+            books = New JsonArray()
+            root("flipbooks") = books
+        End If
+        Dim frames As New JsonArray()
+        For Each frame In fb.Frames
+            frames.Add(JsonValue.Create(frame))
+        Next
+        books.Insert(0, New JsonObject From {
+            {"id", JsonValue.Create(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString("x") & "_" & RoomCodes.GenerateDigits(4))},
+            {"n", JsonValue.Create(If(String.IsNullOrWhiteSpace(fb.Name), "Flipbook", fb.Name))},
+            {"w", JsonValue.Create(fb.Width)},
+            {"h", JsonValue.Create(fb.Height)},
+            {"fps", JsonValue.Create(fb.Fps)},
+            {"f", frames},
+            {"at", JsonValue.Create(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())}
+        })
+        While books.Count > 100
+            books.RemoveAt(books.Count - 1)
+        End While
+        Return root.ToJsonString()
+    End Function
+
+    ''' <summary>Builds the compact public profile blob consumed by kh_presence.</summary>
+    Public Function ProfilePresenceJson(stateJson As String) As String
+        Dim profile As New JsonObject()
+        Dim fields As (Source As String, Target As String, Limit As Integer)() = {
+            ("profilePronouns", "p", 28), ("profileHobbies", "h", 160),
+            ("profileBio", "b", 320), ("profileStatus", "s", 80),
+            ("nameStyle", "ns", 8), ("profileFrame", "fr", 24)
+        }
+        For Each field In fields
+            Dim value = GetText(stateJson, field.Source, "").Trim()
+            If value.Length > 0 Then profile(field.Target) = JsonValue.Create(value.Substring(0, Math.Min(field.Limit, value.Length)))
+        Next
+        Return profile.ToJsonString()
+    End Function
+
+    Private Function NodeText(node As JsonNode) As String
+        If node Is Nothing Then Return ""
+        Try
+            Return node.GetValue(Of String)()
+        Catch
+            Return ""
+        End Try
+    End Function
+
+    Private Function NodeNumber(node As JsonNode) As Integer
+        If node Is Nothing Then Return 0
+        Try
+            Return node.GetValue(Of Integer)()
+        Catch
+            Return 0
+        End Try
+    End Function
+
+    Private Function NodeLong(node As JsonNode) As Long
+        If node Is Nothing Then Return 0
+        Try
+            Return node.GetValue(Of Long)()
+        Catch
+            Return 0
+        End Try
+    End Function
+
+    Private Function NodeFlag(node As JsonNode) As Boolean
+        If node Is Nothing Then Return False
+        Try
+            Return node.GetValue(Of Boolean)()
+        Catch
+            Return False
+        End Try
+    End Function
+
+    ''' <summary>Returns groups saved by the official client in the encrypted account-state vault.</summary>
+    Public Function GetMessageRooms(stateJson As String) As List(Of Group)
+        Dim result As New List(Of Group)()
+        Dim root = TryParse(stateJson)
+        If root Is Nothing Then Return result
+        Dim rooms = root("msgGroups")
+        If rooms Is Nothing OrElse rooms.GetValueKind() <> JsonValueKind.Array Then Return result
+        For Each item In rooms.AsArray()
+            If Not TypeOf item Is JsonObject Then Continue For
+            Dim code = ""
+            Dim name = ""
+            Try
+                code = item("code")?.GetValue(Of String)()
+                name = item("name")?.GetValue(Of String)()
+            Catch
+            End Try
+            If String.IsNullOrWhiteSpace(code) OrElse result.Any(Function(g) String.Equals(g.Code, code, StringComparison.Ordinal)) Then Continue For
+            result.Add(New Group With {.Code = code, .Name = If(name, code)})
+        Next
+        Return result
+    End Function
+
+    ''' <summary>Add or rename a joined group using the official client's msgGroups schema.</summary>
+    Public Function WithMessageRoom(stateJson As String, group As Group) As String
+        If group Is Nothing OrElse String.IsNullOrWhiteSpace(group.Code) Then Return If(stateJson, "{}")
+        Dim root = TryParse(stateJson)
+        If root Is Nothing Then root = New JsonObject()
+        Dim rooms = TryCast(root("msgGroups"), JsonArray)
+        If rooms Is Nothing Then
+            rooms = New JsonArray()
+            root("msgGroups") = rooms
+        End If
+        Dim existing As JsonObject = Nothing
+        For Each item In rooms
+            If Not TypeOf item Is JsonObject Then Continue For
+            Dim code = ""
+            Try
+                code = item("code")?.GetValue(Of String)()
+            Catch
+            End Try
+            If String.Equals(code, group.Code, StringComparison.Ordinal) Then
+                existing = DirectCast(item, JsonObject)
+                Exit For
+            End If
+        Next
+        If existing Is Nothing Then
+            rooms.Add(New JsonObject From {
+                {"code", JsonValue.Create(group.Code)},
+                {"name", JsonValue.Create(If(group.Name, group.Code))},
+                {"joinedAt", JsonValue.Create(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())}
+            })
+        Else
+            existing("name") = JsonValue.Create(If(group.Name, group.Code))
+        End If
+        If TypeOf root("leftGroups") Is JsonArray Then
+            Dim leftGroups = DirectCast(root("leftGroups"), JsonArray)
+            For i = leftGroups.Count - 1 To 0 Step -1
+                Try
+                    If String.Equals(leftGroups(i)?.GetValue(Of String)(), group.Code, StringComparison.Ordinal) Then
+                        leftGroups.RemoveAt(i)
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+        Return root.ToJsonString()
+    End Function
+
     Private Function TryParse(stateJson As String) As JsonObject
         If String.IsNullOrWhiteSpace(stateJson) Then Return Nothing
         Try

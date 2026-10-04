@@ -2,12 +2,14 @@ Imports System.Net.Http
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.Json.Serialization
+Imports System.Text.Json.Nodes
 Imports System.Text.RegularExpressions
 Imports System.Threading
 Imports System.Threading.Tasks
 Imports Microsoft.Extensions.Logging
 Imports System.Collections.Generic
 Imports System.Linq
+Imports System.Security.Cryptography
 Imports KindleHub.Core
 
 Public Class KindleHubApiOptions
@@ -50,6 +52,11 @@ Public Interface IKindleHubApiClient
     Function CreateGroupAsync(request As CreateGroupRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of Group)
     Function FetchGroupsByCodesAsync(codes As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of List(Of Group))
     Function ListTopicsAsync(authToken As String, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of TopicListing))
+    Function ListCloudSavesAsync(authToken As String, appId As String, room As String, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of CloudSave))
+    Function SetRecoveryEmailAsync(authToken As String, email As String, cancellationToken As CancellationToken) As Task
+    Function FetchModeratorStatsAsync(moderatorCode As String, cancellationToken As CancellationToken) As Task(Of ModeratorStats)
+    Function ClaimModeratorCodeAsync(authToken As String, displayName As String, inviteCode As String, cancellationToken As CancellationToken) As Task
+    Function SubmitModeratorApplicationAsync(authToken As String, displayName As String, timeUsing As String, ageRange As String, reason As String, priorExperience As String, cancellationToken As CancellationToken) As Task
     Function CreateTopicAsync(request As CreateTopicRequest, authToken As String, displayName As String, cancellationToken As CancellationToken) As Task(Of Group)
 
     ' Store
@@ -64,9 +71,10 @@ Public Interface IKindleHubApiClient
     Function SubmitScoreAsync(request As SubmitScoreRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of Boolean)
     Function FetchScoresAsync(request As FetchScoresRequest, cancellationToken As CancellationToken) As Task(Of List(Of LeaderboardEntry))
     Function ListKnownGamesAsync(cancellationToken As CancellationToken) As Task(Of List(Of String))
-    Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, avatar As String, cancellationToken As CancellationToken) As Task
+    Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, avatar As String, profile As String, cancellationToken As CancellationToken) As Task
     Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry))
     Function FetchAvatarCodesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, String))
+    Function FetchPublicProfilesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, PublicProfileDetails))
 
     ' Multiplayer relay (JSON envelopes riding the encrypted chat transport)
     Function SendRoomEventAsync(groupCode As String, eventJson As String, displayName As String, authToken As String, cancellationToken As CancellationToken) As Task(Of Message)
@@ -504,6 +512,102 @@ Public Class KindleHubApiClient
         Return listings.OrderByDescending(Function(t) t.CreatedAt).ToList()
     End Function
 
+    Public Async Function ListCloudSavesAsync(authToken As String, appId As String, room As String, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of CloudSave)) Implements IKindleHubApiClient.ListCloudSavesAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in to view cloud saves.")
+        Dim cleanApp = Regex.Replace(If(appId, ""), "[^A-Za-z0-9_.-]", "")
+        Dim cleanRoom = Regex.Replace(If(room, "main"), "[^A-Za-z0-9_.-]", "")
+        If cleanApp.Length > 64 Then cleanApp = cleanApp.Substring(0, 64)
+        If cleanRoom.Length > 64 Then cleanRoom = cleanRoom.Substring(0, 64)
+        If cleanApp.Length = 0 Then Throw New ArgumentException("Enter a valid app ID.", NameOf(appId))
+        If cleanRoom.Length = 0 Then cleanRoom = "main"
+        Dim payload = New With {
+            Key .p_hash = authToken.ToLowerInvariant(),
+            Key .p_app = cleanApp,
+            Key .p_room = cleanRoom,
+            Key .p_limit = Math.Max(1, Math.Min(limit, 200))
+        }
+        Dim result As New List(Of CloudSave)()
+        Using doc = JsonDocument.Parse(Await PostJsonAsync("rest/v1/rpc/kh_app_list", payload, Nothing, cancellationToken))
+            Dim rows As JsonElement
+            If Not doc.RootElement.TryGetProperty("rows", rows) OrElse rows.ValueKind <> JsonValueKind.Array Then Return result
+            For Each row In rows.EnumerateArray()
+                If row.ValueKind <> JsonValueKind.Object Then Continue For
+                Dim savedAt As DateTimeOffset
+                Dim atText = JsonStr(row, "at")
+                If Not DateTimeOffset.TryParse(atText, savedAt) Then savedAt = DateTimeOffset.MinValue
+                result.Add(New CloudSave With {
+                    .Key = JsonStr(row, "k"),
+                    .Value = JsonStr(row, "v"),
+                    .SavedAt = savedAt,
+                    .ModifiedBy = JsonStr(row, "by")
+                })
+            Next
+        End Using
+        Return result.OrderByDescending(Function(item) item.SavedAt).ToList()
+    End Function
+
+    Public Async Function SetRecoveryEmailAsync(authToken As String, email As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.SetRecoveryEmailAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in first.")
+        Dim cleanEmail = If(email, "").Trim()
+        If cleanEmail.Length > 254 OrElse Not Regex.IsMatch(cleanEmail, "^[^\s@]+@[^\s@]+\.[^\s@]{2,}$") Then Throw New ValidationException("Enter a valid recovery email.")
+        Await PostJsonAsync("rest/v1/rpc/kh_recovery_set", New With {
+            Key .p_hash = authToken.ToLowerInvariant(),
+            Key .p_email = cleanEmail
+        }, Nothing, cancellationToken)
+    End Function
+
+    Public Async Function FetchModeratorStatsAsync(moderatorCode As String, cancellationToken As CancellationToken) As Task(Of ModeratorStats) Implements IKindleHubApiClient.FetchModeratorStatsAsync
+        If String.IsNullOrWhiteSpace(moderatorCode) Then Throw New ValidationException("Enter a moderator code.")
+        Using doc = JsonDocument.Parse(Await PostJsonAsync("rest/v1/rpc/kh_mod_stats", New With {Key .p_token = moderatorCode.Trim()}, Nothing, cancellationToken))
+            Dim root = doc.RootElement
+            Return New ModeratorStats With {
+                .Level = JsonStr(root, "level"),
+                .Users = JsonInt(root, "users"),
+                .OnlineNow = JsonInt(root, "onlineNow"),
+                .VisitsToday = JsonInt(root, "visitsToday"),
+                .Visitors7d = JsonInt(root, "visitors7d"),
+                .Messages = JsonInt(root, "messages"),
+                .Groups = JsonInt(root, "groups"),
+                .FeedbackOpen = JsonInt(root, "feedbackOpen"),
+                .AppsPending = If(root.TryGetProperty("appsPending", Nothing), CType(JsonInt(root, "appsPending"), Integer?), Nothing)
+            }
+        End Using
+    End Function
+
+    Public Async Function ClaimModeratorCodeAsync(authToken As String, displayName As String, inviteCode As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.ClaimModeratorCodeAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in first.")
+        Dim code = If(inviteCode, "").Trim().ToUpperInvariant()
+        If code.Length < 4 OrElse code.Length > 128 Then Throw New ValidationException("Enter a valid invite code.")
+        Dim codeHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code))).ToLowerInvariant()
+        Await PostJsonAsync("rest/v1/rpc/kh_mod_claim", New With {
+            Key .p_code_hash = codeHash,
+            Key .p_name = TrimStr(If(displayName, "Reader"), 60),
+            Key .p_uid = authToken.Substring(0, 16).ToLowerInvariant()
+        }, Nothing, cancellationToken)
+    End Function
+
+    Public Async Function SubmitModeratorApplicationAsync(authToken As String, displayName As String, timeUsing As String, ageRange As String, reason As String, priorExperience As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.SubmitModeratorApplicationAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in first.")
+        Dim why = TrimStr(If(reason, ""), 700)
+        If why.Length < 20 Then Throw New ValidationException("Please write at least a sentence about why you want to help.")
+        Dim uid = authToken.Substring(0, 16).ToLowerInvariant()
+        Dim name = TrimStr(If(displayName, "Reader"), 60)
+        Dim text = "[REPORT] [MODAPP] Moderator application" & vbLf &
+                   "Account: " & name & vbLf & "Uid: " & uid & vbLf &
+                   "Using KindleHub: " & TrimStr(timeUsing, 40) & vbLf &
+                   "Age range: " & TrimStr(ageRange, 32) & vbLf &
+                   "Why: " & why.Replace(vbCr, " ").Replace(vbLf, " ") & vbLf &
+                   "Before: " & TrimStr(If(priorExperience, "not given"), 200).Replace(vbCr, " ").Replace(vbLf, " ") & vbLf &
+                   "By: " & name & " (uid=" & uid & ")"
+        Await PostJsonAsync("rest/v1/kh_feedback", New With {
+            Key .id = RelayRooms.ReportId("modapp"),
+            Key .type = "bug",
+            Key .text = LeftOf(text, 1990),
+            Key .votes = 0,
+            Key .date = UtcIso()
+        }, Nothing, cancellationToken)
+    End Function
+
     Public Async Function CreateTopicAsync(request As CreateTopicRequest, authToken As String, displayName As String, cancellationToken As CancellationToken) As Task(Of Group) Implements IKindleHubApiClient.CreateTopicAsync
         If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in first.")
         Dim code = RoomCodes.NewRoomCode()
@@ -822,17 +926,32 @@ Public Class KindleHubApiClient
         Return known.OrderBy(Function(s) s, StringComparer.OrdinalIgnoreCase).ToList()
     End Function
 
-    Public Async Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, avatar As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.PingPresenceAsync
-        ' kh_presence has no game_room column. The official profile JSON uses "g"
-        ' for public game stats, so leave profile untouched rather than writing a
-        ' room code there; merge-upsert preserves profile fields set by the web app.
+    Public Async Function PingPresenceAsync(authToken As String, displayName As String, gameRoom As String, avatar As String, profile As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.PingPresenceAsync
+        ' kh_presence has no game_room column. Public profile data follows the
+        ' official compact profile blob schema in its existing profile column.
         If Not Hex64.IsMatch(If(authToken, "")) Then Return
         Dim uid = authToken.Substring(0, 16).ToLowerInvariant()
-        Dim payload = New With {
-            Key .user_id = uid,
-            Key .display_name = TrimStr(If(displayName, "Reader"), 40),
-            Key .last_seen = UtcIso(),
-            Key .avatar = If(IsProfileAvatarCode(avatar), avatar, "")
+        Dim profileData As JsonObject
+        Try
+            Using doc = JsonDocument.Parse(If(String.IsNullOrWhiteSpace(profile), "{}", profile))
+                If doc.RootElement.ValueKind = JsonValueKind.Object Then
+                    profileData = JsonNode.Parse(doc.RootElement.GetRawText()).AsObject()
+                Else
+                    profileData = New JsonObject()
+                End If
+            End Using
+        Catch
+            profileData = New JsonObject()
+        End Try
+        ' Build a JSON DOM row explicitly. The endpoint validates `profile` as
+        ' an object; keeping it as JsonObject avoids accidentally sending the
+        ' compact JSON text as a quoted string.
+        Dim payload As New JsonObject From {
+            {"user_id", JsonValue.Create(uid)},
+            {"display_name", JsonValue.Create(TrimStr(If(displayName, "Reader"), 40))},
+            {"last_seen", JsonValue.Create(UtcIso())},
+            {"avatar", JsonValue.Create(If(IsProfileAvatarCode(avatar), avatar, ""))},
+            {"profile", profileData}
         }
         Try
             Await PostVoidAsync("rest/v1/kh_presence?on_conflict=user_id", payload, UpsertHeaders(authToken), cancellationToken)
@@ -843,7 +962,7 @@ Public Class KindleHubApiClient
 
     Public Async Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry)) Implements IKindleHubApiClient.FetchPresenceAsync
         Dim cutoff = DateTimeOffset.UtcNow.AddMinutes(-Math.Max(1, minutesActive)).ToString("O")
-        Dim rows = Await GetRowsAsync($"rest/v1/kh_presence?last_seen=gt.{Uri.EscapeDataString(cutoff)}&select=user_id,display_name,last_seen,avatar&order=last_seen.desc&limit=" &
+        Dim rows = Await GetRowsAsync($"rest/v1/kh_presence?last_seen=gt.{Uri.EscapeDataString(cutoff)}&select=user_id,display_name,last_seen,avatar,profile&order=last_seen.desc&limit=" &
                                       Math.Max(1, Math.Min(limit, 100)), cancellationToken)
         Dim list As New List(Of PresenceEntry)()
         If rows Is Nothing Then Return list
@@ -853,6 +972,7 @@ Public Class KindleHubApiClient
                 .UserId = JsonStr(row, "user_id"),
                 .DisplayName = JsonStr(row, "display_name"),
                 .Avatar = If(IsProfileAvatarCode(JsonStr(row, "avatar")), JsonStr(row, "avatar"), ""),
+                .Profile = JsonStr(row, "profile"),
                 .LastSeen = If(d.HasValue, d.Value, DateTimeOffset.MinValue)
             }
             list.Add(p)
@@ -871,6 +991,35 @@ Public Class KindleHubApiClient
             Dim id = JsonStr(row, "user_id")
             Dim avatar = JsonStr(row, "avatar")
             If Regex.IsMatch(id, "^[a-fA-F0-9]{16}$") AndAlso IsProfileAvatarCode(avatar) Then result(id) = avatar
+        Next
+        Return result
+    End Function
+
+    Public Async Function FetchPublicProfilesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, PublicProfileDetails)) Implements IKindleHubApiClient.FetchPublicProfilesAsync
+        Dim ids = If(userIds, Enumerable.Empty(Of String)()).Where(Function(id) Regex.IsMatch(If(id, ""), "^[a-fA-F0-9]{16}$")).Distinct(StringComparer.OrdinalIgnoreCase).Take(100).ToList()
+        Dim result As New Dictionary(Of String, PublicProfileDetails)(StringComparer.OrdinalIgnoreCase)
+        If ids.Count = 0 Then Return result
+        Dim filter = String.Join(",", ids.Select(Function(id) id.ToLowerInvariant()))
+        Dim rows = Await GetRowsAsync("rest/v1/kh_presence?user_id=in.(" & filter & ")&select=user_id,avatar,profile&limit=100", cancellationToken)
+        If rows Is Nothing Then Return result
+        For Each row In rows
+            Dim id = JsonStr(row, "user_id")
+            If Not Regex.IsMatch(id, "^[a-fA-F0-9]{16}$") Then Continue For
+            Dim details As New PublicProfileDetails With {
+                .Avatar = If(IsProfileAvatarCode(JsonStr(row, "avatar")), JsonStr(row, "avatar"), "")
+            }
+            Try
+                Using doc = JsonDocument.Parse(JsonStr(row, "profile"))
+                    If doc.RootElement.ValueKind = JsonValueKind.Object Then
+                        details.ProfileFrame = JsonStr(doc.RootElement, "fr")
+                        details.NameStyle = JsonStr(doc.RootElement, "ns")
+                        details.Role = JsonStr(doc.RootElement, "r")
+                        details.Plan = JsonStr(doc.RootElement, "pl")
+                    End If
+                End Using
+            Catch
+            End Try
+            result(id) = details
         Next
         Return result
     End Function
@@ -1105,6 +1254,15 @@ Public Class KindleHubApiClient
         Catch
         End Try
         Return ""
+    End Function
+
+    Private Shared Function JsonInt(el As JsonElement, name As String) As Integer
+        Dim child As JsonElement
+        If el.ValueKind = JsonValueKind.Object AndAlso el.TryGetProperty(name, child) AndAlso child.ValueKind = JsonValueKind.Number Then
+            Dim value As Integer
+            If child.TryGetInt32(value) Then Return value
+        End If
+        Return 0
     End Function
 
     Private Shared Function JsonBool(el As JsonElement, name As String) As Boolean

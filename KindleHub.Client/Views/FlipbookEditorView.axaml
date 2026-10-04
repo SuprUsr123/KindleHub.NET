@@ -71,6 +71,7 @@
 
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <TextBox Text="{Binding FlipbookName, Mode=TwoWay}" Width="190" PlaceholderText="Name your flipbook"/>
+                    <Button Content="Save to Community" Command="{Binding SaveCommunityCommand}" IsVisible="{Binding CanSaveToCommunity}" Width="132" Classes="small"/>
                     <Button Content="Send to chat" Command="{Binding SendCommand}" Width="110" Classes="small primary"/>
                     <Button Content="Copy code" Command="{Binding CopyCodeCommand}" Width="92" Classes="small"/>
                     <Button Content="Close" Command="{Binding CloseCommand}" Width="70" Classes="small"/>
