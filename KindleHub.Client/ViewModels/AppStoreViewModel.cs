@@ -13,6 +13,25 @@ namespace KindleHub.Client.ViewModels;
 
 public class AppStoreViewModel : ViewModelBase
 {
+    private const string StandaloneAppShim = """
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'">
+        <script>(function(){
+          var scope=__KH_SCOPE__, prefix="kh_app_"+scope+"_", memory={}, nativeStore=null;
+          try { nativeStore=window.localStorage; var probe=prefix+"probe"; nativeStore.setItem(probe,"1"); nativeStore.removeItem(probe); } catch(e) { nativeStore=null; }
+          function get(k){k=prefix+String(k);try{return nativeStore?nativeStore.getItem(k):(Object.prototype.hasOwnProperty.call(memory,k)?memory[k]:null);}catch(e){return Object.prototype.hasOwnProperty.call(memory,k)?memory[k]:null;}}
+          function set(k,v){k=prefix+String(k);v=String(v);memory[k]=v;try{if(nativeStore)nativeStore.setItem(k,v);}catch(e){}}
+          function remove(k){k=prefix+String(k);delete memory[k];try{if(nativeStore)nativeStore.removeItem(k);}catch(e){}}
+          function keys(){var out={},i,k;try{if(nativeStore)for(i=0;i<nativeStore.length;i++){k=nativeStore.key(i);if(k&&k.indexOf(prefix)===0)out[k]=1;}}catch(e){}for(k in memory)if(Object.prototype.hasOwnProperty.call(memory,k)&&k.indexOf(prefix)===0)out[k]=1;return Object.keys(out);}
+          var store={getItem:get,setItem:set,removeItem:remove,key:function(i){var a=keys();return i>=0&&i<a.length?a[i].slice(prefix.length):null;},clear:function(){var a=keys(),i;for(i=0;i<a.length;i++)remove(a[i].slice(prefix.length));}};
+          try{Object.defineProperty(store,"length",{get:function(){return keys().length;}});Object.defineProperty(window,"localStorage",{configurable:true,value:store});Object.defineProperty(window,"sessionStorage",{configurable:true,value:store});}catch(e){}
+          window._khRunSave=window._khRunSave||function(k,v){try{store.setItem("run:"+k,JSON.stringify(v==null?null:v));}catch(e){}};
+          window._khRunLoad=window._khRunLoad||function(k){try{var v=store.getItem("run:"+k);return v==null?null:JSON.parse(v);}catch(e){return null;}};
+          window.NOW=window.NOW||function(){return new Date();};window.saveGame=window.saveGame||function(){};
+          function box(m,extra){try{var old=document.getElementById("__kh_notice");if(old)old.parentNode.removeChild(old);var d=document.createElement("div"),c=document.createElement("div"),t=document.createElement("div"),b=document.createElement("button");d.id="__kh_notice";d.style.cssText="position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.48);font-family:inherit";c.style.cssText="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:82%;min-width:190px;background:#fff;color:#111;border:2px solid #111;border-radius:10px;padding:16px;text-align:center";t.style.cssText="font-size:15px;line-height:1.45;margin-bottom:14px;overflow-wrap:anywhere";t.appendChild(document.createTextNode(String(m==null?"":m)));c.appendChild(t);if(extra)c.appendChild(extra);b.type="button";b.appendChild(document.createTextNode("OK"));b.style.cssText="font:inherit;font-weight:700;padding:9px 26px;min-height:42px;border:0;border-radius:8px;background:#111;color:#fff";b.onclick=function(){if(d.parentNode)d.parentNode.removeChild(d);};c.appendChild(b);d.appendChild(c);(document.body||document.documentElement).appendChild(d);b.focus();}catch(e){}}
+          window.alert=function(m){box(m);};window.confirm=function(m){box(m);return true;};window.prompt=function(m,d){box(m);return d==null?"":String(d);};
+        })();</script>
+        """;
+
     private readonly KindleHubCore _core;
     private readonly ILogger<AppStoreViewModel> _logger;
 
@@ -181,8 +200,30 @@ public class AppStoreViewModel : ViewModelBase
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KindleHubPro", "apps");
         Directory.CreateDirectory(dir);
         var htmlPath = Path.Combine(dir, safe + ".html");
-        await File.WriteAllTextAsync(htmlPath, downloaded.Html ?? "", ct);
+        var html = AddStandaloneAppSupport(downloaded.Html ?? "", appId);
+        await File.WriteAllTextAsync(htmlPath, html, ct);
         return htmlPath;
+    }
+
+    private static string AddStandaloneAppSupport(string html, string appId)
+    {
+        var scope = System.Text.Json.JsonSerializer.Serialize(new string(appId.Where(char.IsLetterOrDigit).Take(48).ToArray()));
+        var shim = StandaloneAppShim.Replace("__KH_SCOPE__", scope, StringComparison.Ordinal);
+        var head = html.IndexOf("<head", StringComparison.OrdinalIgnoreCase);
+        if (head >= 0)
+        {
+            var end = html.IndexOf('>', head);
+            if (end >= 0) return html.Insert(end + 1, shim);
+        }
+
+        var htmlTag = html.IndexOf("<html", StringComparison.OrdinalIgnoreCase);
+        if (htmlTag >= 0)
+        {
+            var end = html.IndexOf('>', htmlTag);
+            if (end >= 0) return html.Insert(end + 1, "<head>" + shim + "</head>");
+        }
+
+        return "<!doctype html><html><head><meta charset=\"utf-8\">" + shim + "</head><body>" + html + "</body></html>";
     }
 
     // ── publish from a single HTML file, or straight from the clipboard ─────
