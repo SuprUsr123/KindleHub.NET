@@ -29,7 +29,6 @@
             <StackPanel Orientation="Horizontal" Spacing="6">
                 <Button Content="Posts" Command="{Binding SectionCommand}" CommandParameter="Posts"/>
                 <Button Content="People" Command="{Binding SectionCommand}" CommandParameter="People"/>
-                <Button Content="Friends" Command="{Binding SectionCommand}" CommandParameter="Friends"/>
                 <Button Content="Memes" Command="{Binding SectionCommand}" CommandParameter="Memes"/>
                 <Button Content="Cloud saves" Command="{Binding SectionCommand}" CommandParameter="Cloud saves"/>
                 <Button Content="Stars &amp; notes" Command="{Binding SectionCommand}" CommandParameter="Stars &amp; notes"/>
@@ -43,6 +42,19 @@
             <StackPanel Spacing="12">
                 <!-- Neighbourhood posts use the official rolling daily room format. -->
                 <StackPanel IsVisible="{Binding IsPostsSection}" Spacing="10">
+                    <Border IsVisible="{Binding IsReportingPost}" Padding="10" CornerRadius="8"
+                            Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Report this post" FontWeight="Bold"/>
+                            <TextBox Text="{Binding PostReportNote}" PlaceholderText="What is wrong with this post?"
+                                     AcceptsReturn="True" TextWrapping="Wrap" MinHeight="55" MaxLength="300"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+                                <Button Content="Cancel" Command="{Binding CancelPostReportCommand}"/>
+                                <Button Content="Send report" Command="{Binding SubmitPostReportCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
                     <Border Padding="12" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
                             BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
                         <StackPanel Spacing="8">
@@ -95,6 +107,59 @@
                                                Stretch="Uniform" HorizontalAlignment="Left"/>
                                         <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap" IsVisible="{Binding ShowPlainText}"/>
                                         <TextBlock Text="Important" IsVisible="{Binding Important}" Foreground="Orange" FontSize="11"/>
+                                        <StackPanel IsVisible="{Binding IsMine}" Orientation="Horizontal" Spacing="5">
+                                            <Button Content="Edit" Padding="7,2"
+                                                    Command="{Binding $parent[UserControl].DataContext.EditPostCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Content="Delete" Padding="7,2"
+                                                    Command="{Binding $parent[UserControl].DataContext.DeletePostCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                        </StackPanel>
+                                        <StackPanel IsVisible="{Binding IsCommunityPostEditing}" Spacing="5">
+                                            <TextBox Text="{Binding CommunityPostEditDraft}" AcceptsReturn="True" TextWrapping="Wrap"
+                                                     MinHeight="60" MaxLength="800"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="5">
+                                                <Button Content="Cancel" Command="{Binding $parent[UserControl].DataContext.CancelPostEditCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                                <Button Content="Save edit" Command="{Binding $parent[UserControl].DataContext.SavePostEditCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
+                                            <Button Content="👍 Upvote" Padding="8,3"
+                                                    Command="{Binding $parent[UserControl].DataContext.UpvotePostCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Content="Comments" Padding="8,3"
+                                                    Command="{Binding $parent[UserControl].DataContext.TogglePostCommentsCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                            <Button Content="Report" Padding="8,3"
+                                                    Command="{Binding $parent[UserControl].DataContext.ReportPostCommand}"
+                                                    CommandParameter="{Binding}"/>
+                                            <TextBlock Text="{Binding ReactionsText}" FontSize="11" Foreground="Gray"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <Expander Header="Post comments" IsExpanded="{Binding CommunityCommentsExpanded}">
+                                            <StackPanel Spacing="6" Margin="0,4,0,0">
+                                                <ItemsControl ItemsSource="{Binding CommunityComments}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Padding="7" CornerRadius="5" Margin="0,2"
+                                                                    Background="{DynamicResource ControlFillColorSecondary}">
+                                                                <StackPanel Spacing="2">
+                                                                    <TextBlock Text="{Binding DisplayName}" FontSize="11" FontWeight="SemiBold"/>
+                                                                    <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBox Text="{Binding CommunityCommentDraft}" PlaceholderText="Write a comment…"
+                                                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="44" MaxLength="500"/>
+                                                <Button Content="Post comment" HorizontalAlignment="Right"
+                                                        Command="{Binding $parent[UserControl].DataContext.CommentOnPostCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                            </StackPanel>
+                                        </Expander>
                                     </StackPanel>
                                 </Border>
                             </DataTemplate>
@@ -131,11 +196,33 @@
                                         <TextBlock Text="{Binding ProfileFrame}" FontSize="11" Foreground="Gray"/>
                                         <TextBlock Text="{Binding NameStyle}" FontSize="10" Foreground="Gray" IsVisible="{Binding HasNameStyle}"/>
                                         <TextBlock Text="{Binding LastSeen}" FontSize="10" Foreground="Gray"/>
+                                        <Button Content="View profile" Padding="6,2" HorizontalAlignment="Left"
+                                                Command="{Binding $parent[UserControl].DataContext.ViewMemberProfileCommand}"
+                                                CommandParameter="{Binding}"/>
                                     </StackPanel>
                                 </Grid>
                             </Border>
                         </DataTemplate></ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    <Border IsVisible="{Binding HasSelectedMember}" Padding="12" CornerRadius="8"
+                            Background="{DynamicResource ControlFillColorDefault}"
+                            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="{Binding SelectedMember.DisplayName}" FontWeight="Bold" FontSize="18"/>
+                            <TextBlock Text="{Binding SelectedMember.Role}" Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
+                            <TextBlock Text="{Binding SelectedMember.ProfileFrame, StringFormat='Frame: {0}'}"/>
+                            <TextBlock Text="{Binding SelectedMember.NameStyle, StringFormat='Name effect: {0}'}" IsVisible="{Binding SelectedMember.HasNameStyle}"/>
+                            <TextBlock Text="{Binding SelectedMember.Pronouns, StringFormat='Pronouns: {0}'}" IsVisible="{Binding SelectedMember.HasPronouns}"/>
+                            <TextBlock Text="{Binding SelectedMember.Hobbies, StringFormat='Interests: {0}'}" TextWrapping="Wrap" IsVisible="{Binding SelectedMember.HasHobbies}"/>
+                            <TextBlock Text="{Binding SelectedMember.Status, StringFormat='Status: {0}'}" TextWrapping="Wrap" IsVisible="{Binding SelectedMember.HasStatus}"/>
+                            <TextBlock Text="{Binding SelectedMember.Bio}" TextWrapping="Wrap" IsVisible="{Binding SelectedMember.HasBio}"/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Content="Message" Command="{Binding MessageMemberCommand}" CommandParameter="{Binding SelectedMember}"/>
+                                <Button Content="Add friend" Command="{Binding AddMemberFriendCommand}" CommandParameter="{Binding SelectedMember}"/>
+                                <Button Content="Close" Command="{Binding CloseMemberProfileCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <StackPanel IsVisible="{Binding IsFriendsSection}" Spacing="10">
@@ -154,7 +241,7 @@
                     </ItemsControl>
                     <TextBlock Text="Your friends" FontWeight="Bold" FontSize="16" Margin="0,8,0,0"/>
                     <ItemsControl ItemsSource="{Binding Friends}">
-                        <ItemsControl.ItemTemplate><DataTemplate><Border Padding="8" Margin="0,2" BorderThickness="1" BorderBrush="{DynamicResource ControlBorderBrush}" CornerRadius="6"><Grid ColumnDefinitions="*,Auto"><TextBlock Text="{Binding Name}" VerticalAlignment="Center"/><Button Grid.Column="1" Content="Remove" Command="{Binding $parent[UserControl].DataContext.RemoveFriendCommand}" CommandParameter="{Binding}"/></Grid></Border></DataTemplate></ItemsControl.ItemTemplate>
+                        <ItemsControl.ItemTemplate><DataTemplate><Border Padding="8" Margin="0,2" BorderThickness="1" BorderBrush="{DynamicResource ControlBorderBrush}" CornerRadius="6"><Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="5"><TextBlock Text="{Binding Name}" VerticalAlignment="Center"/><Button Grid.Column="1" Content="Message" Command="{Binding $parent[UserControl].DataContext.MessageFriendCommand}" CommandParameter="{Binding}"/><Button Grid.Column="2" Content="Remove" Command="{Binding $parent[UserControl].DataContext.RemoveFriendCommand}" CommandParameter="{Binding}"/></Grid></Border></DataTemplate></ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </StackPanel>
 
@@ -193,6 +280,12 @@
                                             <TextBox Text="{Binding TopText}" Width="58" MaxLength="5" PlaceholderText="0–480"/>
                                             <ComboBox ItemsSource="{Binding AnchorOptions}" SelectedItem="{Binding At}"
                                                       MinWidth="82" ToolTip.Tip="Text alignment within its area"/>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="Text size" VerticalAlignment="Center" FontSize="11"/>
+                                            <Slider Minimum="8" Maximum="100" Value="{Binding FontSize}" Width="150" TickFrequency="4"
+                                                    IsSnapToTickEnabled="False"/>
+                                            <TextBlock Text="{Binding FontSize, StringFormat='{}{0:0}'}" VerticalAlignment="Center" FontSize="11"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>

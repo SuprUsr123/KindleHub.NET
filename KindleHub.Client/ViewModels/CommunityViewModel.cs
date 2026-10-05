@@ -45,6 +45,9 @@ public class CommunityViewModel : ViewModelBase
     private string _joinCode = "";
     private string _section = "Posts";
     private string _postText = "";
+    private Message? _reportingPost;
+    private string _postReportNote = "";
+    private CommunityMember? _selectedMember;
     private string _cloudAppId = "stronghold";
     private string _cloudRoom = "world";
     private MemeSceneOption _selectedMemeScene = null!;
@@ -89,6 +92,11 @@ public class CommunityViewModel : ViewModelBase
     }
 
     public ObservableCollection<Message> Posts { get; } = new();
+    public Message? ReportingPost { get => _reportingPost; private set { if (SetProperty(ref _reportingPost, value)) OnPropertyChanged(nameof(IsReportingPost)); } }
+    public bool IsReportingPost => ReportingPost != null;
+    public CommunityMember? SelectedMember { get => _selectedMember; private set { if (SetProperty(ref _selectedMember, value)) OnPropertyChanged(nameof(HasSelectedMember)); } }
+    public bool HasSelectedMember => SelectedMember != null;
+    public string PostReportNote { get => _postReportNote; set => SetProperty(ref _postReportNote, value); }
     public ObservableCollection<Message> StarredMessages { get; } = new();
     public ObservableCollection<Message> ImportantMessages { get; } = new();
     public ObservableCollection<CommunityNote> Notes { get; } = new();
@@ -98,7 +106,7 @@ public class CommunityViewModel : ViewModelBase
     public ObservableCollection<FriendEntry> Friends { get; } = new();
     public ObservableCollection<FriendEntry> FriendRequests { get; } = new();
     public ObservableCollection<CloudSave> CloudSaves { get; } = new();
-    public string[] Sections { get; } = { "Posts", "People", "Friends", "Memes", "Cloud saves", "Stars & notes", "Flipbooks", "My profile", "Topics" };
+    public string[] Sections { get; } = { "Posts", "People", "Memes", "Cloud saves", "Stars & notes", "Flipbooks", "My profile", "Topics" };
     public MemeSceneOption[] MemeSceneOptions { get; } = MemeSceneOption.All;
     public ObservableCollection<OutsideMemeTemplate> OutsideMemeTemplates { get; } = new();
     public OutsideMemeTemplate? SelectedOutsideMemeTemplate
@@ -124,8 +132,9 @@ public class CommunityViewModel : ViewModelBase
             if (!SetProperty(ref _section, value)) return;
             OnPropertyChanged(nameof(IsPostsSection)); OnPropertyChanged(nameof(IsStarsNotesSection));
             OnPropertyChanged(nameof(IsFlipbooksSection)); OnPropertyChanged(nameof(IsProfileSection)); OnPropertyChanged(nameof(IsTopicsSection));
-            OnPropertyChanged(nameof(IsPeopleSection));
+            OnPropertyChanged(nameof(IsPeopleSection)); OnPropertyChanged(nameof(IsFriendsSection));
             OnPropertyChanged(nameof(IsMemesSection)); OnPropertyChanged(nameof(IsCloudSavesSection));
+            if (IsFriendsSection) _ = RefreshFriendsSectionAsync();
         }
     }
     public bool IsPostsSection => Section == "Posts";
@@ -187,6 +196,16 @@ public class CommunityViewModel : ViewModelBase
     public RelayCommand RefreshCommunityCommand { get; }
     public RelayCommand<string> SectionCommand { get; }
     public RelayCommand PostCommand { get; }
+    public RelayCommand<Message> TogglePostCommentsCommand { get; }
+    public RelayCommand<Message> CommentOnPostCommand { get; }
+    public RelayCommand<Message> UpvotePostCommand { get; }
+    public RelayCommand<Message> ReportPostCommand { get; }
+    public RelayCommand<Message> EditPostCommand { get; }
+    public RelayCommand<Message> SavePostEditCommand { get; }
+    public RelayCommand<Message> CancelPostEditCommand { get; }
+    public RelayCommand<Message> DeletePostCommand { get; }
+    public RelayCommand SubmitPostReportCommand { get; }
+    public RelayCommand CancelPostReportCommand { get; }
     public RelayCommand SaveProfileCommand { get; }
     public RelayCommand EditAvatarCommand { get; }
     public RelayCommand CreateFlipbookCommand { get; }
@@ -197,6 +216,11 @@ public class CommunityViewModel : ViewModelBase
     public RelayCommand<FriendEntry> AcceptFriendCommand { get; }
     public RelayCommand<FriendEntry> DeclineFriendCommand { get; }
     public RelayCommand<FriendEntry> RemoveFriendCommand { get; }
+    public RelayCommand<FriendEntry> MessageFriendCommand { get; }
+    public RelayCommand<CommunityMember> ViewMemberProfileCommand { get; }
+    public RelayCommand CloseMemberProfileCommand { get; }
+    public RelayCommand<CommunityMember> MessageMemberCommand { get; }
+    public RelayCommand<CommunityMember> AddMemberFriendCommand { get; }
     public event Action? OpenFlipbookEditorRequested;
 
     public CommunityViewModel(KindleHubCore core, ILogger<CommunityViewModel> logger, MainViewModel nav)
@@ -218,6 +242,21 @@ public class CommunityViewModel : ViewModelBase
         RefreshCommunityCommand = new RelayCommand(async () => await RefreshCommunityAsync());
         SectionCommand = new RelayCommand<string>(section => Section = section ?? "Posts");
         PostCommand = new RelayCommand(async () => await CreatePostAsync(), () => !string.IsNullOrWhiteSpace(PostText));
+        TogglePostCommentsCommand = new RelayCommand<Message>(post => { if (post != null) post.CommunityCommentsExpanded = !post.CommunityCommentsExpanded; });
+        CommentOnPostCommand = new RelayCommand<Message>(async post => await CommentOnPostAsync(post), post => post != null);
+        UpvotePostCommand = new RelayCommand<Message>(async post => await UpvotePostAsync(post), post => post != null);
+        ReportPostCommand = new RelayCommand<Message>(post => { if (post != null) { ReportingPost = post; PostReportNote = ""; } });
+        EditPostCommand = new RelayCommand<Message>(post =>
+        {
+            if (post == null || !post.IsMine || string.IsNullOrEmpty(post.OwnerSecret)) return;
+            post.CommunityPostEditDraft = post.Text ?? "";
+            post.IsCommunityPostEditing = true;
+        });
+        SavePostEditCommand = new RelayCommand<Message>(async post => await SavePostEditAsync(post));
+        CancelPostEditCommand = new RelayCommand<Message>(post => { if (post != null) post.IsCommunityPostEditing = false; });
+        DeletePostCommand = new RelayCommand<Message>(async post => await DeletePostAsync(post));
+        SubmitPostReportCommand = new RelayCommand(async () => await SubmitPostReportAsync(), () => ReportingPost != null && !string.IsNullOrWhiteSpace(PostReportNote));
+        CancelPostReportCommand = new RelayCommand(() => { ReportingPost = null; PostReportNote = ""; });
         SaveProfileCommand = new RelayCommand(async () => await SaveProfileAsync());
         EditAvatarCommand = new RelayCommand(() => _nav.NavigateTo("Settings"));
         CreateFlipbookCommand = new RelayCommand(() => OpenFlipbookEditorRequested?.Invoke());
@@ -228,6 +267,11 @@ public class CommunityViewModel : ViewModelBase
         AcceptFriendCommand = new RelayCommand<FriendEntry>(async friend => { if (friend != null) await ResolveFriendRequestAsync(friend, true); }, friend => friend != null);
         DeclineFriendCommand = new RelayCommand<FriendEntry>(async friend => { if (friend != null) await ResolveFriendRequestAsync(friend, false); }, friend => friend != null);
         RemoveFriendCommand = new RelayCommand<FriendEntry>(async friend => { if (friend != null) await RemoveFriendAsync(friend); }, friend => friend != null);
+        MessageFriendCommand = new RelayCommand<FriendEntry>(async friend => { if (friend != null) await MessageFriendAsync(friend); }, friend => friend != null);
+        ViewMemberProfileCommand = new RelayCommand<CommunityMember>(member => SelectedMember = member);
+        CloseMemberProfileCommand = new RelayCommand(() => SelectedMember = null);
+        MessageMemberCommand = new RelayCommand<CommunityMember>(async member => { if (member != null) await MessageMemberAsync(member); });
+        AddMemberFriendCommand = new RelayCommand<CommunityMember>(async member => { if (member != null) await SendFriendRequestAsync(new FriendUser { Hash = member.UserId, Name = member.DisplayName }); });
 
         SelectedMemeScene = MemeSceneOptions[0];
         LoadProfile();
@@ -292,6 +336,39 @@ public class CommunityViewModel : ViewModelBase
         if (!string.IsNullOrEmpty(entry.MessageId) && !tombs.Any(n => string.Equals((string?)n, entry.MessageId, StringComparison.Ordinal))) tombs.Add(entry.MessageId);
         await SaveFriendsAsync(friends, requests, tombs);
     }
+
+    private async Task MessageFriendAsync(FriendEntry entry)
+    {
+        if (!_core.IsAuthenticated) { StatusText = "Sign in to message friends."; return; }
+        var targetId = string.IsNullOrWhiteSpace(entry.UserId) ? entry.Hash : entry.UserId;
+        try
+        {
+            var expectedA = ("DM: " + (_core.CurrentProfile?.DisplayName ?? "Reader") + " & " + entry.Name).Trim();
+            var expectedB = ("DM: " + entry.Name + " & " + (_core.CurrentProfile?.DisplayName ?? "Reader")).Trim();
+            var existing = _core.GetOpenedMessageRooms().FirstOrDefault(room =>
+                string.Equals(room.Name, expectedA, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(room.Name, expectedB, StringComparison.OrdinalIgnoreCase));
+            var group = await _core.OpenDmAsync(targetId, entry.Name, existing?.Code ?? "", CancellationToken.None);
+            ChatPrefsStore.Current.RememberDmRoom(targetId, group.Code);
+            RoomRegistry.Open(group);
+            _nav.NavigateTo("Messages");
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Open friend chat failed"); StatusText = "Couldn't open that chat."; }
+    }
+
+    private async Task MessageMemberAsync(CommunityMember member)
+    {
+        if (!_core.IsAuthenticated || string.IsNullOrWhiteSpace(member.UserId)) { StatusText = "Sign in to message this member."; return; }
+        try
+        {
+            var known = ChatPrefsStore.Current.DmRoomFor(member.UserId);
+            var group = await _core.OpenDmAsync(member.UserId, member.DisplayName, known ?? "", CancellationToken.None);
+            ChatPrefsStore.Current.RememberDmRoom(member.UserId, group.Code);
+            RoomRegistry.Open(group);
+            _nav.NavigateTo("Messages");
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Open member chat failed"); StatusText = "Couldn't open that chat."; }
+    }
     private async Task PollFriendInboxAsync()
     {
         if (!_core.IsAuthenticated) return;
@@ -323,6 +400,19 @@ public class CommunityViewModel : ViewModelBase
             }
         }
         if (changed) await SaveFriendsAsync(friends, requests, tombs); else LoadFriends();
+    }
+
+    private async Task RefreshFriendsSectionAsync()
+    {
+        if (!_core.IsAuthenticated) { LoadFriends(); return; }
+        try
+        {
+            var cloudState = await _core.FetchAccountStateAsync(CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(cloudState)) _core.SetAccountState(cloudState);
+        }
+        catch (Exception ex) { _logger.LogDebug(ex, "Could not refresh the synced friends list"); }
+        LoadFriends();
+        await PollFriendInboxAsync();
     }
     public sealed class FriendEntry
     {
@@ -481,6 +571,7 @@ public class CommunityViewModel : ViewModelBase
         private double _top;
         private double _width;
         private double _height;
+        private double _fontSize = 48;
         public MemeCaptionDefinition Definition { get; }
         public string Label => Definition.Label;
         public string Text { get => _text; set => SetProperty(ref _text, value); }
@@ -488,6 +579,17 @@ public class CommunityViewModel : ViewModelBase
         public double Top => _top;
         public double Width => _width;
         public double Height => _height;
+        public double FontSize
+        {
+            get => _fontSize;
+            set
+            {
+                var clamped = Math.Clamp(value, 8, 100);
+                if (Math.Abs(_fontSize - clamped) < 0.01) return;
+                _fontSize = clamped;
+                OnPropertyChanged(nameof(FontSize));
+            }
+        }
         public string[] AnchorOptions { get; } = { "top", "middle", "bottom" };
         public string LeftText
         {
@@ -672,6 +774,14 @@ public class CommunityViewModel : ViewModelBase
         public string NameStyle { get; }
         public string LastSeen { get; }
         public bool HasNameStyle => !string.IsNullOrEmpty(NameStyle);
+        public string Pronouns { get; } = "";
+        public string Hobbies { get; } = "";
+        public string Bio { get; } = "";
+        public string Status { get; } = "";
+        public bool HasPronouns => !string.IsNullOrWhiteSpace(Pronouns);
+        public bool HasHobbies => !string.IsNullOrWhiteSpace(Hobbies);
+        public bool HasBio => !string.IsNullOrWhiteSpace(Bio);
+        public bool HasStatus => !string.IsNullOrWhiteSpace(Status);
 
         public CommunityMember(PresenceEntry entry, object? frameImage)
         {
@@ -694,6 +804,8 @@ public class CommunityViewModel : ViewModelBase
                 {
                     frame = ReadText(root, "fr"); role = ReadText(root, "r");
                     plan = ReadText(root, "pl"); nameStyle = ReadText(root, "ns");
+                    Pronouns = ReadText(root, "p"); Hobbies = ReadText(root, "h");
+                    Bio = ReadText(root, "b"); Status = ReadText(root, "s");
                 }
             }
             catch { }
@@ -718,18 +830,26 @@ public class CommunityViewModel : ViewModelBase
             var roomCode = NeighbourhoodCode(day);
             try
             {
-                var rows = await _core.FetchMessagesAsync(roomCode, 40, 0, CancellationToken.None);
-                found.AddRange(rows.Where(m => string.IsNullOrEmpty(m.ReplyTo)));
+                found.AddRange(await _core.FetchMessagesAsync(roomCode, 100, 0, CancellationToken.None));
             }
             catch (Exception ex) { _logger.LogDebug(ex, "Neighbourhood day {Day} is unavailable", day); }
         }
-        var posts = found.OrderByDescending(m => m.Timestamp).Take(100).ToList();
+        var posts = found.Where(m => string.IsNullOrEmpty(m.ReplyTo)).OrderByDescending(m => m.Timestamp).Take(100).ToList();
+        var postIds = posts.Select(post => post.Id).ToHashSet(StringComparer.Ordinal);
+        var comments = found.Where(m => !string.IsNullOrEmpty(m.ReplyTo) && postIds.Contains(m.ReplyTo))
+            .GroupBy(m => m.ReplyTo!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.OrderBy(m => m.Timestamp).TakeLast(60).ToList(), StringComparer.Ordinal);
+        foreach (var post in posts)
+        {
+            post.CommunityComments.Clear();
+            if (comments.TryGetValue(post.Id, out var replies))
+                foreach (var reply in replies) post.CommunityComments.Add(reply);
+        }
         try
         {
-            var authors = posts.Select(m => m.UserId).Where(id => !string.IsNullOrWhiteSpace(id))
+            var authors = posts.Concat(posts.SelectMany(post => post.CommunityComments)).Select(m => m.UserId).Where(id => !string.IsNullOrWhiteSpace(id))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var profiles = await _core.FetchPublicProfilesAsync(authors, CancellationToken.None);
-            foreach (var post in posts)
+            foreach (var post in posts.Concat(posts.SelectMany(post => post.CommunityComments)))
             {
                 if (!profiles.TryGetValue(post.UserId ?? "", out var profile)) continue;
                 post.AvatarCode = profile.Avatar ?? "";
@@ -740,12 +860,12 @@ public class CommunityViewModel : ViewModelBase
             }
         }
         catch (Exception ex) { _logger.LogDebug(ex, "Community post profile lookup failed"); }
-        var postFrameIds = posts.Select(post => post.ProfileFrame).Where(id => !string.IsNullOrWhiteSpace(id))
+        var postFrameIds = posts.Concat(posts.SelectMany(post => post.CommunityComments)).Select(post => post.ProfileFrame).Where(id => !string.IsNullOrWhiteSpace(id))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var postFrameTasks = postFrameIds.Select(async id => (Id: id, Image: await ProfileFrameImageLoader.LoadAsync(id))).ToArray();
         var postFrames = (await Task.WhenAll(postFrameTasks))
             .ToDictionary(item => item.Id, item => item.Image, StringComparer.OrdinalIgnoreCase);
-        foreach (var post in posts)
+        foreach (var post in posts.Concat(posts.SelectMany(post => post.CommunityComments)))
             post.ProfileFrameImage = postFrames.GetValueOrDefault(post.ProfileFrame ?? "");
         Posts.Clear();
         foreach (var post in posts) Posts.Add(post);
@@ -841,6 +961,83 @@ public class CommunityViewModel : ViewModelBase
             await RefreshPostsAsync();
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Neighbourhood post failed"); StatusText = "Couldn't publish the post."; }
+    }
+
+    private async Task CommentOnPostAsync(Message? post)
+    {
+        if (post == null || !TryAuthed()) return;
+        var text = (post.CommunityCommentDraft ?? "").Trim();
+        if (text.Length == 0) return;
+        if (text.Length > 500) { StatusText = "Comments are limited to 500 characters."; return; }
+        try
+        {
+            await _core.SendMessageAsync(post.GroupCode, text, false, post.Id, CancellationToken.None);
+            post.CommunityCommentDraft = "";
+            post.CommunityCommentsExpanded = true;
+            StatusText = "Comment posted.";
+            await RefreshPostsAsync();
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Neighbourhood comment failed"); StatusText = "Couldn't post the comment."; }
+    }
+
+    private async Task UpvotePostAsync(Message? post)
+    {
+        if (post == null || !TryAuthed()) return;
+        try
+        {
+            if (await _core.ToggleReactionAsync(post.Id, "👍", CancellationToken.None))
+            {
+                StatusText = "Vote updated.";
+                await RefreshPostsAsync();
+            }
+            else StatusText = "Couldn't update your vote.";
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Neighbourhood upvote failed"); StatusText = "Couldn't update your vote."; }
+    }
+
+    private async Task SubmitPostReportAsync()
+    {
+        var post = ReportingPost;
+        var note = (PostReportNote ?? "").Trim();
+        if (post == null || note.Length == 0 || !TryAuthed()) return;
+        try
+        {
+            var reported = await _core.ReportMessageAsync("Neighbourhood post", note, post, "Neighbourhood", CancellationToken.None);
+            StatusText = reported ? "Reported. A moderator will review it." : "That report could not be sent.";
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Neighbourhood post report failed"); StatusText = "That report could not be sent."; }
+        ReportingPost = null;
+        PostReportNote = "";
+    }
+
+    private async Task SavePostEditAsync(Message? post)
+    {
+        if (post == null || !post.IsMine || string.IsNullOrEmpty(post.OwnerSecret)) return;
+        var text = (post.CommunityPostEditDraft ?? "").Trim();
+        if (text.Length == 0 || text.Length > 800) { StatusText = "Posts must contain 1–800 characters."; return; }
+        try
+        {
+            if (!await _core.EditMessageAsync(post.GroupCode, post.Id, post.OwnerSecret, text, CancellationToken.None))
+            { StatusText = "Couldn't save the post edit."; return; }
+            post.Text = text;
+            post.Edited = true;
+            post.IsCommunityPostEditing = false;
+            StatusText = "Post updated.";
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Neighbourhood post edit failed"); StatusText = "Couldn't save the post edit."; }
+    }
+
+    private async Task DeletePostAsync(Message? post)
+    {
+        if (post == null || !post.IsMine || string.IsNullOrEmpty(post.OwnerSecret)) return;
+        try
+        {
+            if (!await _core.UnsendMessageAsync(post.Id, post.OwnerSecret, CancellationToken.None))
+            { StatusText = "Couldn't delete the post."; return; }
+            Posts.Remove(post);
+            StatusText = "Post deleted.";
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Neighbourhood post deletion failed"); StatusText = "Couldn't delete the post."; }
     }
 
     public async Task PostMemeAsync(byte[] jpegBytes)
@@ -964,13 +1161,16 @@ public class CommunityViewModel : ViewModelBase
 
     public async Task JoinByCodeAsync()
     {
-        if (string.Equals((JoinCode ?? "").Trim(), string.Concat("virtual", "insanity"), StringComparison.OrdinalIgnoreCase))
+        var enteredCode = (JoinCode ?? "").Trim();
+        var codeDigits = new string(enteredCode.Where(char.IsDigit).ToArray());
+        var playVirtualInsanity = string.Equals(enteredCode, string.Concat("virtual", "insanity"), StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(codeDigits, string.Concat("4817", "9141", "0929"), StringComparison.Ordinal);
+        if (playVirtualInsanity)
         {
             SettingsViewModel.NoteFound(string.Concat("virtual", "insanity"));
-            try { Process.Start(new ProcessStartInfo(string.Concat("https://www.youtube.com/watch?v=", "4JkIs", "37a2JE")) { UseShellExecute = true }); } catch { }
-            return;
+            codeDigits = string.Concat("4817", "9141", "0929");
         }
-        var digits = new string((JoinCode ?? "").Where(char.IsDigit).ToArray());
+        var digits = codeDigits;
         if (digits.Length < 12)
         {
             digits = digits.PadLeft(12, '0');
@@ -982,6 +1182,10 @@ public class CommunityViewModel : ViewModelBase
             var group = await _core.JoinGroupByCodeAsync(digits, CancellationToken.None);
             RoomRegistry.Open(group);
             _nav.NavigateTo("Messages");
+            if (playVirtualInsanity)
+            {
+                try { Process.Start(new ProcessStartInfo(string.Concat("https://www.youtube.com/watch?v=", "4JkIs", "37a2JE")) { UseShellExecute = true }); } catch { }
+            }
         }
         catch (Exception ex)
         {

@@ -21,6 +21,7 @@ namespace KindleHub.Client.ViewModels;
 /// </summary>
 public class GamesViewModel : ViewModelBase, IDisposable
 {
+    public static string? PendingInvite { get; set; }
     private readonly KindleHubCore _core;
     private readonly ILogger<GamesViewModel> _logger;
     private Timer? _pollTimer;
@@ -118,6 +119,16 @@ public class GamesViewModel : ViewModelBase, IDisposable
         NewLocalGameCommand = new RelayCommand(() => StartLocalGame(), () => !_matchLive);
         CellCommand = new RelayCommand<TttCell>(async cell => await OnCellAsync(cell), _ => !_matchLive || true);
         _ = RefreshAsync();
+        _ = ConsumePendingInviteAsync();
+    }
+
+    private async Task ConsumePendingInviteAsync()
+    {
+        var code = PendingInvite;
+        PendingInvite = null;
+        if (string.IsNullOrWhiteSpace(code)) return;
+        JoinRoomShort = code;
+        await JoinOnlineAsync();
     }
 
     // ─── Lobby ──────────────────────────────────────────────────────────────

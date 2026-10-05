@@ -312,6 +312,25 @@ Public Module AccountState
         Return root.ToJsonString()
     End Function
 
+    Public Function WithLeftMessageRoom(stateJson As String, code As String) As String
+        If String.IsNullOrWhiteSpace(code) Then Return If(stateJson, "{}")
+        Dim root = TryParse(stateJson)
+        If root Is Nothing Then root = New JsonObject()
+        Dim rooms = TryCast(root("msgGroups"), JsonArray)
+        If rooms IsNot Nothing Then
+            For i = rooms.Count - 1 To 0 Step -1
+                If TypeOf rooms(i) Is JsonObject AndAlso String.Equals(NodeText(rooms(i)("code")), code, StringComparison.Ordinal) Then rooms.RemoveAt(i)
+            Next
+        End If
+        Dim left = TryCast(root("leftGroups"), JsonArray)
+        If left Is Nothing Then
+            left = New JsonArray()
+            root("leftGroups") = left
+        End If
+        If Not left.Any(Function(item) String.Equals(NodeText(item), code, StringComparison.Ordinal)) Then left.Add(JsonValue.Create(code))
+        Return root.ToJsonString()
+    End Function
+
     Private Function TryParse(stateJson As String) As JsonObject
         If String.IsNullOrWhiteSpace(stateJson) Then Return Nothing
         Try

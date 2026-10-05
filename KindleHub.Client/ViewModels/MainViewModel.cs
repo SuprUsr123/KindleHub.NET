@@ -175,9 +175,9 @@ public class MainViewModel : ViewModelBase
             catch (Exception ex) { _logger.LogDebug(ex, "View cleanup failed for {View}", previous.GetType().Name); }
         }
 
-        Console.WriteLine($"[KindleHub Debug] NavigateTo('{page}') -> {target.GetType().Name}");
+        if (App.DebugMode) Console.WriteLine($"[KindleHub Debug] NavigateTo('{page}') -> {target.GetType().Name}");
         CurrentView = target;
-        Console.WriteLine($"[KindleHub Debug] CurrentView is now: {CurrentView?.GetType().Name}");
+        if (App.DebugMode) Console.WriteLine($"[KindleHub Debug] CurrentView is now: {CurrentView?.GetType().Name}");
     }
 
     public void ShowOnlineGamePage(ArcadeViewModel viewModel)

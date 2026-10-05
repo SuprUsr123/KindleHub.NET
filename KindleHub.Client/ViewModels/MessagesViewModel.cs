@@ -11,6 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json.Nodes;
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Threading;
@@ -48,6 +49,7 @@ public class MessagesViewModel : ViewModelBase, IDisposable
 
     private readonly KindleHubCore _core;
     private readonly ILogger<MessagesViewModel> _logger;
+    private readonly MainViewModel _nav;
     private readonly Timer _pollTimer;
     private readonly SemaphoreSlim _roomSyncLock = new(1, 1);
     private readonly SemaphoreSlim _avatarHydrationLock = new(1, 1);
@@ -55,6 +57,7 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     private readonly LinkedList<string> _roomCacheLru = new();
     private readonly HashSet<string> _seenInvites = new(StringComparer.Ordinal);
     private readonly HashSet<string> _seenChatRequests = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _seenGameInviteIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _declinedChatRequests = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarCodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PublicProfileDetails> _profileDetails = new(StringComparer.OrdinalIgnoreCase);
@@ -78,6 +81,9 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     private string _newMessageText = "";
     private string _joinCode = "";
     private string _chatSearchText = "";
+    private string _friendSearchText = "";
+    private string _groupChatName = "";
+    private string _roomNameDraft = "";
     private bool _isLoading;
     private bool _sending;
     private string _statusText = "Select a room.";
@@ -118,8 +124,22 @@ public class MessagesViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<Group> Groups { get => _groups; set => SetProperty(ref _groups, value); }
     public ObservableCollection<FriendUser> ChatSearchResults { get; } = new();
+    public ObservableCollection<FriendUser> GroupChatInvitees { get; } = new();
+    public ObservableCollection<FriendUser> FriendSearchResults { get; } = new();
+    public ObservableCollection<FriendEntry> Friends { get; } = new();
+    public ObservableCollection<FriendEntry> FriendRequests { get; } = new();
+    public string GroupChatName { get => _groupChatName; set => SetProperty(ref _groupChatName, value); }
+    public string RoomNameDraft { get => _roomNameDraft; set => SetProperty(ref _roomNameDraft, value); }
     public ObservableCollection<ChatRequestItem> ChatRequests { get; } = new();
+    public ObservableCollection<GameInviteItem> GameInvites { get; } = new();
     public string ChatSearchText { get => _chatSearchText; set => SetProperty(ref _chatSearchText, value); }
+    public string FriendSearchText { get => _friendSearchText; set => SetProperty(ref _friendSearchText, value); }
+
+    public sealed class FriendEntry
+    {
+        public string Hash { get; } public string Name { get; } public string UserId { get; } public string MessageId { get; }
+        public FriendEntry(string hash, string name, string userId, string messageId = "") { Hash = hash; Name = name; UserId = userId; MessageId = messageId; }
+    }
 
     public sealed class ChatRequestItem
     {
@@ -127,6 +147,15 @@ public class MessagesViewModel : ViewModelBase, IDisposable
         public string Name { get; init; } = "";
         public string FromName { get; init; } = "Someone";
         public Group ToGroup() => new() { Code = Code, Name = Name, Creator = FromName };
+    }
+
+    public sealed class GameInviteItem
+    {
+        public string EventId { get; init; } = "";
+        public string Game { get; init; } = "";
+        public string RoomShort { get; init; } = "";
+        public string FromName { get; init; } = "Someone";
+        public string GameLabel => string.IsNullOrWhiteSpace(Game) ? "game" : Game;
     }
     public ObservableCollection<Group> FilteredGroups => _filteredGroups;
     public string RoomSearchText
@@ -166,12 +195,15 @@ public class MessagesViewModel : ViewModelBase, IDisposable
             var previous = _selectedGroup;
             if (SetProperty(ref _selectedGroup, value))
             {
+                RoomNameDraft = value?.Name ?? "";
                 if (previous != null) RememberRoomMessages(previous);
                 ClearActiveMessage();
                 _messages.Clear();
                 StatusText = value == null ? "Select a room." : $"#{value.Code}";
                 SendCommand.RaiseCanExecuteChanged();
                 ReloadCommand.RaiseCanExecuteChanged();
+                RenameSelectedGroupCommand.RaiseCanExecuteChanged();
+                LeaveSelectedGroupCommand.RaiseCanExecuteChanged();
                 OnPropertyChanged(nameof(IsChatting));
                 IsGlobalChat = IsGlobalRoom(value?.Code);
                 OnPropertyChanged(nameof(IsGlobalChat));
@@ -321,8 +353,23 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     public RelayCommand JoinCommand { get; }
     public RelayCommand SearchChatUsersCommand { get; }
     public RelayCommand<FriendUser> RequestChatCommand { get; }
+    public RelayCommand<FriendUser> AddGroupInviteeCommand { get; }
+    public RelayCommand<FriendUser> RemoveGroupInviteeCommand { get; }
+    public RelayCommand CreateGroupChatCommand { get; }
+    public RelayCommand<FriendUser> InviteToSelectedGroupCommand { get; }
+    public RelayCommand RenameSelectedGroupCommand { get; }
+    public RelayCommand LeaveSelectedGroupCommand { get; }
     public RelayCommand<ChatRequestItem> AcceptChatRequestCommand { get; }
     public RelayCommand<ChatRequestItem> DeclineChatRequestCommand { get; }
+    public RelayCommand<GameInviteItem> AcceptGameInviteCommand { get; }
+    public RelayCommand<GameInviteItem> DismissGameInviteCommand { get; }
+    public RelayCommand SearchFriendsCommand { get; }
+    public RelayCommand RefreshFriendsCommand { get; }
+    public RelayCommand<FriendUser> AddFriendCommand { get; }
+    public RelayCommand<FriendEntry> AcceptFriendCommand { get; }
+    public RelayCommand<FriendEntry> DeclineFriendCommand { get; }
+    public RelayCommand<FriendEntry> RemoveFriendCommand { get; }
+    public RelayCommand<FriendEntry> MessageFriendCommand { get; }
     public RelayCommand ReloadCommand { get; }
     public RelayCommand<Message> SelectMessageCommand { get; }
     public RelayCommand DeselectCommand { get; }
@@ -340,16 +387,32 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     public RelayCommand CancelReportCommand { get; }
     public RelayCommand<Message> DmUserCommand { get; }
 
-    public MessagesViewModel(KindleHubCore core, ILogger<MessagesViewModel> logger)
+    public MessagesViewModel(KindleHubCore core, ILogger<MessagesViewModel> logger, MainViewModel nav)
     {
         _core = core;
         _logger = logger;
+        _nav = nav;
         SendCommand = new RelayCommand(async () => await SendMessageAsync(), () => !IsSending && SelectedGroup != null && !string.IsNullOrWhiteSpace(NewMessageText));
         JoinCommand = new RelayCommand(async () => await JoinByCodeAsync(), () => !string.IsNullOrWhiteSpace(JoinCode));
         SearchChatUsersCommand = new RelayCommand(async () => await SearchChatUsersAsync());
         RequestChatCommand = new RelayCommand<FriendUser>(async user => await RequestChatAsync(user));
+        AddGroupInviteeCommand = new RelayCommand<FriendUser>(AddGroupInvitee);
+        RemoveGroupInviteeCommand = new RelayCommand<FriendUser>(user => { if (user != null) GroupChatInvitees.Remove(user); });
+        CreateGroupChatCommand = new RelayCommand(async () => await CreateGroupChatAsync());
+        InviteToSelectedGroupCommand = new RelayCommand<FriendUser>(async user => await InviteToSelectedGroupAsync(user));
+        RenameSelectedGroupCommand = new RelayCommand(async () => await RenameSelectedGroupAsync(), () => SelectedGroup != null && !string.IsNullOrWhiteSpace(RoomNameDraft));
+        LeaveSelectedGroupCommand = new RelayCommand(async () => await LeaveSelectedGroupAsync(), () => SelectedGroup != null && !IsGlobalRoom(SelectedGroup.Code));
         AcceptChatRequestCommand = new RelayCommand<ChatRequestItem>(async request => await AcceptChatRequestAsync(request));
-        DeclineChatRequestCommand = new RelayCommand<ChatRequestItem>(request => DeclineChatRequest(request));
+        DeclineChatRequestCommand = new RelayCommand<ChatRequestItem>(async request => await DeclineChatRequestAsync(request));
+        AcceptGameInviteCommand = new RelayCommand<GameInviteItem>(AcceptGameInvite);
+        DismissGameInviteCommand = new RelayCommand<GameInviteItem>(invite => { if (invite != null) GameInvites.Remove(invite); });
+        SearchFriendsCommand = new RelayCommand(async () => await SearchFriendsAsync());
+        RefreshFriendsCommand = new RelayCommand(async () => await RefreshFriendsAsync());
+        AddFriendCommand = new RelayCommand<FriendUser>(async user => { if (user != null) await SendFriendRequestAsync(user); });
+        AcceptFriendCommand = new RelayCommand<FriendEntry>(async entry => { if (entry != null) await ResolveFriendRequestAsync(entry, true); });
+        DeclineFriendCommand = new RelayCommand<FriendEntry>(async entry => { if (entry != null) await ResolveFriendRequestAsync(entry, false); });
+        RemoveFriendCommand = new RelayCommand<FriendEntry>(async entry => { if (entry != null) await RemoveFriendAsync(entry); });
+        MessageFriendCommand = new RelayCommand<FriendEntry>(async entry => { if (entry != null) await MessageFriendAsync(entry); });
         ReloadCommand = new RelayCommand(async () => await ReloadRoomAsync(), () => SelectedGroup != null);
 
         SelectMessageCommand = new RelayCommand<Message>(m => ActiveMessage = (m != null && ActiveMessage?.Id == m.Id) ? null : m);
@@ -384,6 +447,8 @@ public class MessagesViewModel : ViewModelBase, IDisposable
         CloseMediaSendCommand = new RelayCommand(() => SetMediaMode(MediaSendMode.None));
 
         LoadStickers();
+        LoadFriends();
+        _ = RefreshFriendsAsync();
 
         Groups.CollectionChanged += Groups_CollectionChanged;
 
@@ -1071,7 +1136,15 @@ _messages.Clear();
 
     public async Task JoinByCodeAsync()
     {
-        var digits = new string((JoinCode ?? "").Where(char.IsDigit).ToArray());
+        var enteredCode = (JoinCode ?? "").Trim();
+        var digits = new string(enteredCode.Where(char.IsDigit).ToArray());
+        var playVirtualInsanity = string.Equals(enteredCode, string.Concat("virtual", "insanity"), StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(digits, string.Concat("4817", "9141", "0929"), StringComparison.Ordinal);
+        if (playVirtualInsanity)
+        {
+            SettingsViewModel.NoteFound(string.Concat("virtual", "insanity"));
+            digits = string.Concat("4817", "9141", "0929");
+        }
         if (digits.Length < 12) { StatusText = "Room codes are 12 digits."; return; }
         digits = digits[^12..];
         JoinCode = "";
@@ -1081,6 +1154,11 @@ _messages.Clear();
             if (!Groups.Any(x => string.Equals(x?.Code, group.Code, StringComparison.Ordinal))) Groups.Add(group);
             RoomRegistry.AddRoom(group);
             SelectedGroup = group;
+            if (playVirtualInsanity)
+            {
+                try { Process.Start(new ProcessStartInfo(string.Concat("https://www.youtube.com/watch?v=", "4JkIs", "37a2JE")) { UseShellExecute = true }); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Couldn't open the browser for a community link."); }
+            }
         }
         catch (Exception ex)
         {
@@ -1454,11 +1532,24 @@ _messages.Clear();
         try
         {
             var events = await _core.PollInboxSocialEventsAsync(CancellationToken.None);
+            await ApplyFriendInboxEventsAsync(events);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 foreach (var ev in events)
                 {
                     if (ev.Message == null || ev.Message.IsMine) continue;
+                    if (ev.Type == "GAME_INVITE")
+                    {
+                        if (!_seenGameInviteIds.Add(ev.Message.Id ?? "")) continue;
+                        var shortCode = new string(ev.Str("roomShort").Where(char.IsDigit).ToArray());
+                        if (shortCode.Length != 6) continue;
+                        GameInvites.Add(new GameInviteItem
+                        {
+                            EventId = ev.Message.Id ?? "", Game = ev.Str("game"), RoomShort = shortCode,
+                            FromName = string.IsNullOrWhiteSpace(ev.Str("fromName")) ? ev.Message.DisplayName ?? "Someone" : ev.Str("fromName")
+                        });
+                        continue;
+                    }
                     var code = ev.Str("code").Trim();
                     if (!System.Text.RegularExpressions.Regex.IsMatch(code, "^[0-9]{12}$")) continue;
                     if (ev.Type == "DM_INVITE")
@@ -1473,7 +1564,7 @@ _messages.Clear();
                         }
                         RoomRegistry.AddRoom(invited);
                     }
-                    else if (ev.Type == "CHAT_REQUEST" && !_declinedChatRequests.Contains(code)
+                    else if (ev.Type == "CHAT_REQUEST" && !_declinedChatRequests.Contains(code) && !IsChatRequestDeclined(code)
                              && !Groups.Any(x => string.Equals(x?.Code, code, StringComparison.Ordinal))
                              && _seenChatRequests.Add(code))
                     {
@@ -1487,6 +1578,139 @@ _messages.Clear();
             _logger.LogDebug(ex, "Inbox poll failed");
         }
         finally { Volatile.Write(ref _inboxPolling, 0); }
+    }
+
+    private JsonObject FriendState()
+    {
+        try { return JsonNode.Parse(_core.AccountStateJson ?? "{}") as JsonObject ?? new JsonObject(); }
+        catch { return new JsonObject(); }
+    }
+
+    private static string FriendValue(JsonObject obj, params string[] keys)
+    {
+        foreach (var key in keys)
+            if (obj[key] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)) return text;
+        return "";
+    }
+
+    private void LoadFriends()
+    {
+        var state = FriendState();
+        Friends.Clear(); FriendRequests.Clear();
+        if (state["friends"] is JsonArray friends)
+            foreach (var obj in friends.OfType<JsonObject>())
+            {
+                var hash = FriendValue(obj, "hash", "uid", "userId");
+                if (!string.IsNullOrWhiteSpace(hash)) Friends.Add(new FriendEntry(hash, FriendValue(obj, "name", "displayName") is { Length: > 0 } n ? n : "Friend", FriendValue(obj, "uid", "userId"), FriendValue(obj, "mid", "messageId")));
+            }
+        if (state["friendRequests"] is JsonArray requests)
+            foreach (var obj in requests.OfType<JsonObject>())
+            {
+                var hash = FriendValue(obj, "hash", "uid", "userId");
+                if (!string.IsNullOrWhiteSpace(hash)) FriendRequests.Add(new FriendEntry(hash, FriendValue(obj, "name", "displayName") is { Length: > 0 } n ? n : "Someone", FriendValue(obj, "uid", "userId"), FriendValue(obj, "mid", "messageId")));
+            }
+    }
+
+    private async Task SaveFriendsAsync(JsonArray friends, JsonArray requests, JsonArray? tombs = null)
+    {
+        var state = FriendState(); state["friends"] = friends.DeepClone(); state["friendRequests"] = requests.DeepClone();
+        if (tombs != null) state["friendReqTombs"] = tombs.DeepClone();
+        _core.SetAccountState(state.ToJsonString());
+        await _core.SyncAccountAsync(_core.AccountStateJson, CancellationToken.None);
+        await Dispatcher.UIThread.InvokeAsync(LoadFriends);
+    }
+
+    private async Task RefreshFriendsAsync()
+    {
+        if (!_core.IsAuthenticated) { StatusText = "Sign in to view friends."; LoadFriends(); return; }
+        try
+        {
+            var cloud = await _core.FetchAccountStateAsync(CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(cloud)) _core.SetAccountState(cloud);
+        }
+        catch (Exception ex) { _logger.LogDebug(ex, "Could not refresh the synced friends list"); }
+        await Dispatcher.UIThread.InvokeAsync(LoadFriends);
+    }
+
+    private async Task SearchFriendsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(FriendSearchText)) return;
+        try
+        {
+            var results = await _core.SearchFriendUsersAsync(FriendSearchText.Trim(), CancellationToken.None);
+            await Dispatcher.UIThread.InvokeAsync(() => { FriendSearchResults.Clear(); foreach (var user in results) FriendSearchResults.Add(user); });
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Friend search failed"); StatusText = "Couldn't search for friends."; }
+    }
+
+    private async Task SendFriendRequestAsync(FriendUser user)
+    {
+        try { await _core.SendFriendInboxEventAsync(user.Hash, "FRIEND_REQUEST", CancellationToken.None); StatusText = $"Friend request sent to {user.Name}."; }
+        catch (Exception ex) { _logger.LogInformation(ex, "Sending friend request failed"); StatusText = "Couldn't send that friend request."; }
+    }
+
+    private async Task ResolveFriendRequestAsync(FriendEntry request, bool accept)
+    {
+        var state = FriendState(); var friends = state["friends"] as JsonArray ?? new JsonArray(); var requests = state["friendRequests"] as JsonArray ?? new JsonArray();
+        var item = requests.FirstOrDefault(n => string.Equals((string?)n?["hash"], request.Hash, StringComparison.OrdinalIgnoreCase));
+        if (item == null) return;
+        requests.Remove(item);
+        var tombs = state["friendReqTombs"] as JsonArray ?? new JsonArray();
+        if (request.MessageId.Length > 0 && !tombs.Any(n => string.Equals((string?)n, request.MessageId, StringComparison.Ordinal))) tombs.Add(request.MessageId);
+        if (accept)
+        {
+            if (!friends.Any(n => string.Equals((string?)n?["hash"], request.Hash, StringComparison.OrdinalIgnoreCase)))
+                friends.Add(new JsonObject { ["hash"] = request.Hash, ["uid"] = request.UserId, ["name"] = request.Name, ["since"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ["mid"] = request.MessageId });
+            await _core.SendFriendInboxEventAsync(request.Hash, "FRIEND_ACCEPT", CancellationToken.None);
+        }
+        await SaveFriendsAsync(friends, requests, tombs);
+    }
+
+    private async Task RemoveFriendAsync(FriendEntry entry)
+    {
+        var state = FriendState(); var friends = state["friends"] as JsonArray ?? new JsonArray(); var requests = state["friendRequests"] as JsonArray ?? new JsonArray();
+        foreach (var node in friends.Where(n => string.Equals((string?)n?["hash"], entry.Hash, StringComparison.OrdinalIgnoreCase)).ToArray()) friends.Remove(node);
+        var tombs = state["friendReqTombs"] as JsonArray ?? new JsonArray();
+        if (entry.MessageId.Length > 0 && !tombs.Any(n => string.Equals((string?)n, entry.MessageId, StringComparison.Ordinal))) tombs.Add(entry.MessageId);
+        await SaveFriendsAsync(friends, requests, tombs);
+    }
+
+    private async Task MessageFriendAsync(FriendEntry entry)
+    {
+        var id = string.IsNullOrWhiteSpace(entry.UserId) ? entry.Hash : entry.UserId;
+        try
+        {
+            var known = ChatPrefsStore.Current.DmRoomFor(id);
+            var group = await _core.OpenDmAsync(id, entry.Name, known ?? "", CancellationToken.None);
+            ChatPrefsStore.Current.RememberDmRoom(id, group.Code); RoomRegistry.Open(group);
+            if (!Groups.Any(g => string.Equals(g.Code, group.Code, StringComparison.Ordinal))) Groups.Add(group);
+            SelectedGroup = Groups.FirstOrDefault(g => string.Equals(g.Code, group.Code, StringComparison.Ordinal));
+            RoomSearchText = "";
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Open friend chat failed"); StatusText = "Couldn't open that chat."; }
+    }
+
+    private async Task ApplyFriendInboxEventsAsync(IEnumerable<RoomMessageEnvelope> events)
+    {
+        var state = FriendState(); var friends = state["friends"] as JsonArray ?? new JsonArray(); var requests = state["friendRequests"] as JsonArray ?? new JsonArray(); var tombs = state["friendReqTombs"] as JsonArray ?? new JsonArray();
+        var changed = false;
+        foreach (var ev in events.Where(e => e.Type is "FRIEND_REQUEST" or "FRIEND_ACCEPT"))
+        {
+            var id = ev.Message?.Id ?? "";
+            if (id.Length == 0 || tombs.Any(n => string.Equals((string?)n, id, StringComparison.Ordinal))) continue;
+            var hash = ev.Str("fromHash");
+            if (hash.Length is < 6 or > 16 || !hash.All(Uri.IsHexDigit)) continue;
+            var name = ev.Str("fromName"); var uid = ev.Str("fromUserId");
+            if (ev.Type == "FRIEND_REQUEST")
+            {
+                if (!friends.Any(n => string.Equals((string?)n?["hash"], hash, StringComparison.OrdinalIgnoreCase)) && !requests.Any(n => string.Equals((string?)n?["hash"], hash, StringComparison.OrdinalIgnoreCase)))
+                { requests.Add(new JsonObject { ["hash"] = hash, ["uid"] = uid, ["name"] = name, ["ts"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ["mid"] = id }); changed = true; }
+            }
+            else if (!friends.Any(n => string.Equals((string?)n?["hash"], hash, StringComparison.OrdinalIgnoreCase)))
+            { friends.Add(new JsonObject { ["hash"] = hash, ["uid"] = uid, ["name"] = name, ["since"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ["mid"] = id }); changed = true; }
+        }
+        if (changed) await SaveFriendsAsync(friends, requests, tombs);
+        else await Dispatcher.UIThread.InvokeAsync(LoadFriends);
     }
 
     private async Task SearchChatUsersAsync()
@@ -1503,6 +1727,73 @@ _messages.Clear();
             });
         }
         catch (Exception ex) { _logger.LogInformation(ex, "Chat user search failed"); StatusText = "Couldn't search accounts."; }
+    }
+
+    private void AddGroupInvitee(FriendUser? user)
+    {
+        if (user == null || GroupChatInvitees.Any(existing => string.Equals(existing.Hash, user.Hash, StringComparison.OrdinalIgnoreCase))) return;
+        GroupChatInvitees.Add(user);
+    }
+
+    private async Task CreateGroupChatAsync()
+    {
+        if (GroupChatInvitees.Count == 0) { StatusText = "Add at least one person to the group."; return; }
+        try
+        {
+            var group = await _core.CreateGroupChatAsync(GroupChatName, GroupChatInvitees.ToList(), CancellationToken.None);
+            await _core.SaveOpenedMessageRoomAsync(group, CancellationToken.None);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!Groups.Any(existing => existing.Code == group.Code)) Groups.Add(group);
+                RoomRegistry.Open(group);
+                SelectedGroup = group;
+                GroupChatInvitees.Clear();
+                GroupChatName = "";
+                StatusText = "Group created and invitations sent.";
+            });
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Create group chat failed"); StatusText = ex.Message; }
+    }
+
+    private async Task InviteToSelectedGroupAsync(FriendUser? user)
+    {
+        if (SelectedGroup == null || user == null) return;
+        try
+        {
+            await _core.InviteGroupMembersAsync(SelectedGroup, new[] { user }, CancellationToken.None);
+            StatusText = $"Invitation sent to {user.Name}.";
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Invite to group failed"); StatusText = "Couldn't invite that account."; }
+    }
+
+    private async Task RenameSelectedGroupAsync()
+    {
+        var room = SelectedGroup;
+        var name = (RoomNameDraft ?? "").Trim();
+        if (room == null || name.Length == 0 || name.Length > 48) return;
+        room.Name = name;
+        try
+        {
+            if (await _core.SaveOpenedMessageRoomAsync(room, CancellationToken.None)) StatusText = "Room name saved to your account.";
+            else StatusText = "Couldn't save the room name.";
+            RefreshFilteredGroups();
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Rename room failed"); StatusText = "Couldn't save the room name."; }
+    }
+
+    private async Task LeaveSelectedGroupAsync()
+    {
+        var room = SelectedGroup;
+        if (room == null || IsGlobalRoom(room.Code)) return;
+        try
+        {
+            await _core.LeaveMessageRoomAsync(room.Code, CancellationToken.None);
+            Groups.Remove(room);
+            RoomRegistry.Remove(room.Code);
+            SelectedGroup = Groups.FirstOrDefault();
+            StatusText = "You left the room.";
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Leave room failed"); StatusText = "Couldn't leave the room."; }
     }
 
     private async Task RequestChatAsync(FriendUser? user)
@@ -1543,13 +1834,47 @@ _messages.Clear();
         catch (Exception ex) { _logger.LogInformation(ex, "Accept chat request failed"); StatusText = "Couldn't accept that chat request."; }
     }
 
-    private void DeclineChatRequest(ChatRequestItem? request)
+    private async Task DeclineChatRequestAsync(ChatRequestItem? request)
     {
         if (request == null) return;
-        _declinedChatRequests.Add(request.Code);
-        _seenChatRequests.Add(request.Code);
-        ChatRequests.Remove(request);
-        StatusText = "Chat request declined.";
+        try
+        {
+            if (!await _core.DeclineChatRequestAsync(request.Code, CancellationToken.None))
+            {
+                StatusText = "Couldn't save the declined request.";
+                return;
+            }
+            _declinedChatRequests.Add(request.Code);
+            _seenChatRequests.Add(request.Code);
+            ChatRequests.Remove(request);
+            StatusText = "Chat request declined.";
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Decline chat request failed"); StatusText = "Couldn't save the declined request."; }
+    }
+
+    private void AcceptGameInvite(GameInviteItem? invite)
+    {
+        if (invite == null) return;
+        if (!string.Equals(invite.Game, "ttt", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(invite.Game, "tictactoe", StringComparison.OrdinalIgnoreCase))
+        {
+            StatusText = $"The {invite.GameLabel} invite arrived, but this client can currently join online Tic-Tac-Toe only.";
+            return;
+        }
+        GameInvites.Remove(invite);
+        GamesViewModel.PendingInvite = invite.RoomShort;
+        _nav.NavigateTo("Games");
+    }
+
+    private bool IsChatRequestDeclined(string code)
+    {
+        try
+        {
+            using var state = System.Text.Json.JsonDocument.Parse(_core.AccountStateJson ?? "{}");
+            return state.RootElement.TryGetProperty("leftGroups", out var left) && left.ValueKind == System.Text.Json.JsonValueKind.Array
+                   && left.EnumerateArray().Any(item => item.ValueKind == System.Text.Json.JsonValueKind.String && item.GetString() == code);
+        }
+        catch { return false; }
     }
 
     public void Dispose()

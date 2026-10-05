@@ -32,4 +32,12 @@ Public Class RoomRegistry
         AddRoom(g)
         ActiveRoom = g
     End Sub
+
+    Public Shared Sub Remove(code As String)
+        If String.IsNullOrWhiteSpace(code) Then Return
+        For i = Rooms.Count - 1 To 0 Step -1
+            If String.Equals(Rooms(i)?.Code, code, StringComparison.Ordinal) Then Rooms.RemoveAt(i)
+        Next
+        If String.Equals(_active?.Code, code, StringComparison.Ordinal) Then ActiveRoom = Nothing
+    End Sub
 End Class

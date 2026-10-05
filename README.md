@@ -1,5 +1,5 @@
 # KindleHub.NET
-95% completed! Most functions are wired up now. Also, aran, do NOT fuck with the GPL.
+98% completed! Quite a lot of features requiring server is wired up now (except for admin/moderator-specific functions, I can't implement them without admin/mod roles). Also, aran, do NOT fuck with the GPL.
 
 Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Runs on Windows, Linux, and macOS.
 

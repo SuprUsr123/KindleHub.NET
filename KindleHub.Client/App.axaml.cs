@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia;
@@ -22,6 +23,9 @@ namespace KindleHub.Client;
 public partial class App : Application
 {
     public static string[] LaunchArguments { get; set; } = Array.Empty<string>();
+    public static bool DebugMode { get; set; }
+    public static bool RunWorldMachineSequence { get; set; }
+    public static string? StartupJoinTarget { get; set; }
     public static IHost? Host { get; private set; }
     public static IServiceProvider? Services => Host?.Services;
 
@@ -32,7 +36,7 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime argumentDesktop && LaunchArguments.Length > 0)
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime argumentDesktop && RunWorldMachineSequence)
         {
             argumentDesktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             base.OnFrameworkInitializationCompleted();
@@ -62,6 +66,9 @@ public partial class App : Application
             };
             desktop.MainWindow.Opened += async (_, _) =>
             {
+                await mainViewModel.InitializeAsync();
+                if (!string.IsNullOrWhiteSpace(StartupJoinTarget))
+                    await RunStartupJoinAsync(mainViewModel, StartupJoinTarget);
                 if (!SettingsViewModel.HasFound("Grass, Mr. Freeman?") && TryFindLongSessions(out _))
                 {
                     await ShowMessageAsync(string.Concat("JESUS CHRIST WHO THE FUCK DEVOTES ", "THEMSELVES TO GMOD LIKE THAT"));
@@ -69,11 +76,30 @@ public partial class App : Application
                 }
             };
             
-            _ = mainViewModel.InitializeAsync();
             mainViewModel.NavigateTo("Home");
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static async Task RunStartupJoinAsync(MainViewModel mainViewModel, string target)
+    {
+        var parts = target.Split(':', 2, StringSplitOptions.TrimEntries);
+        var code = new string(parts[0].Where(char.IsDigit).ToArray());
+        if (code.Length == 12)
+        {
+            mainViewModel.NavigateTo("Messages");
+            if (mainViewModel.CurrentView is MessagesViewModel messages)
+            {
+                messages.JoinCode = code;
+                await messages.JoinByCodeAsync();
+            }
+            return;
+        }
+
+        mainViewModel.NavigateTo("Arcade");
+        if (mainViewModel.CurrentView is ArcadeViewModel arcade)
+            await arcade.JoinFromCommandAsync(parts[0], parts.Length > 1 ? parts[1] : "");
     }
 
     private static async Task RunArgumentSequenceAsync(IClassicDesktopStyleApplicationLifetime desktop)
@@ -137,6 +163,10 @@ public partial class App : Application
     private static IHostBuilder CreateHostBuilder()
     {
         return Microsoft.Extensions.Hosting.Host.CreateDefaultBuilder()
+            .ConfigureLogging(logging =>
+            {
+                if (DebugMode) logging.SetMinimumLevel(LogLevel.Debug);
+            })
             .ConfigureServices((context, services) =>
             {
                 // Core services
@@ -172,7 +202,8 @@ public partial class App : Application
                 services.AddTransient<MessagesViewModel>(sp => 
                     new MessagesViewModel(
                         sp.GetRequiredService<KindleHubCore>(),
-                        sp.GetRequiredService<ILogger<MessagesViewModel>>()));
+                        sp.GetRequiredService<ILogger<MessagesViewModel>>(),
+                        sp.GetRequiredService<MainViewModel>()));
                 services.AddTransient<GamesViewModel>(sp => 
                     new GamesViewModel(
                         sp.GetRequiredService<KindleHubCore>(),

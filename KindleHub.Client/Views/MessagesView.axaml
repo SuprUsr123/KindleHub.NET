@@ -33,86 +33,172 @@
             <!-- Persistent channel sidebar, like a server's channel list. -->
             <Border Grid.Column="0" CornerRadius="8" Background="{DynamicResource ControlFillColorDefault}"
                     BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1" Padding="10">
-                <Grid RowDefinitions="Auto,Auto,*,Auto">
-                    <TextBlock Grid.Row="0" Text="CHANNELS" FontSize="12" FontWeight="Bold"
+                <Grid RowDefinitions="Auto,*,Auto">
+                    <TextBlock Grid.Row="0" Text="MESSAGES" FontSize="12" FontWeight="Bold"
                                Foreground="Gray" Margin="4,2,4,8"/>
-                    <StackPanel Grid.Row="1" Spacing="5" Margin="0,0,0,8">
-                        <TextBox Text="{Binding RoomSearchText}" PlaceholderText="Find a room…"/>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBox Grid.Column="0" Text="{Binding JoinCode}" PlaceholderText="12-digit room code"
-                                     KeyDown="JoinBox_KeyDown"/>
-                            <Button Grid.Column="1" Content="Join" Command="{Binding JoinCommand}" Margin="5,0,0,0"/>
-                        </Grid>
-                        <Expander Header="Find someone to chat with">
-                            <StackPanel Spacing="4" Margin="0,4,0,0">
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4">
-                                    <TextBox Text="{Binding ChatSearchText}" PlaceholderText="Username"/>
-                                    <Button Grid.Column="1" Content="Search" Command="{Binding SearchChatUsersCommand}"/>
+                    <TabControl Grid.Row="1">
+                        <TabItem Header="Rooms">
+                            <Grid RowDefinitions="Auto,Auto,*" Margin="4" RowSpacing="6">
+                                <TextBox Grid.Row="0" Text="{Binding RoomSearchText}" PlaceholderText="Find a room…"/>
+                                <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+                                    <TextBox Grid.Column="0" Text="{Binding JoinCode}" PlaceholderText="12-digit room code"
+                                             KeyDown="JoinBox_KeyDown"/>
+                                    <Button Grid.Column="1" Content="Join" Command="{Binding JoinCommand}" Margin="5,0,0,0"/>
                                 </Grid>
-                                <ItemsControl ItemsSource="{Binding ChatSearchResults}">
-                                    <ItemsControl.ItemTemplate>
+                                <ListBox Grid.Row="2" ItemsSource="{Binding FilteredGroups}" SelectedItem="{Binding SelectedGroup}"
+                                         Background="Transparent" BorderThickness="0">
+                                    <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid ColumnDefinitions="*,Auto" Margin="2">
-                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                                <Button Grid.Column="1" Content="Request" Padding="6,2"
-                                                        Command="{Binding $parent[UserControl].DataContext.RequestChatCommand}"
-                                                        CommandParameter="{Binding}"/>
+                                            <Grid ColumnDefinitions="18,*" Margin="2,5">
+                                                <TextBlock Text="#" Foreground="Gray" FontSize="16" VerticalAlignment="Center"/>
+                                                <StackPanel Grid.Column="1" Spacing="1">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Code}" FontSize="10" Foreground="Gray"/>
+                                                </StackPanel>
                                             </Grid>
                                         </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </Expander>
-                        <Expander Header="Chat requests">
-                            <ItemsControl ItemsSource="{Binding ChatRequests}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Spacing="3" Margin="2,5">
-                                            <TextBlock Text="{Binding FromName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                            <StackPanel Orientation="Horizontal" Spacing="4">
-                                                <Button Content="Accept" Padding="6,2"
-                                                        Command="{Binding $parent[UserControl].DataContext.AcceptChatRequestCommand}"
-                                                        CommandParameter="{Binding}"/>
-                                                <Button Content="Decline" Padding="6,2"
-                                                        Command="{Binding $parent[UserControl].DataContext.DeclineChatRequestCommand}"
-                                                        CommandParameter="{Binding}"/>
-                                            </StackPanel>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="Friends">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="7" Margin="5">
+                                    <Button Content="Refresh friends" Command="{Binding RefreshFriendsCommand}" HorizontalAlignment="Stretch"/>
+                                    <Expander Header="Find someone to chat with">
+                                        <StackPanel Spacing="4" Margin="0,4,0,0">
+                                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                                                <TextBox Text="{Binding ChatSearchText}" PlaceholderText="Username"/>
+                                                <Button Grid.Column="1" Content="Search" Command="{Binding SearchChatUsersCommand}"/>
+                                            </Grid>
+                                            <ItemsControl ItemsSource="{Binding ChatSearchResults}">
+                                                <ItemsControl.ItemTemplate><DataTemplate>
+                                                    <StackPanel Spacing="3" Margin="1,3">
+                                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                                        <WrapPanel>
+                                                            <Button Content="Chat request" Padding="5,2" Command="{Binding $parent[UserControl].DataContext.RequestChatCommand}" CommandParameter="{Binding}"/>
+                                                            <Button Content="Add to group" Padding="5,2" Command="{Binding $parent[UserControl].DataContext.AddGroupInviteeCommand}" CommandParameter="{Binding}"/>
+                                                            <Button Content="Invite to room" Padding="5,2" Command="{Binding $parent[UserControl].DataContext.InviteToSelectedGroupCommand}" CommandParameter="{Binding}"/>
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                </DataTemplate></ItemsControl.ItemTemplate>
+                                            </ItemsControl>
                                         </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </Expander>
-                    </StackPanel>
-                    <ListBox Grid.Row="2" ItemsSource="{Binding FilteredGroups}" SelectedItem="{Binding SelectedGroup}"
-                             Background="Transparent" BorderThickness="0">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Grid ColumnDefinitions="18,*" Margin="2,5">
-                                    <TextBlock Text="#" Foreground="Gray" FontSize="16" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding Code}" FontSize="10" Foreground="Gray"/>
-                                    </StackPanel>
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <Expander Grid.Row="3" Header="Active polls" MaxHeight="180" Margin="0,8,0,0">
-                        <ScrollViewer MaxHeight="150">
-                            <ItemsControl ItemsSource="{Binding ActivePolls}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Padding="8,5" Margin="2" CornerRadius="5"
-                                                Background="{DynamicResource ControlFillColorSecondary}"
-                                                PointerPressed="Bubble_PointerPressed">
-                                            <StackPanel Spacing="2">
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="11"/>
-                                                <TextBlock Text="{Binding DisplayText}" FontSize="10" Foreground="Gray"
-                                                           TextWrapping="Wrap" MaxHeight="42"/>
+                                    </Expander>
+                                    <TextBlock Text="Find friends" FontWeight="SemiBold"/>
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                                        <TextBox Text="{Binding FriendSearchText}" PlaceholderText="Username"/>
+                                        <Button Grid.Column="1" Content="Search" Command="{Binding SearchFriendsCommand}"/>
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding FriendSearchResults}">
+                                        <ItemsControl.ItemTemplate><DataTemplate>
+                                            <Grid ColumnDefinitions="*,Auto" Margin="1,3">
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                <Button Grid.Column="1" Content="Add" Padding="6,2" Command="{Binding $parent[UserControl].DataContext.AddFriendCommand}" CommandParameter="{Binding}"/>
+                                            </Grid>
+                                        </DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="Requests" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                                    <ItemsControl ItemsSource="{Binding FriendRequests}">
+                                        <ItemsControl.ItemTemplate><DataTemplate>
+                                            <StackPanel Spacing="3" Margin="1,3">
+                                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                                    <Button Content="Accept" Padding="6,2" Command="{Binding $parent[UserControl].DataContext.AcceptFriendCommand}" CommandParameter="{Binding}"/>
+                                                    <Button Content="Decline" Padding="6,2" Command="{Binding $parent[UserControl].DataContext.DeclineFriendCommand}" CommandParameter="{Binding}"/>
+                                                </StackPanel>
                                             </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
+                                        </DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Text="Your friends" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                                    <ItemsControl ItemsSource="{Binding Friends}">
+                                        <ItemsControl.ItemTemplate><DataTemplate>
+                                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="3" Margin="1,3">
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                <Button Grid.Column="1" Content="Chat" Padding="5,2" Command="{Binding $parent[UserControl].DataContext.MessageFriendCommand}" CommandParameter="{Binding}"/>
+                                                <Button Grid.Column="2" Content="×" Padding="5,2" ToolTip.Tip="Remove friend" Command="{Binding $parent[UserControl].DataContext.RemoveFriendCommand}" CommandParameter="{Binding}"/>
+                                            </Grid>
+                                        </DataTemplate></ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                        <TabItem Header="Requests">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="8" Margin="5">
+                                    <Expander Header="Chat requests">
+                                        <ItemsControl ItemsSource="{Binding ChatRequests}">
+                                            <ItemsControl.ItemTemplate><DataTemplate>
+                                                <StackPanel Spacing="3" Margin="2,5">
+                                                    <TextBlock Text="{Binding FromName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                        <Button Content="Accept" Padding="6,2" Command="{Binding $parent[UserControl].DataContext.AcceptChatRequestCommand}" CommandParameter="{Binding}"/>
+                                                        <Button Content="Decline" Padding="6,2" Command="{Binding $parent[UserControl].DataContext.DeclineChatRequestCommand}" CommandParameter="{Binding}"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </DataTemplate></ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Expander>
+                                    <Expander Header="Game invites">
+                                        <ItemsControl ItemsSource="{Binding GameInvites}">
+                                            <ItemsControl.ItemTemplate><DataTemplate>
+                                                <StackPanel Spacing="4" Margin="2,5">
+                                                    <TextBlock Text="{Binding FromName}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding GameLabel, StringFormat='Invited to {0}'}" FontSize="11" Foreground="Gray"/>
+                                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                                        <Button Content="Join" Padding="6,2" Command="{Binding $parent[UserControl].DataContext.AcceptGameInviteCommand}" CommandParameter="{Binding}"/>
+                                                        <Button Content="Dismiss" Padding="6,2" Command="{Binding $parent[UserControl].DataContext.DismissGameInviteCommand}" CommandParameter="{Binding}"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </DataTemplate></ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Expander>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                        <TabItem Header="Manage">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="8" Margin="5">
+                                    <Expander Header="Create group chat" IsExpanded="True">
+                                        <StackPanel Spacing="5" Margin="0,4,0,0">
+                                            <TextBox Text="{Binding GroupChatName}" PlaceholderText="Group name" MaxLength="48"/>
+                                            <ItemsControl ItemsSource="{Binding GroupChatInvitees}">
+                                                <ItemsControl.ItemTemplate><DataTemplate>
+                                                    <Grid ColumnDefinitions="*,Auto" Margin="2">
+                                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                        <Button Grid.Column="1" Content="Remove" Padding="5,2" Command="{Binding $parent[UserControl].DataContext.RemoveGroupInviteeCommand}" CommandParameter="{Binding}"/>
+                                                    </Grid>
+                                                </DataTemplate></ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <TextBlock Text="Use the search in Friends to add people to this group." FontSize="10" Foreground="Gray" TextWrapping="Wrap"/>
+                                            <Button Content="Create group" Command="{Binding CreateGroupChatCommand}" HorizontalAlignment="Stretch"/>
+                                        </StackPanel>
+                                    </Expander>
+                                    <Expander Header="Selected room">
+                                        <StackPanel Spacing="5" Margin="0,4,0,0">
+                                            <TextBox Text="{Binding RoomNameDraft}" PlaceholderText="Room name" MaxLength="48"/>
+                                            <Button Content="Save room name" Command="{Binding RenameSelectedGroupCommand}"/>
+                                            <Button Content="Leave room" Command="{Binding LeaveSelectedGroupCommand}"/>
+                                            <TextBlock Text="To invite someone, search in Friends and choose Invite to room." FontSize="10" Foreground="Gray" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </Expander>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                    </TabControl>
+                    <Expander Grid.Row="2" Header="Active polls" MaxHeight="150" Margin="0,8,0,0">
+                        <ScrollViewer MaxHeight="120">
+                            <ItemsControl ItemsSource="{Binding ActivePolls}">
+                                <ItemsControl.ItemTemplate><DataTemplate>
+                                    <Border Padding="8,5" Margin="2" CornerRadius="5" Background="{DynamicResource ControlFillColorSecondary}"
+                                            PointerPressed="Bubble_PointerPressed">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="11"/>
+                                            <TextBlock Text="{Binding DisplayText}" FontSize="10" Foreground="Gray" TextWrapping="Wrap" MaxHeight="42"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate></ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </ScrollViewer>
                     </Expander>

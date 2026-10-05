@@ -282,7 +282,7 @@ public sealed class MemePreviewControl : Control
         var typeface = new Typeface("Inter", FontStyle.Normal, FontWeight.Black, FontStretch.Normal);
         FormattedText? text = null;
         var maxWidth = Math.Max(1, caption.Width - 20);
-        for (var fontSize = 48d; fontSize >= 18; fontSize -= 2)
+        for (var fontSize = caption.FontSize; fontSize >= 8; fontSize -= 2)
         {
             text = new FormattedText(caption.Text.ToUpperInvariant(), CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight, typeface, fontSize, Brushes.White)

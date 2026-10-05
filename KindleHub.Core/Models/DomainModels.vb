@@ -233,6 +233,66 @@ Public Class Message
     Public Property Important As Boolean
     Public Property Edited As Boolean
     Public Property ReplyTo As String
+    Private _communityComments As New System.Collections.ObjectModel.ObservableCollection(Of Message)()
+    Public Property CommunityComments As System.Collections.ObjectModel.ObservableCollection(Of Message)
+        Get
+            Return _communityComments
+        End Get
+        Set(value As System.Collections.ObjectModel.ObservableCollection(Of Message))
+            _communityComments = If(value, New System.Collections.ObjectModel.ObservableCollection(Of Message)())
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(CommunityComments)))
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(CommunityCommentCount)))
+        End Set
+    End Property
+    Public ReadOnly Property CommunityCommentCount As Integer
+        Get
+            Return If(_communityComments Is Nothing, 0, _communityComments.Count)
+        End Get
+    End Property
+    Private _communityPostEditDraft As String = ""
+    Public Property CommunityPostEditDraft As String
+        Get
+            Return _communityPostEditDraft
+        End Get
+        Set(value As String)
+            If _communityPostEditDraft = value Then Return
+            _communityPostEditDraft = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(CommunityPostEditDraft)))
+        End Set
+    End Property
+    Private _isCommunityPostEditing As Boolean
+    Public Property IsCommunityPostEditing As Boolean
+        Get
+            Return _isCommunityPostEditing
+        End Get
+        Set(value As Boolean)
+            If _isCommunityPostEditing = value Then Return
+            _isCommunityPostEditing = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(IsCommunityPostEditing)))
+        End Set
+    End Property
+    Private _communityCommentDraft As String = ""
+    Public Property CommunityCommentDraft As String
+        Get
+            Return _communityCommentDraft
+        End Get
+        Set(value As String)
+            If _communityCommentDraft = value Then Return
+            _communityCommentDraft = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(CommunityCommentDraft)))
+        End Set
+    End Property
+    Private _communityCommentsExpanded As Boolean
+    Public Property CommunityCommentsExpanded As Boolean
+        Get
+            Return _communityCommentsExpanded
+        End Get
+        Set(value As Boolean)
+            If _communityCommentsExpanded = value Then Return
+            _communityCommentsExpanded = value
+            RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(CommunityCommentsExpanded)))
+        End Set
+    End Property
     ''' <summary>Write token the sender uses to edit/unsend/react on their own row.</summary>
     Public Property OwnerSecret As String
     Public Property IsMine As Boolean

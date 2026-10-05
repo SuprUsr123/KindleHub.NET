@@ -692,6 +692,77 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
             Await SaveOpenedMessageRoomAsync(group, cancellationToken)
         End Function
 
+        Public Async Function DeclineChatRequestAsync(code As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+            If Not IsAuthenticated Then Return False
+            If Not MutateState(Function(state) AccountState.WithLeftMessageRoom(state, code)) Then Return False
+            Return Await SyncAccountAsync(_currentAccountState, cancellationToken)
+        End Function
+
+        Public Async Function LeaveMessageRoomAsync(code As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+            If Not IsAuthenticated Then Return False
+            If Not MutateState(Function(state) AccountState.WithLeftMessageRoom(state, code)) Then Return False
+            Return Await SyncAccountAsync(_currentAccountState, cancellationToken)
+        End Function
+
+        Public Async Function InviteGroupMembersAsync(group As Group, invitees As IEnumerable(Of FriendUser), cancellationToken As CancellationToken) As Task
+            If Not IsAuthenticated OrElse group Is Nothing Then Throw New AuthenticationException("Sign in first.")
+            Dim meName = If(_currentProfile?.DisplayName, "Reader")
+            Dim payload = System.Text.Json.JsonSerializer.Serialize(New With {
+                Key .type = "DM_INVITE", Key .code = group.Code, Key .name = group.Name,
+                Key .fromName = meName, Key .fromUserId = _currentProfile.UserId
+            })
+            For Each recipient In If(invitees, Enumerable.Empty(Of FriendUser)())
+                Dim hash = If(recipient?.Hash, "").ToLowerInvariant()
+                If Not System.Text.RegularExpressions.Regex.IsMatch(hash, "^[a-f0-9]{6,16}$") Then Continue For
+                Dim suffix As String = ""
+                For i = 0 To 5
+                    suffix &= (Convert.ToInt32(hash(i).ToString(), 16) Mod 10).ToString()
+                Next
+                Dim inbox = "800000" & suffix
+                Try
+                    Await _apiClient.CreateGroupAsync(New CreateGroupRequest With {
+                        .Code = inbox, .Name = "inbox-" & hash.Substring(0, 8), .Creator = If(recipient.Name, "reader")
+                    }, _currentProfile.AuthToken, cancellationToken)
+                Catch
+                End Try
+                Await _apiClient.SendRoomEventAsync(inbox, payload, meName, _currentProfile.AuthToken, cancellationToken)
+            Next
+        End Function
+
+        Public Async Function CreateGroupChatAsync(name As String, invitees As IEnumerable(Of FriendUser), cancellationToken As CancellationToken) As Task(Of Group)
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in first.")
+            Dim recipients = If(invitees, Enumerable.Empty(Of FriendUser)()).Where(Function(user) user IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(user.Hash)).ToList()
+            If recipients.Count = 0 Then Throw New ValidationException("Add at least one person to the group.")
+            Dim cleanName = If(name, "").Trim()
+            If cleanName.Length = 0 Then Throw New ValidationException("Enter a group name.")
+            If cleanName.Length > 48 Then cleanName = cleanName.Substring(0, 48)
+            Dim meName = If(_currentProfile?.DisplayName, "Reader")
+            Dim group = Await _apiClient.CreateGroupAsync(New CreateGroupRequest With {
+                .Code = RoomCodes.NewRoomCode(), .Name = cleanName, .Creator = meName
+            }, _currentProfile.AuthToken, cancellationToken)
+            Dim payload = System.Text.Json.JsonSerializer.Serialize(New With {
+                Key .type = "DM_INVITE", Key .code = group.Code, Key .name = group.Name,
+                Key .fromName = meName, Key .fromUserId = _currentProfile.UserId
+            })
+            For Each recipient In recipients
+                Dim hash = recipient.Hash.ToLowerInvariant()
+                If Not System.Text.RegularExpressions.Regex.IsMatch(hash, "^[a-f0-9]{6,16}$") Then Continue For
+                Dim suffix As String = ""
+                For i = 0 To 5
+                    suffix &= (Convert.ToInt32(hash(i).ToString(), 16) Mod 10).ToString()
+                Next
+                Dim inbox = "800000" & suffix
+                Try
+                    Await _apiClient.CreateGroupAsync(New CreateGroupRequest With {
+                        .Code = inbox, .Name = "inbox-" & hash.Substring(0, 8), .Creator = If(recipient.Name, "reader")
+                    }, _currentProfile.AuthToken, cancellationToken)
+                Catch
+                End Try
+                Await _apiClient.SendRoomEventAsync(inbox, payload, meName, _currentProfile.AuthToken, cancellationToken)
+            Next
+            Return group
+        End Function
+
         Public Function SearchFriendUsersAsync(query As String, cancellationToken As CancellationToken) As Task(Of List(Of FriendUser))
             If Not IsAuthenticated Then Return Task.FromResult(New List(Of FriendUser)())
             Return _apiClient.SearchFriendUsersAsync(query, _currentProfile.AuthToken, cancellationToken)

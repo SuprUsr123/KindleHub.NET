@@ -536,6 +536,58 @@ public class ArcadeViewModel : ViewModelBase
         _ = RefreshLobbiesAsync();
     }
 
+    public async Task JoinFromCommandAsync(string gameTarget, string roomCode)
+    {
+        var query = (gameTarget ?? "").Trim();
+        var normalized = new string(query.Where(char.IsLetterOrDigit).ToArray());
+        var game = All.FirstOrDefault(candidate =>
+            string.Equals(candidate.Slug, query, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(candidate.Name, query, StringComparison.OrdinalIgnoreCase)
+            || new string(candidate.Slug.Where(char.IsLetterOrDigit).ToArray()).Equals(normalized, StringComparison.OrdinalIgnoreCase)
+            || new string(candidate.Name.Where(char.IsLetterOrDigit).ToArray()).Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        if (game == null)
+        {
+            LobbyStatus = $"No game matched '{query}'. Try its Arcade name or slug.";
+            return;
+        }
+        if (game.UsesRelayScreen)
+        {
+            _navigate?.Invoke("Games");
+            return;
+        }
+        var digits = new string((roomCode ?? "").Where(char.IsDigit).ToArray());
+        if (digits.Length == 6 && game.HasOnlinePlay)
+        {
+            OpenOnlineGamePage(game);
+            switch (game.Slug)
+            {
+                case Connect4Session.GameSlug:
+                    Connect4Room = digits;
+                    await JoinConnect4Async();
+                    break;
+                case DotsBoxesSession.GameSlug:
+                    DotsBoxesRoom = digits;
+                    await JoinDotsBoxesAsync();
+                    break;
+                case ReversiSession.GameSlug:
+                    ReversiRoom = digits;
+                    await JoinReversiAsync();
+                    break;
+                default:
+                    LobbyStatus = $"{game.Name} doesn't support direct room-code joining.";
+                    break;
+            }
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(roomCode))
+        {
+            LobbyStatus = "Game room codes are six digits.";
+            return;
+        }
+        if (game.HasOnlinePlay) OpenOnlineGamePage(game);
+        else Start(game);
+    }
+
     private async Task RefreshLobbiesAsync()
     {
         var slug = _game?.Slug;

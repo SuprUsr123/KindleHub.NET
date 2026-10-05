@@ -17,22 +17,22 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        if (args.Length > 0)
+        var arguments = args ?? Array.Empty<string>();
+        if (arguments.Length > 0)
         {
-            var phrase = string.Join(' ', args).Trim();
-            try
-            {
-                var desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                if (string.IsNullOrWhiteSpace(desk)) desk = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                Directory.CreateDirectory(desk);
-                File.WriteAllText(Path.Combine(desk, string.Concat("INTER", "LOPER", ".txt")),
-                    "FOR J.J\nconsole: INTERLOPE\n>>\"Unknown Command: INTERLOPE\"\nconsole: get s.interlope.pull:27015\n");
-            }
-            catch { }
-
+            var phrase = string.Join(' ', arguments).Trim();
             var marker = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KindleHubPro", "interloper-step1");
             if (phrase.Equals(string.Concat("-INTER", "LOPE"), StringComparison.OrdinalIgnoreCase))
             {
+                try
+                {
+                    var desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                    if (string.IsNullOrWhiteSpace(desk)) desk = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    Directory.CreateDirectory(desk);
+                    File.WriteAllText(Path.Combine(desk, string.Concat("INTER", "LOPER", ".txt")),
+                        "FOR J.J\nconsole: INTERLOPE\n>>\"Unknown Command: INTERLOPE\"\nconsole: get s.interlope.pull:27015\n");
+                }
+                catch { }
                 try { Directory.CreateDirectory(Path.GetDirectoryName(marker)!); File.WriteAllText(marker, "1"); }
                 catch { }
                 Console.Error.WriteLine("Unhandled exception. System.InvalidOperationException: Unknown Command: INTERLOPE");
@@ -51,17 +51,49 @@ class Program
                 }
                 return;
             }
-
-            if (!phrase.Equals(string.Concat("-worldmachine", "edition"), StringComparison.OrdinalIgnoreCase))
+            if (phrase.Equals(string.Concat("-worldmachine", "edition"), StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("There was some text here, but I kinda sorta forgot. Probably not important.");
+                App.RunWorldMachineSequence = true;
+                App.LaunchArguments = Array.Empty<string>();
+                BuildAvaloniaApp().StartWithClassicDesktopLifetime(Array.Empty<string>());
                 return;
             }
-            Console.WriteLine("There was some text here, but I kinda sorta forgot. Probably not important.");
         }
 
-        App.LaunchArguments = args;
-        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        var debug = false;
+        string? joinTarget = null;
+        for (var i = 0; i < arguments.Length; i++)
+        {
+            if (arguments[i].Equals("-debug", StringComparison.OrdinalIgnoreCase)) { debug = true; continue; }
+            if (arguments[i].Equals("-join", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= arguments.Length)
+                {
+                    Console.Error.WriteLine("Usage: KindleHub -join <room-code | game [game-room-code]>");
+                    return;
+                }
+                var first = arguments[++i].Trim();
+                if (i + 1 < arguments.Length && !arguments[i + 1].StartsWith("-", StringComparison.Ordinal))
+                    joinTarget = first + ":" + arguments[++i].Trim();
+                else joinTarget = first;
+                continue;
+            }
+
+            Console.WriteLine("There was some text here, but I kinda sorta forgot. Probably not important.");
+            return;
+        }
+
+        App.DebugMode = debug;
+        App.StartupJoinTarget = joinTarget;
+        App.RunWorldMachineSequence = false;
+        App.LaunchArguments = Array.Empty<string>();
+        if (debug)
+        {
+            Console.WriteLine("KindleHub Pro diagnostic mode");
+            Console.WriteLine($"Runtime: {Environment.Version} ({System.Runtime.InteropServices.RuntimeInformation.OSDescription})");
+            Console.WriteLine($"Data directory: {Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)}");
+        }
+        BuildAvaloniaApp().StartWithClassicDesktopLifetime(Array.Empty<string>());
     }
 
     private static void RunInterloperTerminalSequence()

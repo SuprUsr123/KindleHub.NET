@@ -1041,8 +1041,10 @@ Public Class KindleHubApiClient
         Dim rows = Await GetRowsAsync("rest/v1/kh_users?email=ilike." & Uri.EscapeDataString("*" & term & "*") & "&select=hash,email&limit=20", cancellationToken)
         For Each row In rows
             Dim hash = JsonStr(row, "hash"), email = JsonStr(row, "email")
-            If hash.Length >= 6 AndAlso hash.Length <= 16 AndAlso Regex.IsMatch(hash, "^[a-fA-F0-9]+$") AndAlso email.Contains("@") AndAlso Not authToken.StartsWith(hash, StringComparison.OrdinalIgnoreCase) Then
-                result.Add(New FriendUser With {.Hash = hash, .Name = email.Substring(0, email.IndexOf("@"c))})
+            ' The store keeps the full 64-character auth hash. The official client
+            ' identifies a friend by its first 16 hex characters in inbox events.
+            If hash.Length >= 16 AndAlso Regex.IsMatch(hash, "^[a-fA-F0-9]+$") AndAlso email.Contains("@") AndAlso Not authToken.StartsWith(hash, StringComparison.OrdinalIgnoreCase) Then
+                result.Add(New FriendUser With {.Hash = hash.Substring(0, 16), .Name = email.Substring(0, email.IndexOf("@"c))})
             End If
         Next
         Return result
