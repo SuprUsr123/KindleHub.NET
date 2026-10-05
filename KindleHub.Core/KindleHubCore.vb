@@ -660,6 +660,38 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
             Return found
         End Function
 
+        Public Async Function PollInboxSocialEventsAsync(cancellationToken As CancellationToken) As Task(Of List(Of RoomMessageEnvelope))
+            If Not IsAuthenticated OrElse String.IsNullOrEmpty(MyInboxRoomCode) Then Return New List(Of RoomMessageEnvelope)()
+            Return Await _apiClient.PollRoomEventsAsync(MyInboxRoomCode, _currentProfile.AuthToken, 200, cancellationToken)
+        End Function
+
+        Public Async Function SendChatRequestAsync(targetHash As String, targetName As String, cancellationToken As CancellationToken) As Task(Of Group)
+            If Not IsAuthenticated Then Throw New AuthenticationException("Sign in first.")
+            Dim hash = If(targetHash, "").ToLowerInvariant()
+            If Not System.Text.RegularExpressions.Regex.IsMatch(hash, "^[a-f0-9]{6,16}$") Then Throw New ArgumentException("Invalid account.")
+            Dim meName = If(_currentProfile?.DisplayName, "Reader")
+            Dim code = RoomCodes.NewRoomCode()
+            Dim roomName = "DM: " & Left(meName, 20) & " & " & Left(If(targetName, "friend"), 20)
+            Dim group = Await _apiClient.CreateGroupAsync(New CreateGroupRequest With {.Code = code, .Name = roomName, .Creator = meName}, _currentProfile.AuthToken, cancellationToken)
+            Dim suffix As String = ""
+            For i = 0 To 5
+                suffix &= (Convert.ToInt32(hash(i).ToString(), 16) Mod 10).ToString()
+            Next
+            Dim inbox = "800000" & suffix
+            Try
+                Await _apiClient.CreateGroupAsync(New CreateGroupRequest With {.Code = inbox, .Name = "inbox-" & hash.Substring(0, 8), .Creator = If(targetName, "reader")}, _currentProfile.AuthToken, cancellationToken)
+            Catch
+            End Try
+            Dim payload = New With {.type = "CHAT_REQUEST", .code = code, .name = roomName, .fromName = meName, .fromUserId = _currentProfile.UserId}
+            Await _apiClient.SendRoomEventAsync(inbox, System.Text.Json.JsonSerializer.Serialize(payload), meName, _currentProfile.AuthToken, cancellationToken)
+            Return group
+        End Function
+
+        Public Async Function AcceptChatRequestAsync(group As Group, cancellationToken As CancellationToken) As Task
+            If Not IsAuthenticated OrElse group Is Nothing Then Throw New AuthenticationException("Sign in first.")
+            Await SaveOpenedMessageRoomAsync(group, cancellationToken)
+        End Function
+
         Public Function SearchFriendUsersAsync(query As String, cancellationToken As CancellationToken) As Task(Of List(Of FriendUser))
             If Not IsAuthenticated Then Return Task.FromResult(New List(Of FriendUser)())
             Return _apiClient.SearchFriendUsersAsync(query, _currentProfile.AuthToken, cancellationToken)

@@ -43,6 +43,45 @@
                                      KeyDown="JoinBox_KeyDown"/>
                             <Button Grid.Column="1" Content="Join" Command="{Binding JoinCommand}" Margin="5,0,0,0"/>
                         </Grid>
+                        <Expander Header="Find someone to chat with">
+                            <StackPanel Spacing="4" Margin="0,4,0,0">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                                    <TextBox Text="{Binding ChatSearchText}" PlaceholderText="Username"/>
+                                    <Button Grid.Column="1" Content="Search" Command="{Binding SearchChatUsersCommand}"/>
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding ChatSearchResults}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="*,Auto" Margin="2">
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                <Button Grid.Column="1" Content="Request" Padding="6,2"
+                                                        Command="{Binding $parent[UserControl].DataContext.RequestChatCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Expander>
+                        <Expander Header="Chat requests">
+                            <ItemsControl ItemsSource="{Binding ChatRequests}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Spacing="3" Margin="2,5">
+                                            <TextBlock Text="{Binding FromName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <Button Content="Accept" Padding="6,2"
+                                                        Command="{Binding $parent[UserControl].DataContext.AcceptChatRequestCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                                <Button Content="Decline" Padding="6,2"
+                                                        Command="{Binding $parent[UserControl].DataContext.DeclineChatRequestCommand}"
+                                                        CommandParameter="{Binding}"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Expander>
                     </StackPanel>
                     <ListBox Grid.Row="2" ItemsSource="{Binding FilteredGroups}" SelectedItem="{Binding SelectedGroup}"
                              Background="Transparent" BorderThickness="0">

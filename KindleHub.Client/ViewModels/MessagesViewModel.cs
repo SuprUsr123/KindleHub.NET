@@ -54,6 +54,8 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     private readonly Dictionary<string, List<Message>> _roomMessageCache = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _roomCacheLru = new();
     private readonly HashSet<string> _seenInvites = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _seenChatRequests = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _declinedChatRequests = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _avatarCodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PublicProfileDetails> _profileDetails = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _avatarLookups = new(StringComparer.OrdinalIgnoreCase);
@@ -75,6 +77,7 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     public ObservableCollection<Message> ActivePolls { get => _activePolls; set => SetProperty(ref _activePolls, value); }
     private string _newMessageText = "";
     private string _joinCode = "";
+    private string _chatSearchText = "";
     private bool _isLoading;
     private bool _sending;
     private string _statusText = "Select a room.";
@@ -114,6 +117,17 @@ public class MessagesViewModel : ViewModelBase, IDisposable
     public enum MediaSendMode { None, Sticker, Poll, Flipbook, Story, App }
 
     public ObservableCollection<Group> Groups { get => _groups; set => SetProperty(ref _groups, value); }
+    public ObservableCollection<FriendUser> ChatSearchResults { get; } = new();
+    public ObservableCollection<ChatRequestItem> ChatRequests { get; } = new();
+    public string ChatSearchText { get => _chatSearchText; set => SetProperty(ref _chatSearchText, value); }
+
+    public sealed class ChatRequestItem
+    {
+        public string Code { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string FromName { get; init; } = "Someone";
+        public Group ToGroup() => new() { Code = Code, Name = Name, Creator = FromName };
+    }
     public ObservableCollection<Group> FilteredGroups => _filteredGroups;
     public string RoomSearchText
     {
@@ -305,6 +319,10 @@ public class MessagesViewModel : ViewModelBase, IDisposable
 
     public RelayCommand SendCommand { get; }
     public RelayCommand JoinCommand { get; }
+    public RelayCommand SearchChatUsersCommand { get; }
+    public RelayCommand<FriendUser> RequestChatCommand { get; }
+    public RelayCommand<ChatRequestItem> AcceptChatRequestCommand { get; }
+    public RelayCommand<ChatRequestItem> DeclineChatRequestCommand { get; }
     public RelayCommand ReloadCommand { get; }
     public RelayCommand<Message> SelectMessageCommand { get; }
     public RelayCommand DeselectCommand { get; }
@@ -328,6 +346,10 @@ public class MessagesViewModel : ViewModelBase, IDisposable
         _logger = logger;
         SendCommand = new RelayCommand(async () => await SendMessageAsync(), () => !IsSending && SelectedGroup != null && !string.IsNullOrWhiteSpace(NewMessageText));
         JoinCommand = new RelayCommand(async () => await JoinByCodeAsync(), () => !string.IsNullOrWhiteSpace(JoinCode));
+        SearchChatUsersCommand = new RelayCommand(async () => await SearchChatUsersAsync());
+        RequestChatCommand = new RelayCommand<FriendUser>(async user => await RequestChatAsync(user));
+        AcceptChatRequestCommand = new RelayCommand<ChatRequestItem>(async request => await AcceptChatRequestAsync(request));
+        DeclineChatRequestCommand = new RelayCommand<ChatRequestItem>(request => DeclineChatRequest(request));
         ReloadCommand = new RelayCommand(async () => await ReloadRoomAsync(), () => SelectedGroup != null);
 
         SelectMessageCommand = new RelayCommand<Message>(m => ActiveMessage = (m != null && ActiveMessage?.Id == m.Id) ? null : m);
@@ -1431,19 +1453,32 @@ _messages.Clear();
         }
         try
         {
-            var invited = await _core.PollInboxForInvitesAsync(_inboxSince, CancellationToken.None);
+            var events = await _core.PollInboxSocialEventsAsync(CancellationToken.None);
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                foreach (var g in invited)
+                foreach (var ev in events)
                 {
-                    if (!_seenInvites.Add(g.Code)) continue;
-                    _inboxSince = DateTimeOffset.UtcNow;
-                    if (!Groups.Any(x => string.Equals(x?.Code, g.Code, StringComparison.Ordinal)))
+                    if (ev.Message == null || ev.Message.IsMine) continue;
+                    var code = ev.Str("code").Trim();
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(code, "^[0-9]{12}$")) continue;
+                    if (ev.Type == "DM_INVITE")
                     {
-                        Groups.Add(g);
-                        StatusText = (g.Creator ?? "Someone") + " started a DM — now in the Rooms list.";
+                        if (!_seenInvites.Add(code)) continue;
+                        _inboxSince = DateTimeOffset.UtcNow;
+                        var invited = new Group { Code = code, Name = ev.Str("name"), Creator = ev.Str("fromName") };
+                        if (!Groups.Any(x => string.Equals(x?.Code, code, StringComparison.Ordinal)))
+                        {
+                            Groups.Add(invited);
+                            StatusText = (invited.Creator ?? "Someone") + " started a DM — now in the Rooms list.";
+                        }
+                        RoomRegistry.AddRoom(invited);
                     }
-                    RoomRegistry.AddRoom(g);
+                    else if (ev.Type == "CHAT_REQUEST" && !_declinedChatRequests.Contains(code)
+                             && !Groups.Any(x => string.Equals(x?.Code, code, StringComparison.Ordinal))
+                             && _seenChatRequests.Add(code))
+                    {
+                        ChatRequests.Add(new ChatRequestItem { Code = code, Name = ev.Str("name"), FromName = ev.Str("fromName") });
+                    }
                 }
             });
         }
@@ -1452,6 +1487,69 @@ _messages.Clear();
             _logger.LogDebug(ex, "Inbox poll failed");
         }
         finally { Volatile.Write(ref _inboxPolling, 0); }
+    }
+
+    private async Task SearchChatUsersAsync()
+    {
+        if (string.IsNullOrWhiteSpace(ChatSearchText)) return;
+        try
+        {
+            var users = await _core.SearchFriendUsersAsync(ChatSearchText.Trim(), CancellationToken.None);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                ChatSearchResults.Clear();
+                foreach (var user in users) ChatSearchResults.Add(user);
+                StatusText = users.Count == 0 ? "No matching accounts." : "Choose an account to send a chat request.";
+            });
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Chat user search failed"); StatusText = "Couldn't search accounts."; }
+    }
+
+    private async Task RequestChatAsync(FriendUser? user)
+    {
+        if (user == null) return;
+        try
+        {
+            var group = await _core.SendChatRequestAsync(user.Hash, user.Name, CancellationToken.None);
+            await _core.SaveOpenedMessageRoomAsync(group, CancellationToken.None);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!Groups.Any(g => g.Code == group.Code)) Groups.Add(group);
+                RoomRegistry.Open(group);
+                SelectedGroup = group;
+                StatusText = $"Chat request sent to {user.Name}.";
+                ChatSearchResults.Clear();
+            });
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Chat request failed"); StatusText = "Couldn't send that chat request."; }
+    }
+
+    private async Task AcceptChatRequestAsync(ChatRequestItem? request)
+    {
+        if (request == null) return;
+        var group = request.ToGroup();
+        try
+        {
+            await _core.AcceptChatRequestAsync(group, CancellationToken.None);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                ChatRequests.Remove(request);
+                if (!Groups.Any(g => g.Code == group.Code)) Groups.Add(group);
+                RoomRegistry.Open(group);
+                SelectedGroup = group;
+                StatusText = $"Chat with {request.FromName} accepted.";
+            });
+        }
+        catch (Exception ex) { _logger.LogInformation(ex, "Accept chat request failed"); StatusText = "Couldn't accept that chat request."; }
+    }
+
+    private void DeclineChatRequest(ChatRequestItem? request)
+    {
+        if (request == null) return;
+        _declinedChatRequests.Add(request.Code);
+        _seenChatRequests.Add(request.Code);
+        ChatRequests.Remove(request);
+        StatusText = "Chat request declined.";
     }
 
     public void Dispose()
