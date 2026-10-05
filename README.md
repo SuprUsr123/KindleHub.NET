@@ -26,7 +26,7 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 |----------|-------|
 | **Windows** | Use PowerShell script (`build.ps1`). Requires Windows 10/11 x64 or ARM64. Untested! |
 | **Linux** | Use bash script (`build.sh`). Supports X11 and native Wayland sessions. Tested on Debian 13+ (KDE Plasma 6.7.4, Wayland), EndavourOS (KDE Plasma 6.7.4, Wayland) |
-| **macOS** | Use bash script (`build.sh`). Requires macOS 12+ (Monterey). Works on Intel and Apple Silicon (probably). Untested! |
+| **macOS** | Use bash script (`build.sh`). Requires macOS 12+ (Monterey). Release builds include separate Intel (`osx-x64`) and Apple Silicon (`osx-arm64`) packages. |
 
 ## Quick Start
 
@@ -49,6 +49,10 @@ chmod +x build.sh
 ./artifacts/Release/linux/KindleHub    # Linux
 ./artifacts/Release/darwin/KindleHub   # macOS
 ```
+
+GitHub release packages are published as `...-osx-x64.tar.gz` for Intel Macs
+and `...-osx-arm64.tar.gz` for Apple Silicon Macs. Use the `osx-x64` RID when
+building locally for an Intel Mac.
 
 ### Windows (PowerShell)
 
