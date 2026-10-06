@@ -105,9 +105,57 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  android:
+    name: Build Android APK
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Android workload
+        run: dotnet workload install android
+
+      # Debug configuration is signed automatically, so this APK can be
+      # installed directly without storing a private signing key in the repo.
+      - name: Publish Android arm64 APK
+        run: >-
+          dotnet publish KindleHub.Client.Android/KindleHub.Client.Android.csproj
+          --configuration Debug
+          --runtime android-arm64
+          -p:AndroidPackageFormat=apk
+          --output publish/android-arm64
+
+      - name: Name Android release package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          apk="$(find publish/android-arm64 -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          cp "$apk" "KindleHub-${VERSION}-android-arm64.apk"
+
+      - name: Upload Android package
+        uses: actions/upload-artifact@v4
+        with:
+          name: KindleHub-${{ needs.version.outputs.version }}-android-arm64
+          path: KindleHub-${{ needs.version.outputs.version }}-android-arm64.apk
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Publish GitHub release
-    needs: [version, build]
+    needs: [version, build, android]
     runs-on: ubuntu-latest
     steps:
       - name: Check out source

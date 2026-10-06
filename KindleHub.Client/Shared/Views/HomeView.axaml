@@ -5,7 +5,7 @@
              mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="700"
              x:Class="KindleHub.Client.Views.HomeView">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="48,40" Spacing="22" MaxWidth="880" HorizontalAlignment="Center">
+        <StackPanel x:Name="ContentStack" Margin="48,40" Spacing="22" MaxWidth="880" HorizontalAlignment="Center">
             <StackPanel Spacing="8">
                 <TextBlock Text="KindleHub Pro" FontSize="14" FontWeight="Bold"
                            Foreground="{DynamicResource AccentFillColorDefaultBrush}"/>
@@ -15,7 +15,7 @@
                            FontSize="16" Foreground="Gray" TextWrapping="Wrap"/>
             </StackPanel>
 
-            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="14" RowSpacing="14">
+            <Grid x:Name="HomeCards" ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="14" RowSpacing="14">
                 <Border Grid.Row="0" Grid.Column="0" Padding="20" CornerRadius="10"
                         BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1"
                         Background="{DynamicResource ControlFillColorDefault}">
@@ -24,7 +24,7 @@
                         <TextBlock Text="Browse reader topics or start a new conversation." Foreground="Gray"
                                    TextWrapping="Wrap"/>
                         <Button Content="Explore topics" HorizontalAlignment="Left" FontWeight="Bold"
-                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                Command="{Binding NavigateCommand}"
                                 CommandParameter="Community"/>
                     </StackPanel>
                 </Border>
@@ -36,7 +36,7 @@
                         <TextBlock Text="Open Global Chat, a topic room, or a direct conversation." Foreground="Gray"
                                    TextWrapping="Wrap"/>
                         <Button Content="Open messages" HorizontalAlignment="Left" FontWeight="Bold"
-                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                Command="{Binding NavigateCommand}"
                                 CommandParameter="Messages"/>
                     </StackPanel>
                 </Border>
@@ -48,7 +48,7 @@
                         <TextBlock Text="Check the latest scores and see who is online." Foreground="Gray"
                                    TextWrapping="Wrap"/>
                         <Button Content="See rankings" HorizontalAlignment="Left" FontWeight="Bold"
-                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                Command="{Binding NavigateCommand}"
                                 CommandParameter="Leaderboards"/>
                     </StackPanel>
                 </Border>
@@ -60,7 +60,7 @@
                         <TextBlock Text="Send a private note to another KindleHub account." Foreground="Gray"
                                    TextWrapping="Wrap"/>
                         <Button Content="Open mailbox" HorizontalAlignment="Left" FontWeight="Bold"
-                                Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                                Command="{Binding NavigateCommand}"
                                 CommandParameter="Mail"/>
                     </StackPanel>
                 </Border>
@@ -74,7 +74,7 @@
                                    Foreground="Gray" TextWrapping="Wrap"/>
                     </StackPanel>
                     <Button Grid.Column="1" Content="Open Arcade" VerticalAlignment="Center" FontWeight="Bold"
-                            Command="{Binding $parent[Window].DataContext.NavigateCommand}"
+                            Command="{Binding NavigateCommand}"
                             CommandParameter="Arcade"/>
                 </Grid>
             </Border>

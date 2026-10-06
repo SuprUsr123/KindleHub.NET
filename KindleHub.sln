@@ -8,6 +8,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KindleHub.Client", "KindleH
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KindleHub.Client.Gametest", "KindleHub.Client.Gametest\KindleHub.Client.Gametest.csproj", "{E18C6ABB-846C-48D5-9BF9-6AB5A2C01031}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KindleHub.Client.Shared", "KindleHub.Client\Shared\KindleHub.Client.Shared.csproj", "{55E27915-4B04-4A77-A0EC-5F27E2D98386}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KindleHub.Client.Android", "KindleHub.Client.Android\KindleHub.Client.Android.csproj", "{26E64BE5-1372-4ED2-8FCD-4531CDA4A1CC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KindleHub.Client.iOS", "KindleHub.Client.iOS\KindleHub.Client.iOS.csproj", "{1ACF93F8-7728-4306-9931-E79A656BFF95}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,6 +32,18 @@ Global
 		{E18C6ABB-846C-48D5-9BF9-6AB5A2C01031}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{E18C6ABB-846C-48D5-9BF9-6AB5A2C01031}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E18C6ABB-846C-48D5-9BF9-6AB5A2C01031}.Release|Any CPU.Build.0 = Release|Any CPU
+		{55E27915-4B04-4A77-A0EC-5F27E2D98386}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{55E27915-4B04-4A77-A0EC-5F27E2D98386}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{55E27915-4B04-4A77-A0EC-5F27E2D98386}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{55E27915-4B04-4A77-A0EC-5F27E2D98386}.Release|Any CPU.Build.0 = Release|Any CPU
+		{26E64BE5-1372-4ED2-8FCD-4531CDA4A1CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{26E64BE5-1372-4ED2-8FCD-4531CDA4A1CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{26E64BE5-1372-4ED2-8FCD-4531CDA4A1CC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{26E64BE5-1372-4ED2-8FCD-4531CDA4A1CC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1ACF93F8-7728-4306-9931-E79A656BFF95}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1ACF93F8-7728-4306-9931-E79A656BFF95}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1ACF93F8-7728-4306-9931-E79A656BFF95}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1ACF93F8-7728-4306-9931-E79A656BFF95}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

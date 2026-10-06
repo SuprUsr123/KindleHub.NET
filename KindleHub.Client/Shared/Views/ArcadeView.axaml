@@ -13,7 +13,7 @@
 
     <UserControl.Resources>
         <DataTemplate x:Key="GameCard">
-            <Border Width="280"
+            <Border Classes="game-card" Width="280"
                     MinHeight="196"
                     Margin="0,0,14,14"
                     Padding="14"
@@ -131,7 +131,7 @@
         </DataTemplate>
     </UserControl.Resources>
 
-    <Grid>
+    <Grid x:Name="ArcadeRoot">
     <ScrollViewer VerticalScrollBarVisibility="Auto" IsVisible="{Binding NotInGame}">
         <StackPanel Spacing="22" Margin="24,24,24,32">
             <Border Padding="20"
@@ -139,7 +139,7 @@
                     Background="{DynamicResource ControlFillColorDefault}"
                     BorderBrush="{DynamicResource ControlBorderBrush}"
                     BorderThickness="1">
-                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                <Grid x:Name="ArcadeHero" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="16">
                     <StackPanel Spacing="4">
                         <TextBlock Text="Arcade" FontSize="31" FontWeight="Bold"/>
                         <TextBlock Text="A pocket-sized collection of games, puzzles, and time killers."
@@ -166,7 +166,7 @@
                 </Grid>
             </Border>
 
-            <Grid ColumnDefinitions="*,Auto">
+            <Grid x:Name="ArcadeSearch" ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <TextBox Text="{Binding SearchText}"
                          MinHeight="38"
                          PlaceholderText="Search by name, slug, or description…"/>
@@ -174,7 +174,6 @@
                           ItemsSource="{Binding FilterModes}"
                           SelectedItem="{Binding FilterMode}"
                           MinWidth="125"
-                          Margin="12,0,0,0"
                           VerticalContentAlignment="Center"/>
             </Grid>
 
@@ -250,7 +249,7 @@
     </ScrollViewer>
     <ScrollViewer VerticalScrollBarVisibility="Auto" IsVisible="{Binding IsOnlineGamePage}">
         <StackPanel Spacing="16" Margin="24,24,24,32" HorizontalAlignment="Center">
-            <Grid ColumnDefinitions="Auto,*" Width="760" MaxWidth="900">
+            <Grid x:Name="OnlineGameHeader" ColumnDefinitions="Auto,*" MaxWidth="900">
                 <Button Content="← Arcade" Command="{Binding BackCommand}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Margin="16,0,0,0" Spacing="3" VerticalAlignment="Center">
                     <TextBlock Text="{Binding GameName}" FontSize="28" FontWeight="Bold"/>
@@ -262,12 +261,12 @@
                     IsVisible="{Binding ShowConnect4Tools}">
                 <StackPanel Spacing="10">
                     <TextBlock Text="Host a room or join a six digit room code." Foreground="Gray"/>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
+                    <WrapPanel Orientation="Horizontal">
                         <Button Content="Host online" Command="{Binding HostConnect4Command}"/>
                         <TextBox Text="{Binding Connect4Room}" Width="140" PlaceholderText="6 digit code"/>
                         <Button Content="Join" Command="{Binding JoinConnect4Command}"/>
                         <Button Content="Debug match" Command="{Binding DebugConnect4Command}"/>
-                    </StackPanel>
+                    </WrapPanel>
                 </StackPanel>
             </Border>
             <Border Padding="14" CornerRadius="12" Background="{DynamicResource ControlFillColorDefault}"
@@ -275,12 +274,12 @@
                     IsVisible="{Binding ShowDotsBoxesTools}">
                 <StackPanel Spacing="10">
                     <TextBlock Text="Complete boxes by claiming their fourth edge. A completed box earns an extra turn." Foreground="Gray" TextWrapping="Wrap"/>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
+                    <WrapPanel Orientation="Horizontal">
                         <Button Content="Host online" Command="{Binding HostDotsBoxesCommand}"/>
                         <TextBox Text="{Binding DotsBoxesRoom}" Width="140" PlaceholderText="6 digit code"/>
                         <Button Content="Join" Command="{Binding JoinDotsBoxesCommand}"/>
                         <Button Content="Debug match" Command="{Binding StartDotsBoxesDebugCommand}"/>
-                    </StackPanel>
+                    </WrapPanel>
                 </StackPanel>
             </Border>
             <Border Padding="14" CornerRadius="12" Background="{DynamicResource ControlFillColorDefault}"
@@ -288,12 +287,12 @@
                     IsVisible="{Binding ShowReversiTools}">
                 <StackPanel Spacing="10">
                     <TextBlock Text="Host a room or join a six digit room code." Foreground="Gray"/>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
+                    <WrapPanel Orientation="Horizontal">
                         <Button Content="Host online" Command="{Binding HostReversiCommand}"/>
                         <TextBox Text="{Binding ReversiRoom}" Width="140" PlaceholderText="6 digit code"/>
                         <Button Content="Join" Command="{Binding JoinReversiCommand}"/>
                         <Button Content="Debug match" Command="{Binding StartReversiDebugCommand}"/>
-                    </StackPanel>
+                    </WrapPanel>
                 </StackPanel>
             </Border>
             <Border Padding="14" CornerRadius="12" Background="{DynamicResource ControlFillColorDefault}"

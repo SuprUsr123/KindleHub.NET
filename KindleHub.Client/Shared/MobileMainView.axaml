@@ -1,0 +1,95 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="KindleHub.Client.MobileMainView"
+             Background="{DynamicResource AppWindowBackground}">
+  <UserControl.Styles>
+    <Style Selector="Button.mobile-nav-item">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource AppTextPrimaryBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Padding" Value="2,4" />
+    </Style>
+    <Style Selector="Button.mobile-nav-item:pointerover">
+      <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondary}" />
+    </Style>
+    <Style Selector="Button.mobile-nav-item.active">
+      <Setter Property="Foreground" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+      <Setter Property="Background" Value="{DynamicResource ControlFillColorSecondary}" />
+    </Style>
+  </UserControl.Styles>
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Padding="12,7"
+            Background="{DynamicResource ControlFillColorDefault}"
+            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+        <TextBlock Text="KindleHub Pro" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" />
+        <TextBlock Grid.Row="1" Text="{Binding StatusText}" FontSize="11" Foreground="Gray" />
+        <Button Grid.Column="1" Grid.RowSpan="2" Content="Account" MinHeight="42" Padding="10,4"
+                Command="{Binding NavigateCommand}" CommandParameter="Settings" />
+      </Grid>
+    </Border>
+
+    <ContentControl Grid.Row="1" Content="{Binding CurrentView}"
+                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+
+    <Border Grid.Row="2" Padding="10,4"
+            Background="{DynamicResource ControlFillColorDefault}"
+            BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="0,1,0,0">
+      <Grid MaxWidth="640" HorizontalAlignment="Center"
+            ColumnDefinitions="*,*,*,*,*" ColumnSpacing="10">
+        <Button x:Name="HomeNavButton" Classes="mobile-nav-item" Grid.Column="0" MinHeight="48"
+                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                Margin="2,2"
+                Command="{Binding NavigateCommand}" CommandParameter="Home">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="1">
+            <TextBlock Text="⌂" FontSize="19" HorizontalAlignment="Center" />
+            <TextBlock Text="Home" FontSize="10" FontWeight="SemiBold" />
+          </StackPanel>
+        </Button>
+        <Button x:Name="FeedNavButton" Classes="mobile-nav-item" Grid.Column="1" MinHeight="48"
+                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                Margin="2,2"
+                Command="{Binding NavigateCommand}" CommandParameter="Community">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="1">
+            <TextBlock Text="◇" FontSize="18" HorizontalAlignment="Center" />
+            <TextBlock Text="Feed" FontSize="10" FontWeight="SemiBold" />
+          </StackPanel>
+        </Button>
+        <Button x:Name="ChatsNavButton" Classes="mobile-nav-item" Grid.Column="2" MinHeight="48"
+                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                Margin="2,2"
+                Command="{Binding NavigateCommand}" CommandParameter="Messages">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="1">
+            <TextBlock Text="☰" FontSize="17" HorizontalAlignment="Center" />
+            <TextBlock Text="Chats" FontSize="10" FontWeight="SemiBold" />
+          </StackPanel>
+        </Button>
+        <Button x:Name="ArcadeNavButton" Classes="mobile-nav-item" Grid.Column="3" MinHeight="48"
+                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                Margin="2,2"
+                Command="{Binding NavigateCommand}" CommandParameter="Arcade">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="1">
+            <TextBlock Text="▷" FontSize="18" HorizontalAlignment="Center" />
+            <TextBlock Text="Arcade" FontSize="10" FontWeight="SemiBold" />
+          </StackPanel>
+        </Button>
+        <Button x:Name="MoreNavButton" Classes="mobile-nav-item" Grid.Column="4" MinHeight="48"
+                HorizontalContentAlignment="Center" VerticalContentAlignment="Center" Margin="2,2">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="1">
+            <TextBlock Text="•••" FontSize="15" HorizontalAlignment="Center" />
+            <TextBlock Text="More" FontSize="10" FontWeight="SemiBold" />
+          </StackPanel>
+          <Button.Flyout>
+            <MenuFlyout Placement="Top">
+              <MenuItem Header="Leaderboards" Command="{Binding NavigateCommand}" CommandParameter="Leaderboards" />
+              <MenuItem Header="Mail" Command="{Binding NavigateCommand}" CommandParameter="Mail" />
+              <MenuItem Header="App Store" Command="{Binding NavigateCommand}" CommandParameter="App Store" />
+              <MenuItem Header="Settings" Command="{Binding NavigateCommand}" CommandParameter="Settings" />
+            </MenuFlyout>
+          </Button.Flyout>
+        </Button>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

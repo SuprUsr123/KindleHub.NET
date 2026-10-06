@@ -24,10 +24,8 @@ public sealed class TttCell : INotifyPropertyChanged
     public bool IsWinning
     {
         get => _isWinning;
-        set { if (_isWinning != value) { _isWinning = value; OnPropertyChanged(); OnPropertyChanged(nameof(WinBrush)); } }
+        set { if (_isWinning != value) { _isWinning = value; OnPropertyChanged(); } }
     }
-
-    public string WinBrush => _isWinning ? "#2e7d32" : "transparent";
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null) =>

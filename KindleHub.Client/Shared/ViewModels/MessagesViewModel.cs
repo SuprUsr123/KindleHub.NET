@@ -415,7 +415,7 @@ public class MessagesViewModel : ViewModelBase, IDisposable
         MessageFriendCommand = new RelayCommand<FriendEntry>(async entry => { if (entry != null) await MessageFriendAsync(entry); });
         ReloadCommand = new RelayCommand(async () => await ReloadRoomAsync(), () => SelectedGroup != null);
 
-        SelectMessageCommand = new RelayCommand<Message>(m => ActiveMessage = (m != null && ActiveMessage?.Id == m.Id) ? null : m);
+        SelectMessageCommand = new RelayCommand<Message>(m => ActiveMessage = m);
         DeselectCommand = new RelayCommand(ClearActiveMessage);
         ToggleStarCommand = new RelayCommand<Message>(async m => await ToggleStarAsync(m));
         ToNotesCommand = new RelayCommand<Message>(async m => await StarToNotesAsync(m), _ => ActiveMessage != null);

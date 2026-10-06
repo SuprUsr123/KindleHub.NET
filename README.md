@@ -1,7 +1,7 @@
 # KindleHub.NET
 98% completed! Quite a lot of features requiring server is wired up now (except for admin/moderator-specific functions, I can't implement them without admin/mod roles). Also, aran, do NOT fuck with the GPL.
 
-Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Runs on Windows, Linux, and macOS.
+Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Desktop builds run on Windows, Linux, and macOS; Android and iOS mobile hosts are in their initial port phase.
 
 ## Architecture
 
@@ -10,10 +10,12 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
   - Supabase REST API client
   - Domain models (UserProfile, Group, Message, LeaderboardEntry, AppInfo, etc.)
 
-- **KindleHub.Client** (C#, Avalonia UI, .NET 8.0) - Cross-platform UI with:
+- **KindleHub.Client.Shared** (C#, Avalonia UI, .NET 8.0) - Shared views, view models, assets, and dependency setup used by each host.
+- **KindleHub.Client** (C#, Avalonia desktop host, .NET 8.0) - Windows, macOS, and Linux launcher with:
   - MVVM architecture
   - Views: Home, Leaderboards, Community, Messages, App Store, Settings
   - Dependency injection with Microsoft.Extensions.Hosting
+- **KindleHub.Client.Android** and **KindleHub.Client.iOS** - .NET 10 platform launchers using the shared UI and a touch-sized bottom navigation bar.
 
 ## Prerequisites
 
@@ -27,6 +29,10 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 | **Windows** | Use PowerShell script (`build.ps1`). Requires Windows 10/11 x64 or ARM64. Untested! |
 | **Linux** | Use bash script (`build.sh`). Supports X11 and native Wayland sessions. Tested on Debian 13+ (KDE Plasma 6.7.4, Wayland), EndavourOS (KDE Plasma 6.7.4, Wayland) |
 | **macOS** | Use bash script (`build.sh`). Requires macOS 12+ (Monterey). Release builds include separate Intel (`osx-x64`) and Apple Silicon (`osx-arm64`) packages. |
+| **Android** | Install the .NET Android workload, Android SDK Platform 36, Android build tools, and JDK 21. Build with `dotnet build KindleHub.Client.Android/KindleHub.Client.Android.csproj`. |
+| **iOS** | Requires .NET 10 and a Mac with Xcode for simulator/device builds and signing. Build with `dotnet build KindleHub.Client.iOS/KindleHub.Client.iOS.csproj -p:RuntimeIdentifier=iossimulator-arm64` on Apple Silicon or `iossimulator-x64` on Intel. |
+
+The mobile shell reuses the existing views and view models. Actions that open standalone desktop windows (such as story/game viewers and message action panels), and launching downloaded HTML apps, still need mobile page/dialog or platform-native replacements.
 
 ## Quick Start
 
@@ -52,7 +58,8 @@ chmod +x build.sh
 
 GitHub release packages are published as `...-osx-x64.tar.gz` for Intel Macs
 and `...-osx-arm64.tar.gz` for Apple Silicon Macs. Use the `osx-x64` RID when
-building locally for an Intel Mac.
+building locally for an Intel Mac. Automated releases also include an
+installable Android arm64 APK (`...-android-arm64.apk`).
 
 ### Windows (PowerShell)
 

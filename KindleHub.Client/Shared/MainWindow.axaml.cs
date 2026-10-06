@@ -1,9 +1,11 @@
+using System;
 using Avalonia.Controls;
 using Avalonia;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using System.Threading.Tasks;
 using KindleHub.Client.ViewModels;
@@ -21,6 +23,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://KindleHub.Client.Shared/Assets/KindleHub.ico")));
         FontSizeScaler.Attach(this);
         AddHandler(KeyDownEvent, HandleKonamiCode, RoutingStrategies.Tunnel);
     }

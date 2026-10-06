@@ -46,6 +46,8 @@ public partial class App : Application
 
         Host = CreateHostBuilder().Build();
 
+        var mainViewModel = Services!.GetRequiredService<MainViewModel>();
+
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             // Apply the saved theme before the window exists, so the app never
@@ -59,7 +61,6 @@ public partial class App : Application
             }
             catch { AppTheme.Apply(AppTheme.Light); }
 
-            var mainViewModel = Services!.GetRequiredService<MainViewModel>();
             desktop.MainWindow = new MainWindow
             {
                 DataContext = mainViewModel
@@ -77,6 +78,34 @@ public partial class App : Application
             };
             
             mainViewModel.NavigateTo("Home");
+        }
+        else if (ApplicationLifetime is IActivityApplicationLifetime activity)
+        {
+            try
+            {
+                var prefs = Services!.GetRequiredService<KindleHubCore>().CurrentPrefs();
+                AppTheme.Apply(prefs.Theme);
+                FontSizeScaler.SetFontSizePx(prefs.FontSizePx);
+            }
+            catch { AppTheme.Apply(AppTheme.Light); }
+
+            mainViewModel.NavigateTo("Home");
+            activity.MainViewFactory = () => new MobileMainView { DataContext = mainViewModel };
+            _ = mainViewModel.InitializeAsync();
+        }
+        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
+        {
+            try
+            {
+                var prefs = Services!.GetRequiredService<KindleHubCore>().CurrentPrefs();
+                AppTheme.Apply(prefs.Theme);
+                FontSizeScaler.SetFontSizePx(prefs.FontSizePx);
+            }
+            catch { AppTheme.Apply(AppTheme.Light); }
+
+            mainViewModel.NavigateTo("Home");
+            singleView.MainView = new MobileMainView { DataContext = mainViewModel };
+            _ = mainViewModel.InitializeAsync();
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -189,7 +218,8 @@ public partial class App : Application
                 services.AddTransient<HomeViewModel>(sp => 
                     new HomeViewModel(
                         sp.GetRequiredService<KindleHubCore>(),
-                        sp.GetRequiredService<ILogger<HomeViewModel>>()));
+                        sp.GetRequiredService<ILogger<HomeViewModel>>(),
+                        page => sp.GetRequiredService<MainViewModel>().NavigateTo(page)));
                 services.AddTransient<LeaderboardViewModel>(sp => 
                     new LeaderboardViewModel(
                         sp.GetRequiredService<KindleHubCore>(),

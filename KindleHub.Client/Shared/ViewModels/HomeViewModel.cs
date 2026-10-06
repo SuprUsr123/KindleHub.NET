@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Input;
 using KindleHub.Core;
 using Microsoft.Extensions.Logging;
 
@@ -18,10 +19,13 @@ public class HomeViewModel : ViewModelBase
         set => SetProperty(ref _welcomeText, value);
     }
 
-    public HomeViewModel(KindleHubCore core, ILogger<HomeViewModel> logger)
+    public ICommand NavigateCommand { get; }
+
+    public HomeViewModel(KindleHubCore core, ILogger<HomeViewModel> logger, Action<string?> navigate)
     {
         _core = core;
         _logger = logger;
+        NavigateCommand = new RelayCommand<string>(navigate);
         var name = _core.CurrentProfile?.DisplayName;
         WelcomeText = string.IsNullOrWhiteSpace(name) ? "Welcome to KindleHub Pro" : $"Welcome back, {name}";
     }

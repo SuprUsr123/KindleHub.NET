@@ -12,7 +12,7 @@
     <RootNamespace>KindleHub.GameTest</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\KindleHub.Client\KindleHub.Client.csproj" />
+    <ProjectReference Include="..\KindleHub.Client\Shared\KindleHub.Client.Shared.csproj" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
   </ItemGroup>
 </Project>

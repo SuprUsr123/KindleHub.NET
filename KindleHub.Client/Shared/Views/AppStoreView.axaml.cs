@@ -16,6 +16,41 @@ public partial class AppStoreView : UserControl
     public AppStoreView()
     {
         InitializeComponent();
+        SizeChanged += (_, args) => ConfigureForWidth(args.NewSize.Width);
+    }
+
+    private void ConfigureForWidth(double width)
+    {
+        var compact = width < 760;
+        StoreRoot.Margin = compact ? new Avalonia.Thickness(8) : new Avalonia.Thickness(16);
+
+        StoreHeader.ColumnDefinitions.Clear();
+        StoreHeader.RowDefinitions.Clear();
+        StoreHeader.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        StoreHeader.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        StoreHeader.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        StoreHeader.RowDefinitions.Add(new RowDefinition(compact ? GridLength.Auto : new GridLength(0)));
+        Grid.SetRow(StoreHeaderActions, compact ? 1 : 0);
+        Grid.SetColumn(StoreHeaderActions, compact ? 0 : 1);
+        StoreHeaderActions.HorizontalAlignment = compact
+            ? Avalonia.Layout.HorizontalAlignment.Left
+            : Avalonia.Layout.HorizontalAlignment.Right;
+        StoreHeaderActions.Margin = compact ? new Avalonia.Thickness(-8, 10, 0, 0) : new Avalonia.Thickness(0);
+
+        StoreFilters.ColumnDefinitions.Clear();
+        StoreFilters.RowDefinitions.Clear();
+        StoreFilters.ColumnDefinitions.Add(new ColumnDefinition(compact ? GridLength.Star : GridLength.Auto));
+        StoreFilters.ColumnDefinitions.Add(new ColumnDefinition(compact ? GridLength.Star : GridLength.Star));
+        StoreFilters.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        StoreFilters.RowDefinitions.Add(new RowDefinition(compact ? GridLength.Auto : new GridLength(0)));
+        Grid.SetColumn(CategoryFilter, 0);
+        Grid.SetRow(CategoryFilter, 0);
+        Grid.SetColumn(StoreSearch, compact ? 0 : 1);
+        Grid.SetRow(StoreSearch, compact ? 1 : 0);
+        CategoryFilter.HorizontalAlignment = compact
+            ? Avalonia.Layout.HorizontalAlignment.Stretch
+            : Avalonia.Layout.HorizontalAlignment.Left;
+        StoreSearch.Margin = compact ? new Avalonia.Thickness(0, 8, 0, 0) : new Avalonia.Thickness(0);
     }
 
     private async void Download_Click(object? sender, RoutedEventArgs e)

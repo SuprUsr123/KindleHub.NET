@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
+using Avalonia.Input.Platform;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -31,18 +33,40 @@ public partial class MessagesView : UserControl
     /// <summary>Set while we move the ScrollViewer ourselves, so our own layout
     /// passes don't get mistaken for the reader scrolling.</summary>
     private bool _selfScrolling;
+    private bool _mobileLayout;
+    private bool _mobileShowChannels = true;
+    private readonly DispatcherTimer _messageHoldTimer;
+    private Message? _pressedMessage;
+    private Control? _pressedMessageBubble;
+    private Point _messagePressPoint;
+    private long? _messagePressPointerId;
 
     public MessagesView()
     {
         InitializeComponent();
+        _messageHoldTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(550) };
+        _messageHoldTimer.Tick += MessageHoldTimer_Tick;
+        ChatScroll.AddHandler(InputElement.PointerPressedEvent, ChatScroll_PointerPressed,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
+        ChatScroll.AddHandler(InputElement.PointerMovedEvent, ChatScroll_PointerMoved,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
+        ChatScroll.AddHandler(InputElement.PointerReleasedEvent, ChatScroll_PointerReleased,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
+        ChatScroll.AddHandler(InputElement.ContextRequestedEvent, ChatScroll_ContextRequested,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
+        SizeChanged += (_, args) => ConfigureLayout(args.NewSize.Width);
         Loaded += OnLoaded;
         Unloaded += (_, _) =>
         {
-            if (DataContext is not MessagesViewModel vm) return;
-            vm.ScrollRequested -= OnScrollRequested;
-            vm.ForceScrollRequested -= OnForceScrollRequested;
+            if (DataContext is MessagesViewModel vm)
+            {
+                vm.ScrollRequested -= OnScrollRequested;
+                vm.ForceScrollRequested -= OnForceScrollRequested;
+                vm.PropertyChanged -= ViewModel_PropertyChanged;
+            }
             ChatScroll.ScrollChanged -= ChatScroll_ScrollChanged;
             ChatScroll.PointerWheelChanged -= ChatScroll_PointerWheelChanged;
+            CancelMessageHold();
         };
     }
 
@@ -50,6 +74,11 @@ public partial class MessagesView : UserControl
     {
         if (DataContext is not MessagesViewModel vm) return;
         vm.AttachHostControl(this);
+        vm.PropertyChanged -= ViewModel_PropertyChanged;
+        vm.PropertyChanged += ViewModel_PropertyChanged;
+        if (Bounds.Width < 760 && vm.SelectedGroup is not null)
+            _mobileShowChannels = false;
+        ConfigureLayout(Bounds.Width);
         vm.ScrollRequested -= OnScrollRequested;
         vm.ScrollRequested += OnScrollRequested;
         vm.ForceScrollRequested -= OnForceScrollRequested;
@@ -64,6 +93,113 @@ public partial class MessagesView : UserControl
         _missed = 0;
         UpdateJumpButton();
         JumpToBottom(force: true);
+        UpdateMessageActionPresentation(vm);
+    }
+
+    private void ConfigureLayout(double width)
+    {
+        _mobileLayout = width < 760;
+        MessagesRoot.Margin = _mobileLayout ? new Thickness(4) : new Thickness(12);
+        MessagesTitle.IsVisible = !_mobileLayout;
+        MessagesLayout.ColumnDefinitions.Clear();
+        MessagesLayout.RowDefinitions.Clear();
+
+        if (_mobileLayout)
+        {
+            ChatHeaderLayout.ColumnDefinitions.Clear();
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            ChatHeaderLayout.RowDefinitions.Clear();
+            ChatHeaderLayout.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            ChatHeaderLayout.ColumnSpacing = 4;
+            Grid.SetColumn(ShowChannelsButton, 0);
+            Grid.SetColumn(ChatHeaderInfo, 1);
+            Grid.SetColumn(HeaderProgress, 2);
+            Grid.SetColumn(RefreshMessagesButton, 3);
+            ChannelIcon.IsVisible = false;
+            RefreshMessagesButton.Content = "↻";
+            RefreshMessagesButton.MinWidth = 44;
+            RefreshMessagesButton.Padding = new Thickness(4, 0);
+
+            MessagesLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            MessagesLayout.RowDefinitions.Add(new RowDefinition(_mobileShowChannels ? GridLength.Star : new GridLength(0)));
+            MessagesLayout.RowDefinitions.Add(new RowDefinition(_mobileShowChannels ? new GridLength(0) : GridLength.Star));
+            MessagesLayout.ColumnSpacing = 0;
+            Grid.SetColumn(ChannelPanel, 0);
+            Grid.SetRow(ChannelPanel, 0);
+            Grid.SetColumn(ChatPanel, 0);
+            Grid.SetRow(ChatPanel, 1);
+            ShowChannelsButton.IsVisible = true;
+            ApplyMobilePanelVisibility();
+        }
+        else
+        {
+            ChatHeaderLayout.ColumnDefinitions.Clear();
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            ChatHeaderLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            ChatHeaderLayout.RowDefinitions.Clear();
+            ChatHeaderLayout.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            ChatHeaderLayout.ColumnSpacing = 8;
+            Grid.SetColumn(ShowChannelsButton, 0);
+            Grid.SetColumn(ChannelIcon, 1);
+            Grid.SetColumn(ChatHeaderInfo, 2);
+            Grid.SetColumn(HeaderProgress, 3);
+            Grid.SetColumn(RefreshMessagesButton, 4);
+            ChannelIcon.IsVisible = true;
+            RefreshMessagesButton.Content = "Refresh";
+            RefreshMessagesButton.ClearValue(TemplatedControl.MinWidthProperty);
+            RefreshMessagesButton.ClearValue(TemplatedControl.PaddingProperty);
+
+            MessagesLayout.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(250)));
+            MessagesLayout.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            MessagesLayout.RowDefinitions.Add(new RowDefinition(GridLength.Star));
+            MessagesLayout.ColumnSpacing = 12;
+            Grid.SetColumn(ChannelPanel, 0);
+            Grid.SetRow(ChannelPanel, 0);
+            Grid.SetColumn(ChatPanel, 1);
+            Grid.SetRow(ChatPanel, 0);
+            ChannelPanel.IsVisible = true;
+            ChatPanel.IsVisible = true;
+            ShowChannelsButton.IsVisible = false;
+        }
+
+        if (DataContext is MessagesViewModel vm)
+            UpdateMessageActionPresentation(vm);
+    }
+
+    private void ApplyMobilePanelVisibility()
+    {
+        ChannelPanel.IsVisible = _mobileShowChannels;
+        ChatPanel.IsVisible = !_mobileShowChannels;
+        if (_mobileLayout && MessagesLayout.RowDefinitions.Count == 2)
+        {
+            MessagesLayout.RowDefinitions[0].Height = _mobileShowChannels ? GridLength.Star : new GridLength(0);
+            MessagesLayout.RowDefinitions[1].Height = _mobileShowChannels ? new GridLength(0) : GridLength.Star;
+        }
+    }
+
+    private void ShowChannels_Click(object? sender, RoutedEventArgs e)
+    {
+        _mobileShowChannels = true;
+        ApplyMobilePanelVisibility();
+    }
+
+    private void OpenGroup_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: Group group } || DataContext is not MessagesViewModel vm)
+            return;
+
+        vm.SelectedGroup = group;
+        if (_mobileLayout)
+        {
+            _mobileShowChannels = false;
+            ApplyMobilePanelVisibility();
+        }
     }
 
     /// <summary>New content arrived. This follows the official client’s bottom-pin
@@ -147,8 +283,6 @@ public partial class MessagesView : UserControl
         viewModel?.SetFollowState(atBottom);
         if (atBottom)
             _missed = 0;
-        else
-            _missed++;
         UpdateJumpButton();
     }
 
@@ -238,15 +372,112 @@ public partial class MessagesView : UserControl
         _ = vm.OpenAppShareAsync(msg);
     }
 
-    /// <summary>Tap a bubble to open the official per-message action bar. Tap again to close it.</summary>
-    private void Bubble_PointerPressed(object? sender, PointerPressedEventArgs e)
+    /// <summary>Start a short stationary-press timer for touch and mouse. Pointer motion
+    /// cancels it, leaving vertical swipes to the chat scroller.</summary>
+    private void ChatScroll_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (e.ClickCount != 1) return;
-        if (sender is Control { DataContext: Message msg } && DataContext is MessagesViewModel vm)
+        if (DataContext is not MessagesViewModel || FindMessageBubble(e.Source) is not { } message)
+            return;
+
+        var point = e.GetCurrentPoint(this);
+        if (e.Pointer.Type != PointerType.Touch && !point.Properties.IsLeftButtonPressed)
+            return;
+
+        CancelMessageHold();
+        _pressedMessage = message;
+        _pressedMessageBubble = FindMessageBubbleControl(e.Source);
+        _messagePressPoint = point.Position;
+        _messagePressPointerId = e.Pointer.Id;
+        _messageHoldTimer.Start();
+    }
+
+    private void ChatScroll_PointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_pressedMessage is null || _messagePressPointerId != e.Pointer.Id)
+            return;
+
+        var position = e.GetPosition(this);
+        var delta = position - _messagePressPoint;
+        if (Math.Abs(delta.X) > 14 || Math.Abs(delta.Y) > 14)
+            CancelMessageHold();
+    }
+
+    private void ChatScroll_PointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_messagePressPointerId == e.Pointer.Id)
+            CancelMessageHold();
+    }
+
+    private static Control? FindMessageBubbleControl(object? source)
+    {
+        for (var control = source as Control; control is not null; control = control.GetVisualParent() as Control)
         {
-            vm.SelectMessageCommand.Execute(msg);
-            e.Handled = true;
+            if (control is Border border && border.Classes.Contains("chat-message"))
+                return control;
         }
+
+        return null;
+    }
+
+    private static Message? FindMessageBubble(object? source) =>
+        FindMessageBubbleControl(source)?.DataContext as Message;
+
+    private void ChatScroll_ContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (FindMessageBubbleControl(e.Source) is not { DataContext: Message message } bubble)
+            return;
+
+        e.Handled = true;
+        OpenMessageActions(message, bubble);
+    }
+
+    private void MessageHoldTimer_Tick(object? sender, EventArgs e)
+    {
+        _messageHoldTimer.Stop();
+        if (_pressedMessage is { } message && _pressedMessageBubble is { } bubble)
+            OpenMessageActions(message, bubble);
+    }
+
+    private void OpenMessageActions(Message message, Control bubble)
+    {
+        if (DataContext is not MessagesViewModel vm) return;
+        vm.SelectMessageCommand.Execute(message);
+        UpdateMessageActionPresentation(vm);
+        CancelMessageHold();
+    }
+
+    private void MessageAction_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MessagesViewModel vm)
+            vm.DeselectCommand.Execute(null);
+        MobileMessageActionSheet.IsVisible = false;
+        SelectedMessageActionBar.IsVisible = false;
+    }
+
+    private void DismissMessageActions_Click(object? sender, RoutedEventArgs e) => MessageAction_Click(sender, e);
+
+    private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(MessagesViewModel.ActiveMessage) or nameof(MessagesViewModel.HasActiveMessage)
+            && sender is MessagesViewModel vm)
+            UpdateMessageActionPresentation(vm);
+    }
+
+    private void UpdateMessageActionPresentation(MessagesViewModel vm)
+    {
+        var show = vm.HasActiveMessage;
+        SelectedMessageActionBar.IsVisible = show && !_mobileLayout;
+        MobileMessageActionSheet.IsVisible = show && _mobileLayout;
+        if (_mobileLayout)
+            MobileMessageActionPanel.MaxHeight = Math.Max(320, Bounds.Height * 0.78);
+    }
+
+    private void CancelMessageHold()
+    {
+        _messageHoldTimer.Stop();
+        _pressedMessage = null;
+        _pressedMessageBubble = null;
+        _messagePressPointerId = null;
     }
 
     private void ReasonChip_Click(object? sender, RoutedEventArgs e)
