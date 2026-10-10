@@ -158,6 +158,7 @@ Public Class KindleHubApiClient
         _httpClient.BaseAddress = New Uri(_options.BaseUrl.TrimEnd("/"c) & "/")
         _httpClient.Timeout = _options.Timeout
         _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", _options.UserAgent)
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Origin", "https://kindlehub.pro")
     End Sub
 
     Private Function JsonOpts() As JsonSerializerOptions
