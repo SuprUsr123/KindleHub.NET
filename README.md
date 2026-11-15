@@ -194,3 +194,6 @@ See how to host your own instance (still legacy compared to the latest version d
 ## License
 
 GPL License - see LICENSE file for details. (why does the agent keep messing this up, why was it originally MIT)
+
+## NOTICE
+I'm so fucking tired with KindleHub, you know what, this client is discontinued, aran TRULY hates open-source software, privacy, and transparency. The APIs no longer work. They all report being "Forbidden".
