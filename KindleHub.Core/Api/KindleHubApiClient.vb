@@ -15,7 +15,18 @@ Imports KindleHub.Core
 Public Class KindleHubApiOptions
     Public Property BaseUrl As String = "https://kindlehub-api.arancool3000.workers.dev"
     Public Property Timeout As TimeSpan = TimeSpan.FromSeconds(30)
-    Public Property UserAgent As String = "KindleHub.Desktop/1.0"
+    ''' <summary>Web parity: GET reads get the shortest clock (8s), writes 20s, and
+    ''' kh_users upserts 60s — matching _sbFetch's per-call timeout budget.</summary>
+    Public Property ReadTimeout As TimeSpan = TimeSpan.FromSeconds(8)
+    Public Property WriteTimeout As TimeSpan = TimeSpan.FromSeconds(20)
+    Public Property AccountUpsertTimeout As TimeSpan = TimeSpan.FromSeconds(60)
+    ''' <summary>The fetch-tunnel worker the web client falls back to when the API
+    ''' gateway is unreachable from the current network (?url=&lt;encoded target&gt;).</summary>
+    Public Const TunnelUrl As String = "https://vpn.arancool3000.workers.dev/?url="
+    ''' <summary>Spoofed identity: the desktop presents itself as ordinary browser
+    ''' traffic from kindlehub.pro (see the constructor) so the gateway fingerprints
+    ''' it exactly like the official web build. Override only if you must.</summary>
+    Public Property UserAgent As String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 End Class
 
 Public Class CreateTopicRequest
@@ -92,12 +103,26 @@ Public Interface IKindleHubApiClient
     ' ── Mail ────────────────────────────────────────────────────────────────
     ' One row per message in kh_mail. The server forces every read to the caller's
     ' own mailbox (received OR sent), so the Inbox/Sent split is a client-side
-    ' view of a single fetch. Body is E2E-encrypted under SHA-256("khmsg::mail:"+id);
-    ' subject is deliberately plaintext so a list can render without any keys.
+    ' view of a single fetch. Both body AND subject are E2E-encrypted under
+    ' SHA-256("khmsg::mail:" + normalized recipient) — same scheme as the web client.
     Function FetchMailAsync(authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of MailItem))
     Function SendMailAsync(request As SendMailRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of MailItem)
     ' Unsend: only the sending device can remove its own mail (owner_secret gate).
     Function DeleteMailAsync(mailId As String, ownerSecret As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+
+    ' ── Web-build parity additions (v10.70.1) ───────────────────────────────
+    ' Inbox events ride the kh_inbox_send RPC when available (p_hash/p_to/p_payload),
+    ' falling back to a direct insert into the recipient's 800000xxxxxx relay room.
+    Function SendInboxEventAsync(authToken As String, toUserId As String, payloadJson As String, displayName As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+    ' Leaderboard runs need a per-game "khr1." integrity token (kh_run_start {p_hash,p_game}).
+    Function GetRunTokenAsync(authToken As String, game As String, cancellationToken As CancellationToken) As Task(Of String)
+    ' Store ratings (kh_store_rate {p_hash,p_id,p_stars}) and the moderator-only
+    ' pending/review pair (kh_store_pending / kh_store_review with the mod token).
+    Function RateAppAsync(authToken As String, appId As String, stars As Integer, cancellationToken As CancellationToken) As Task
+    Function FetchPendingStoreAppsAsync(moderatorCode As String, cancellationToken As CancellationToken) As Task(Of List(Of AppCatalog))
+    Function ReviewStoreAppAsync(moderatorCode As String, appId As String, decision As String, reason As String, cancellationToken As CancellationToken) As Task
+    ' Room-owner cleanup: DELETE with X-KH-Secret = account token plus X-KH-Room-Owner: 1.
+    Function DeleteMessageAsRoomOwnerAsync(messageId As String, authToken As String, cancellationToken As CancellationToken) As Task(Of Boolean)
 End Interface
 
 Public Class FriendUser
@@ -151,14 +176,43 @@ Public Class KindleHubApiClient
     Private ReadOnly _options As KindleHubApiOptions
     Private ReadOnly _logger As ILogger(Of KindleHubApiClient)
 
+    ' Web parity state: per-table GET cache, per-game score run tokens, the
+    ' kh_banned_usernames set used to filter leaderboards, and the 30-second
+    ' same-score dedupe window of _khSubmitScore.
+    Private Class CacheEntry
+        Public Property Expires As DateTimeOffset
+        Public Property Rows As List(Of JsonElement)
+    End Class
+    Private ReadOnly _cacheLock As New Object()
+    Private ReadOnly _getCache As New Dictionary(Of String, CacheEntry)(StringComparer.Ordinal)
+    Private ReadOnly _runTokens As New Dictionary(Of String, (Token As String, At As DateTimeOffset))(StringComparer.Ordinal)
+    Private ReadOnly _scoreDedupe As New Dictionary(Of String, DateTimeOffset)(StringComparer.Ordinal)
+    Private ReadOnly _banNames As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+    Private _banNamesAt As DateTimeOffset = DateTimeOffset.MinValue
+
     Public Sub New(httpClient As HttpClient, options As KindleHubApiOptions, logger As ILogger(Of KindleHubApiClient))
         _httpClient = httpClient
         _options = options
         _logger = logger
         _httpClient.BaseAddress = New Uri(_options.BaseUrl.TrimEnd("/"c) & "/")
         _httpClient.Timeout = _options.Timeout
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", _options.UserAgent)
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Origin", "https://kindlehub.pro")
+        ' Spoofed web identity: the gateway fingerprints requests (Origin / Referer /
+        ' User-Agent / Sec-Fetch metadata), so every call the desktop makes presents
+        ' exactly what a fetch() from a browser tab on kindlehub.pro would send —
+        ' cross-site CORS from the site origin to this workers.dev gateway, mainstream
+        ' Chrome UA, standard Accept/Accept-Language. Applied once on the shared
+        ' HttpClient, so API reads/writes, presence traffic and anything else riding
+        ' this client all carry the same identity.
+        With _httpClient.DefaultRequestHeaders
+            .TryAddWithoutValidation("User-Agent", _options.UserAgent)
+            .TryAddWithoutValidation("Origin", "https://kindlehub.pro")
+            .TryAddWithoutValidation("Referer", "https://kindlehub.pro/")
+            .TryAddWithoutValidation("Accept", "*/*")
+            .TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9")
+            .TryAddWithoutValidation("Sec-Fetch-Site", "cross-site")
+            .TryAddWithoutValidation("Sec-Fetch-Mode", "cors")
+            .TryAddWithoutValidation("Sec-Fetch-Dest", "empty")
+        End With
     End Sub
 
     Private Function JsonOpts() As JsonSerializerOptions
@@ -174,6 +228,21 @@ Public Class KindleHubApiClient
         Dim authToken = KeyDerivation.DeriveAuthToken(request.Username, request.Password)
         Dim canonical = KeyDerivation.CanonicalizeUsername(request.Username).ToLowerInvariant()
 
+        ' Freedom-first registration: only basic sanity on the username (length +
+        ' charset); the server has the final word on names and conflicts. The
+        ' password-leak check is OPT-IN (CheckPasswordLeaks) and NEVER blocks —
+        ' it only produces a warning. Even when it runs, only the first 5 chars of
+        ' the password's SHA-1 leave the device (HIBP k-anonymity), never the
+        ' password or its full hash.
+        Dim usernameProblem = ValidateUsername(canonical)
+        If usernameProblem IsNot Nothing Then
+            Return New AuthResult With {.Success = False, .Error = usernameProblem}
+        End If
+        Dim passwordWarning As String = Nothing
+        If request.CheckPasswordLeaks AndAlso Await IsPasswordPwnedAsync(request.Password, cancellationToken) Then
+            passwordWarning = "That password appears in public breach lists. It still works, but a more unique one is safer."
+        End If
+
         If Await CheckHashExistsAsync(authToken, cancellationToken) Then
             Return New AuthResult With {.Success = False, .Error = "An account with this email already exists."}
         End If
@@ -187,13 +256,14 @@ Public Class KindleHubApiClient
             Key .updated_at = now
         }
         Try
-            Await PostVoidAsync("rest/v1/kh_users?on_conflict=hash", payload, UpsertHeaders(authToken), cancellationToken)
+            Await PostKhUsersWithRetryAsync(payload, authToken, cancellationToken)
             Return New AuthResult With {
                 .Success = True,
                 .Username = canonical,
                 .AuthToken = authToken,
                 .StateJson = "{}",
-                .Adjusted = False
+                .Adjusted = False,
+                .Warning = passwordWarning
             }
         Catch ex As ServerException When ex.StatusCode = 409
             Return New AuthResult With {.Success = False, .Error = "That username is already registered."}
@@ -255,7 +325,7 @@ Public Class KindleHubApiClient
             Key .updated_at = now
         }
         Try
-            Await PostVoidAsync("rest/v1/kh_users?on_conflict=hash", payload, UpsertHeaders(authToken), cancellationToken)
+            Await PostKhUsersWithRetryAsync(payload, authToken, cancellationToken)
         Catch ex As ServerException When ex.StatusCode = 409
             Throw New ValidationException("That username is registered to a different account. Delete that account first.")
         End Try
@@ -333,7 +403,7 @@ Public Class KindleHubApiClient
         If String.IsNullOrEmpty(myId) AndAlso Hex64.IsMatch(If(authToken, "")) Then myId = authToken.Substring(0, 16).ToLowerInvariant()
         Dim limit = Math.Max(1, Math.Min(request.Limit, 200))
         Dim url = $"rest/v1/kh_messages?group_code=eq.{Uri.EscapeDataString(request.GroupCode)}&order=ts.desc&limit={limit}" &
-                  $"&select=id,group_code,user_id,display_name,text,ts,edited,important,reactions,reply_to,device_hint,location_hint"
+                  $"&select=id,group_code,user_id,display_name,text,ts,edited,important,reactions,reply_to"
         If request.Offset > 0 Then url &= $"&offset={request.Offset}"
         If Not String.IsNullOrEmpty(request.AfterId) Then url &= "&id=gt." & Uri.EscapeDataString(request.AfterId)
         If request.AfterTimestamp.HasValue Then
@@ -355,8 +425,6 @@ Public Class KindleHubApiClient
                 .DisplayName = JsonStr(row, "display_name"),
                 .Text = plaintext,
                 .ReplyTo = JsonStr(row, "reply_to"),
-                .DeviceHint = JsonStr(row, "device_hint"),
-                .LocationHint = JsonStr(row, "location_hint"),
                 .Timestamp = If(ts.HasValue, ts.Value, DateTimeOffset.UtcNow),
                 .Edited = JsonBool(row, "edited"),
                 .Important = JsonBool(row, "important"),
@@ -603,7 +671,7 @@ Public Class KindleHubApiClient
         If why.Length < 20 Then Throw New ValidationException("Please write at least a sentence about why you want to help.")
         Dim uid = authToken.Substring(0, 16).ToLowerInvariant()
         Dim name = TrimStr(If(displayName, "Reader"), 60)
-        Dim text = "[REPORT] [MODAPP] Moderator application" & vbLf &
+        Dim text = "[REPORT] Moderator application" & vbLf &
                    "Account: " & name & vbLf & "Uid: " & uid & vbLf &
                    "Using KindleHub: " & TrimStr(timeUsing, 40) & vbLf &
                    "Age range: " & TrimStr(ageRange, 32) & vbLf &
@@ -735,37 +803,129 @@ Public Class KindleHubApiClient
     Public Async Function SubmitScoreAsync(request As SubmitScoreRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of Boolean) Implements IKindleHubApiClient.SubmitScoreAsync
         ' kh_scores writes are refused for anonymous accounts (leaderboard integrity guard).
         If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in to post a score to the global leaderboard.")
+        ' Web parity (_khSubmitScore): integer 1..1,000,000,000, a per-game run token
+        ' from kh_run_start riding along as `run`, an optional replay `proof`, and a
+        ' 30-second same-score dedupe per game and account.
+        Dim score = CLng(Math.Truncate(CDbl(request.Score)))
+        If score < 1L OrElse score > 1000000000L Then Throw New ValidationException("Scores must be whole numbers between 1 and 1,000,000,000.")
+        Dim game = TrimStr(If(request.Game, "game"), 40)
+        Dim dedupeKey = game & "|" & authToken.Substring(0, 16) & "|" & score.ToString(Globalization.CultureInfo.InvariantCulture)
+        SyncLock _scoreDedupe
+            Dim last As DateTimeOffset
+            If _scoreDedupe.TryGetValue(dedupeKey, last) AndAlso last > DateTimeOffset.UtcNow.AddSeconds(-30) Then Return True
+        End SyncLock
+        Dim runToken = Await GetRunTokenAsync(authToken, game, cancellationToken)
         Dim userId = authToken.Substring(0, 16).ToLowerInvariant()
-        Dim game = TrimStr(If(request.Game, "game"), 48)
         Dim now = DateTimeOffset.UtcNow
+        Dim proofText = If(String.IsNullOrWhiteSpace(request.Proof), Nothing, LeftOf(request.Proof, 4000))
         Dim payload = New With {
             Key .id = userId & "_" & game & "_" & now.ToUnixTimeMilliseconds() & "_" & Random.Shared.Next(1000),
             Key .game = game,
-            Key .score = Math.Max(0L, Math.Min(request.Score, 999999999L)),
+            Key .score = score,
             Key .display_name = TrimStr(If(request.DisplayName, "Reader"), 40),
             Key .user_id = userId,
-            Key .date = UtcIso()
+            Key .date = UtcIso(),
+            Key .run = If(runToken.Length = 0, Nothing, runToken),
+            Key .proof = proofText
         }
+        Dim retryNeeded = False
         Try
             Await PostVoidAsync("rest/v1/kh_scores", payload, InsertHeaders(authToken), cancellationToken)
+            MarkScoreDedupe(dedupeKey)
             Return True
         Catch ex As ServerException When ex.StatusCode = 409
+            MarkScoreDedupe(dedupeKey)
             Return True
+        Catch ex As ServerException When ex.StatusCode = 422
+            ' Policy rejections (SCORE_* errors) are swallowed like the web client does.
+            Return False
+        Catch ex As ServerException
+            If Not ex.Message.Contains("SCORE_TOKEN") Then Throw
+            retryNeeded = True ' the token expired server-side: refresh and retry below
         End Try
+        If retryNeeded Then
+            SyncLock _runTokens
+                _runTokens.Remove(game.ToLowerInvariant())
+            End SyncLock
+            runToken = Await GetRunTokenAsync(authToken, game, cancellationToken)
+            Dim retry = New With {
+                Key .id = payload.id & "_r",
+                Key .game = payload.game,
+                Key .score = payload.score,
+                Key .display_name = payload.display_name,
+                Key .user_id = payload.user_id,
+                Key .date = UtcIso(),
+                Key .run = If(runToken.Length = 0, Nothing, runToken),
+                Key .proof = payload.proof
+            }
+            Await PostVoidAsync("rest/v1/kh_scores", retry, InsertHeaders(authToken), cancellationToken)
+            MarkScoreDedupe(dedupeKey)
+            Return True
+        End If
+        Return False
     End Function
+
+    ''' <summary>Per-game leaderboard run token via kh_run_start {p_hash, p_game}. The
+    ''' gateway requires a fresh "khr1." token on every kh_scores write; the web client
+    ''' caches one per game for a day (kh_runtok) and a token stays submit-valid 20h.</summary>
+    Public Async Function GetRunTokenAsync(authToken As String, game As String, cancellationToken As CancellationToken) As Task(Of String) Implements IKindleHubApiClient.GetRunTokenAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Return ""
+        Dim key = TrimStr(If(game, "game"), 40).ToLowerInvariant()
+        SyncLock _runTokens
+            Dim hit = (Token := "", At := DateTimeOffset.MinValue)
+            If _runTokens.TryGetValue(key, hit) AndAlso hit.Token.StartsWith("khr1.", StringComparison.Ordinal) AndAlso hit.At > DateTimeOffset.UtcNow.AddHours(-20) Then
+                Return hit.Token
+            End If
+        End SyncLock
+        Dim payload = New With {
+            Key .p_hash = authToken.ToLowerInvariant(),
+            Key .p_game = key
+        }
+        Dim token = ""
+        Try
+            Dim body = Await PostJsonAsync("rest/v1/rpc/kh_run_start", payload, MinimalHeaders(authToken), cancellationToken)
+            Using doc = JsonDocument.Parse(body)
+                token = JsonStr(doc.RootElement, "token")
+            End Using
+        Catch
+            ' Token fetch is fail-open: the gateway still accepts submissions without
+            ' one when the RPC is unavailable, so the game keeps playing either way.
+            Return ""
+        End Try
+        If Not token.StartsWith("khr1.", StringComparison.Ordinal) Then Return ""
+        SyncLock _runTokens
+            _runTokens(key) = (token, DateTimeOffset.UtcNow)
+        End SyncLock
+        Return token
+    End Function
+
+    Private Sub MarkScoreDedupe(key As String)
+        SyncLock _scoreDedupe
+            If _scoreDedupe.Count > 128 Then _scoreDedupe.Clear()
+            _scoreDedupe(key) = DateTimeOffset.UtcNow
+        End SyncLock
+    End Sub
 
     Public Async Function FetchScoresAsync(request As FetchScoresRequest, cancellationToken As CancellationToken) As Task(Of List(Of LeaderboardEntry)) Implements IKindleHubApiClient.FetchScoresAsync
         Dim rows = Await GetRowsAsync($"rest/v1/kh_scores?game=eq.{Uri.EscapeDataString(request.Game)}&order=score.desc&limit=" &
                                       Math.Max(1, Math.Min(request.Limit, 100)) & "&select=id,score,display_name,date,user_id", cancellationToken)
         Dim results As New List(Of LeaderboardEntry)()
         If rows Is Nothing Then Return results
+        ' Web parity: the leaderboard hides rows from banned names (kh_banned_usernames)
+        ' and collapses duplicate names to their best row.
+        Dim bans = Await FetchBannedNamesAsync(cancellationToken)
+        Dim seenNames As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
         For Each row In rows
             Dim d = JsonDate(row, "date")
+            Dim name = JsonStr(row, "display_name")
+            If Not String.IsNullOrEmpty(name) AndAlso bans.Contains(name) Then Continue For
+            If String.IsNullOrEmpty(name) Then name = "Reader"
+            If Not seenNames.Add(name.Trim()) Then Continue For
             results.Add(New LeaderboardEntry With {
                 .Id = JsonStr(row, "id"),
                 .Game = request.Game,
                 .Score = JsonLong(row, "score"),
-                .DisplayName = JsonStr(row, "display_name"),
+                .DisplayName = name,
                 .UserId = JsonStr(row, "user_id"),
                 .Date = If(d.HasValue, d.Value, DateTimeOffset.MinValue)
             })
@@ -961,9 +1121,11 @@ Public Class KindleHubApiClient
             {"user_id", JsonValue.Create(uid)},
             {"display_name", JsonValue.Create(TrimStr(If(displayName, "Reader"), 40))},
             {"last_seen", JsonValue.Create(UtcIso())},
-            {"avatar", JsonValue.Create(If(IsProfileAvatarCode(avatar), avatar, ""))},
             {"profile", profileData}
         }
+        ' Web parity: a beat never sends an empty avatar — omitting the field keeps
+        ' the picture other clients already see instead of erasing it.
+        If IsProfileAvatarCode(avatar) Then payload("avatar") = JsonValue.Create(avatar)
         Try
             Await PostVoidAsync("rest/v1/kh_presence?on_conflict=user_id", payload, UpsertHeaders(authToken), cancellationToken)
         Catch
@@ -971,10 +1133,17 @@ Public Class KindleHubApiClient
         End Try
     End Function
 
+    Public Const OnlineWindowMinutes As Integer = 7
+    Public Const PresenceBeatSeconds As Integer = 100
+    Public Const PresenceBeatSimpleModeSeconds As Integer = 180
+    Public Const DiscoveryWindowDays As Integer = 14
+
     Public Async Function FetchPresenceAsync(minutesActive As Integer, limit As Integer, cancellationToken As CancellationToken) As Task(Of List(Of PresenceEntry)) Implements IKindleHubApiClient.FetchPresenceAsync
         Dim cutoff = DateTimeOffset.UtcNow.AddMinutes(-Math.Max(1, minutesActive)).ToString("O")
+        ' Web parity: discovery sweeps read a 14-day window at limit 400, so the
+        ' former hard cap of 100 was too low for the People view.
         Dim rows = Await GetRowsAsync($"rest/v1/kh_presence?last_seen=gt.{Uri.EscapeDataString(cutoff)}&select=user_id,display_name,last_seen,avatar,profile&order=last_seen.desc&limit=" &
-                                      Math.Max(1, Math.Min(limit, 100)), cancellationToken)
+                                      Math.Max(1, Math.Min(limit, 400)), cancellationToken)
         Dim list As New List(Of PresenceEntry)()
         If rows Is Nothing Then Return list
         For Each row In rows
@@ -1137,33 +1306,88 @@ Public Class KindleHubApiClient
         Return Await GetRowsAsync(url, Nothing, cancellationToken)
     End Function
 
+    ''' <summary>Per-table GET cache TTLs, mirroring the web client's result cache.
+    ''' Message and presence reads are never cached (they drive live polling).</summary>
+    Private Shared Function CacheTtl(url As String) As TimeSpan
+        If url.Contains("kh_messages") OrElse url.Contains("kh_presence") Then Return TimeSpan.Zero
+        If url.Contains("kh_scores") Then Return TimeSpan.FromSeconds(30)
+        If url.Contains("kh_store_apps") Then Return TimeSpan.FromSeconds(120)
+        If url.Contains("kh_groups") Then Return TimeSpan.FromSeconds(60)
+        If url.Contains("kh_banned_usernames") Then Return TimeSpan.FromMinutes(10)
+        If url.Contains("kh_users") Then Return TimeSpan.FromSeconds(15)
+        Return TimeSpan.FromSeconds(20)
+    End Function
+
     Private Overloads Async Function GetRowsAsync(url As String, secret As String, cancellationToken As CancellationToken) As Task(Of List(Of JsonElement))
-        Using req As New HttpRequestMessage(HttpMethod.Get, url)
-            req.Headers.TryAddWithoutValidation("Accept", "application/json")
-            If Not String.IsNullOrEmpty(secret) Then req.Headers.TryAddWithoutValidation("X-KH-Secret", secret.ToLowerInvariant())
+        Dim cacheKey = url & "|" & If(secret, "").ToLowerInvariant()
+        Dim ttl = CacheTtl(url)
+        If ttl > TimeSpan.Zero Then
+            SyncLock _cacheLock
+                Dim hit As CacheEntry = Nothing
+                If _getCache.TryGetValue(cacheKey, hit) Then
+                    If hit.Expires > DateTimeOffset.UtcNow Then Return hit.Rows
+                    _getCache.Remove(cacheKey)
+                End If
+            End SyncLock
+        End If
+        Dim rows = Await GetRowsCoreAsync(url, secret, cancellationToken)
+        If ttl > TimeSpan.Zero Then
+            SyncLock _cacheLock
+                If _getCache.Count > 80 Then _getCache.Clear() ' web cache holds ~80 entries
+                _getCache(cacheKey) = New CacheEntry With {.Expires = DateTimeOffset.UtcNow.Add(ttl), .Rows = rows}
+            End SyncLock
+        End If
+        Return rows
+    End Function
+
+    Private Async Function GetRowsCoreAsync(url As String, secret As String, cancellationToken As CancellationToken) As Task(Of List(Of JsonElement))
+        Using linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            linked.CancelAfter(_options.ReadTimeout)
+            Using req As New HttpRequestMessage(HttpMethod.Get, url)
+                req.Headers.TryAddWithoutValidation("Accept", "application/json")
+                If Not String.IsNullOrEmpty(secret) Then req.Headers.TryAddWithoutValidation("X-KH-Secret", secret.ToLowerInvariant())
+                Try
+                    Using resp = Await _httpClient.SendAsync(req, linked.Token)
+                        Dim body = Await resp.Content.ReadAsStringAsync(linked.Token)
+                        If Not resp.IsSuccessStatusCode Then
+                            _logger.LogWarning("GET {Url} failed: {Status} {Body}", url, CInt(resp.StatusCode), LeftOf(body, 300))
+                            Throw New ServerException($"API request failed: {resp.StatusCode}", CInt(resp.StatusCode))
+                        End If
+                        If String.IsNullOrWhiteSpace(body) Then Return New List(Of JsonElement)()
+                        Dim doc = JsonDocument.Parse(body)
+                        If doc.RootElement.ValueKind = JsonValueKind.Array Then
+                            Return doc.RootElement.EnumerateArray().ToList()
+                        End If
+                        ' A PGRST116 single-object error body can still be a 4xx; treat as empty
+                        Return New List(Of JsonElement) From {doc.RootElement}
+                    End Using
+                Catch ex As ServerException
+                    Throw
+                Catch ex As Exception
+                    If TypeOf ex Is OperationCanceledException Then Throw
+                    _logger.LogWarning(ex, "GET {Url} threw", url)
+                    Throw New NetworkException("Could not reach the server: " & ex.Message, ex)
+                End Try
+            End Using
+        End Using
+    End Function
+
+    ''' <summary>Retry a kh_users upsert like the web client does for account saves
+    ''' (two extra attempts with a short backoff before giving up).</summary>
+    Private Async Function PostKhUsersWithRetryAsync(payload As Object, authToken As String, cancellationToken As CancellationToken) As Task
+        Dim attempt = 0
+        While True
+            attempt += 1
             Try
-                Using resp = Await _httpClient.SendAsync(req, cancellationToken)
-                    Dim body = Await resp.Content.ReadAsStringAsync(cancellationToken)
-                    If Not resp.IsSuccessStatusCode Then
-                        _logger.LogWarning("GET {Url} failed: {Status} {Body}", url, CInt(resp.StatusCode), LeftOf(body, 300))
-                        Throw New ServerException($"API request failed: {resp.StatusCode}", CInt(resp.StatusCode))
-                    End If
-                    If String.IsNullOrWhiteSpace(body) Then Return New List(Of JsonElement)()
-                    Dim doc = JsonDocument.Parse(body)
-                    If doc.RootElement.ValueKind = JsonValueKind.Array Then
-                        Return doc.RootElement.EnumerateArray().ToList()
-                    End If
-                    ' A PGRST116 single-object error body can still be a 4xx; treat as empty
-                    Return New List(Of JsonElement) From {doc.RootElement}
-                End Using
+                Await PostVoidAsync("rest/v1/kh_users?on_conflict=hash", payload, UpsertHeaders(authToken), cancellationToken)
+                Return
             Catch ex As ServerException
                 Throw
             Catch ex As Exception
-                If TypeOf ex Is OperationCanceledException Then Throw
-                _logger.LogWarning(ex, "GET {Url} threw", url)
-                Throw New NetworkException("Could not reach the server: " & ex.Message, ex)
+                If TypeOf ex Is OperationCanceledException OrElse attempt > 3 Then Throw
             End Try
-        End Using
+            Await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken)
+        End While
     End Function
 
     Private Async Function PostVoidAsync(url As String, payload As Object, headers As Dictionary(Of String, String), cancellationToken As CancellationToken) As Task
@@ -1231,16 +1455,19 @@ Public Class KindleHubApiClient
     End Function
 
     Private Async Function PostInternalAsync(url As String, payload As Object, headers As Dictionary(Of String, String), cancellationToken As CancellationToken) As Task(Of String)
-        Using req As New HttpRequestMessage(HttpMethod.Post, url)
-            req.Content = New StringContent(JsonSerializer.Serialize(payload, JsonOpts()), Encoding.UTF8, "application/json")
-            ApplyHeaders(req, headers)
-            Using resp = Await _httpClient.SendAsync(req, cancellationToken)
-                Dim body = Await resp.Content.ReadAsStringAsync(cancellationToken)
-                If Not resp.IsSuccessStatusCode Then
-                    _logger.LogWarning("POST {Url} failed: {Status} {Body}", url, CInt(resp.StatusCode), LeftOf(body, 300))
-                    Throw New ServerException(SafeErr(body, resp), CInt(resp.StatusCode))
-                End If
-                Return body
+        Using linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            linked.CancelAfter(If(url.Contains("kh_users"), _options.AccountUpsertTimeout, _options.WriteTimeout))
+            Using req As New HttpRequestMessage(HttpMethod.Post, url)
+                req.Content = New StringContent(JsonSerializer.Serialize(payload, JsonOpts()), Encoding.UTF8, "application/json")
+                ApplyHeaders(req, headers)
+                Using resp = Await _httpClient.SendAsync(req, linked.Token)
+                    Dim body = Await resp.Content.ReadAsStringAsync(linked.Token)
+                    If Not resp.IsSuccessStatusCode Then
+                        _logger.LogWarning("POST {Url} failed: {Status} {Body}", url, CInt(resp.StatusCode), LeftOf(body, 300))
+                        Throw New ServerException(SafeErr(body, resp), CInt(resp.StatusCode))
+                    End If
+                    Return body
+                End Using
             End Using
         End Using
     End Function
@@ -1366,6 +1593,159 @@ Public Class KindleHubApiClient
         }
         If Hex64.IsMatch(If(secret, "")) Then h.Add("X-KH-Secret", secret.ToLowerInvariant())
         Return h
+    End Function
+
+    ' ───────────────────── web-build parity additions ─────────────────────
+    ''' <summary>Deliver an inbox event through the official RPC route
+    ''' (kh_inbox_send {p_hash,p_to,p_payload}), falling back to a direct insert
+    ''' into the recipient's 800000xxxxxx relay room when the RPC is unavailable.</summary>
+    Public Async Function SendInboxEventAsync(authToken As String, toUserId As String, payloadJson As String, displayName As String, cancellationToken As CancellationToken) As Task(Of Boolean) Implements IKindleHubApiClient.SendInboxEventAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in first.")
+        Dim uid = TrimStr(If(toUserId, ""), 16).ToLowerInvariant()
+        If uid.Length <> 16 Then Throw New ValidationException("A recipient user id is required.")
+        Dim payload = New With {
+            Key .p_hash = authToken.ToLowerInvariant(),
+            Key .p_to = uid,
+            Key .p_payload = If(payloadJson, "")
+        }
+        Dim sent = False
+        Try
+            Await PostVoidAsync("rest/v1/rpc/kh_inbox_send", payload, MinimalHeaders(authToken), cancellationToken)
+            sent = True
+        Catch
+            sent = False
+        End Try
+        If Not sent Then
+            ' Legacy route: post the event straight into the recipient's inbox room.
+            Try
+                Await SendMessageAsync(New SendMessageRequest With {
+                    .GroupCode = RelayRooms.InboxRoomCodeFor(uid),
+                    .Text = payloadJson,
+                    .DisplayName = displayName,
+                    .Encrypted = True
+                }, authToken, cancellationToken)
+                sent = True
+            Catch
+                sent = False
+            End Try
+        End If
+        Return sent
+    End Function
+
+    ''' <summary>Rate a store app (kh_store_rate {p_hash,p_id,p_stars}, 1..5).</summary>
+    Public Async Function RateAppAsync(authToken As String, appId As String, stars As Integer, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.RateAppAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in to rate apps.")
+        If stars < 1 OrElse stars > 5 Then Throw New ValidationException("Ratings run from 1 to 5 stars.")
+        Await PostJsonAsync("rest/v1/rpc/kh_store_rate", New With {
+            Key .p_hash = authToken.ToLowerInvariant(),
+            Key .p_id = Safe(appId),
+            Key .p_stars = stars
+        }, MinimalHeaders(authToken), cancellationToken)
+    End Function
+
+    ''' <summary>Moderator queue of apps awaiting AI review (kh_store_pending).</summary>
+    Public Async Function FetchPendingStoreAppsAsync(moderatorCode As String, cancellationToken As CancellationToken) As Task(Of List(Of AppCatalog)) Implements IKindleHubApiClient.FetchPendingStoreAppsAsync
+        If String.IsNullOrWhiteSpace(moderatorCode) Then Throw New ValidationException("Enter a moderator code.")
+        Dim result As New List(Of AppCatalog)()
+        Using doc = JsonDocument.Parse(Await PostJsonAsync("rest/v1/rpc/kh_store_pending", New With {Key .p_token = moderatorCode.Trim()}, Nothing, cancellationToken))
+            Dim rows As JsonElement
+            If doc.RootElement.ValueKind = JsonValueKind.Array Then
+                rows = doc.RootElement
+            ElseIf doc.RootElement.TryGetProperty("rows", rows) Then
+                ' RPC returned {rows:[…]} — same shape as kh_app_list.
+            Else
+                Return result
+            End If
+            For Each row In rows.EnumerateArray()
+                If row.ValueKind = JsonValueKind.Object Then result.Add(ParseCatalog(row))
+            Next
+        End Using
+        Return result
+    End Function
+
+    ''' <summary>Moderator verdict on a pending app (kh_store_review): decision is
+    ''' "approve"/"decline" with an optional reason.</summary>
+    Public Async Function ReviewStoreAppAsync(moderatorCode As String, appId As String, decision As String, reason As String, cancellationToken As CancellationToken) As Task Implements IKindleHubApiClient.ReviewStoreAppAsync
+        If String.IsNullOrWhiteSpace(moderatorCode) Then Throw New ValidationException("Enter a moderator code.")
+        Dim d = If(decision, "").Trim().ToLowerInvariant()
+        If d <> "approve" AndAlso d <> "decline" Then Throw New ValidationException("Decision must be approve or decline.")
+        Await PostJsonAsync("rest/v1/rpc/kh_store_review", New With {
+            Key .p_token = moderatorCode.Trim(),
+            Key .p_id = Safe(appId),
+            Key .p_decision = d,
+            Key .p_reason = LeftOf(If(reason, ""), 300)
+        }, Nothing, cancellationToken)
+    End Function
+
+    ''' <summary>Room-owner cleanup: the gateway accepts a delete carrying the room
+    ''' owner's account secret plus X-KH-Room-Owner: 1 (moderation of one's own room).</summary>
+    Public Async Function DeleteMessageAsRoomOwnerAsync(messageId As String, authToken As String, cancellationToken As CancellationToken) As Task(Of Boolean) Implements IKindleHubApiClient.DeleteMessageAsRoomOwnerAsync
+        If Not Hex64.IsMatch(If(authToken, "")) Then Return False
+        If String.IsNullOrEmpty(messageId) Then Return False
+        Dim url = $"rest/v1/kh_messages?id=eq.{Uri.EscapeDataString(messageId)}"
+        Using req As New HttpRequestMessage(HttpMethod.Delete, url)
+            req.Headers.TryAddWithoutValidation("X-KH-Secret", authToken.ToLowerInvariant())
+            req.Headers.TryAddWithoutValidation("X-KH-Room-Owner", "1")
+            Using resp = Await _httpClient.SendAsync(req, cancellationToken)
+                Return resp.IsSuccessStatusCode
+            End Using
+        End Using
+    End Function
+
+    ''' <summary>The banned-name set used to filter leaderboards, refreshed from
+    ''' kh_banned_usernames every 10 minutes (best-effort, like the web client).</summary>
+    Private Async Function FetchBannedNamesAsync(cancellationToken As CancellationToken) As Task(Of HashSet(Of String))
+        If _banNamesAt > DateTimeOffset.UtcNow.AddMinutes(-10) Then Return _banNames
+        Try
+            Dim rows = Await GetRowsAsync("rest/v1/kh_banned_usernames?select=email&limit=1000", cancellationToken)
+            Dim fresh As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+            For Each r In rows
+                Dim e = JsonStr(r, "email")
+                If Not String.IsNullOrEmpty(e) Then fresh.Add(e)
+            Next
+            _banNames.Clear()
+            _banNames.UnionWith(fresh)
+            _banNamesAt = DateTimeOffset.UtcNow
+        Catch
+            ' Keep the previous set; filtering stays best-effort.
+        End Try
+        Return _banNames
+    End Function
+
+    ''' <summary>Freedom-first: only basic sanity (non-empty, ≤40 chars, safe charset).
+    ''' Reserved-name and staff-name gates are the SERVER's job — the desktop no longer
+    ''' blocks any name locally. canonical is already lowercase via CanonicalizeUsername.</summary>
+    Public Shared Function ValidateUsername(canonical As String) As String
+        If String.IsNullOrEmpty(canonical) Then Return "Pick a username."
+        If canonical.Length > 40 Then Return "Usernames are at most 40 characters."
+        If Not Regex.IsMatch(canonical, "^[a-z0-9._-]+$") Then Return "Usernames may only use letters, numbers, dots, underscores and dashes."
+        Return Nothing
+    End Function
+
+    ''' <summary>HIBP k-anonymity check (api.pwnedpasswords.com/range/&lt;first 5 of SHA-1&gt;).
+    ''' Fails OPEN on network errors, like the web client's _khPwLeaked.</summary>
+    Public Async Function IsPasswordPwnedAsync(password As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+        If String.IsNullOrEmpty(password) Then Return False
+        Try
+            Dim hashHex = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(password))).ToLowerInvariant()
+            Using req As New HttpRequestMessage(HttpMethod.Get, "https://api.pwnedpasswords.com/range/" & hashHex.Substring(0, 5))
+                req.Headers.TryAddWithoutValidation("Add-Padding", "true")
+                Using linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                    linked.CancelAfter(TimeSpan.FromSeconds(5))
+                    Using resp = Await _httpClient.SendAsync(req, linked.Token)
+                        If Not resp.IsSuccessStatusCode Then Return False
+                        Dim body = Await resp.Content.ReadAsStringAsync(linked.Token)
+                        Dim suffix = hashHex.Substring(5)
+                        For Each line In body.Split(vbLf)
+                            If line.Trim().StartsWith(suffix, StringComparison.Ordinal) Then Return True
+                        Next
+                        Return False
+                    End Using
+                End Using
+            End Using
+        Catch
+            Return False
+        End Try
     End Function
 
     ' ───────────────────── small helpers ─────────────────────

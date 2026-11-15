@@ -57,6 +57,28 @@ public static class ProfileAvatar
     {
         background = Math.Clamp(background, 0, BackgroundColors.Length - 1);
         if (cells is null || cells.Length != CellCount) throw new ArgumentException("Avatar grid must be 22 by 22.", nameof(cells));
+        // Web parity (_khAvatarCode): binary art (every cell ink 0 or 1) ships as
+        // KHAV1 — 4 pixels per hex digit, LSB first. Only multi-ink art upgrades to KHAV2.
+        var binary = true;
+        foreach (var c in cells)
+        {
+            if (Math.Clamp(c, 0, InkColors.Length - 1) > 1) { binary = false; break; }
+        }
+        if (binary)
+        {
+            var hex = new System.Text.StringBuilder(CellCount / 4);
+            const string hexDigits = "0123456789abcdef";
+            for (var i = 0; i < CellCount / 4; i++)
+            {
+                var nibble = 0;
+                for (var bit = 0; bit < 4; bit++)
+                {
+                    if (Math.Clamp(cells[i * 4 + bit], 0, InkColors.Length - 1) > 0) nibble |= 1 << bit;
+                }
+                hex.Append(hexDigits[nibble]);
+            }
+            return $"KHAV1:{background}.{hex}";
+        }
         var bytes = new byte[CellCount / 2];
         for (var i = 0; i < CellCount; i++)
         {

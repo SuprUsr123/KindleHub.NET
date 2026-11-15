@@ -311,7 +311,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
         Public Async Function PublishAppAsync(name As String, html As String, category As String, cancellationToken As CancellationToken) As Task(Of PublishedApp)
             If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to publish an app.")
             If String.IsNullOrEmpty(html) Then Throw New ValidationException("The app HTML is empty.")
-            If html.Length > 550000 Then Throw New ValidationException("App is too large (max ~512 KB), same as the web client.")
+            If html.Length > 524288 Then Throw New ValidationException("App is too large (max 512 KiB, same as the web client).")
             Dim published = Await _apiClient.PublishAppAsync(New PublishAppRequest With {
                 .Name = name,
                 .Html = html,
@@ -508,20 +508,43 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
         End Function
 
         ' ───────────────────── cloud state sync ─────────────────────
-        Public Async Function SyncAccountAsync(stateJson As String, cancellationToken As CancellationToken) As Task(Of Boolean)
+        ''' <summary>Pushes the account vault to kh_users. Web parity: device-only keys
+        ''' are stripped before upload (AccountState.TrimStateForCloud) and, when
+        ''' retryWithBackoff is set, failures retry twice with the web's 45s backoff.</summary>
+        Public Async Function SyncAccountAsync(stateJson As String, cancellationToken As CancellationToken, Optional retryWithBackoff As Boolean = False) As Task(Of Boolean)
             If Not IsAuthenticated Then Throw New AuthenticationException("Not authenticated")
-            Try
-                Dim syncedAt = Await _apiClient.SyncAccountAsync(_currentProfile.AuthToken, _currentProfile.Email, stateJson, cancellationToken)
-                _currentAccountState = stateJson
-                Dim dt As DateTimeOffset
-                If Not String.IsNullOrEmpty(syncedAt) AndAlso DateTimeOffset.TryParse(syncedAt, dt) Then
-                    _currentProfile.UpdatedAt = dt
-                End If
-                Return True
-            Catch ex As Exception
-                _logger.LogWarning(ex, "Cloud sync failed")
-                Return False
-            End Try
+            Dim attempt = 0
+            While attempt < 3
+                attempt += 1
+                Try
+                    Dim cloudState = AccountState.TrimStateForCloud(stateJson)
+                    Dim syncedAt = Await _apiClient.SyncAccountAsync(_currentProfile.AuthToken, _currentProfile.Email, cloudState, cancellationToken)
+                    _currentAccountState = stateJson
+                    Dim dt As DateTimeOffset
+                    If Not String.IsNullOrEmpty(syncedAt) AndAlso DateTimeOffset.TryParse(syncedAt, dt) Then
+                        _currentProfile.UpdatedAt = dt
+                    End If
+                    Return True
+                Catch ex As Exception
+                    _logger.LogWarning(ex, "Cloud sync failed (attempt {Attempt})", attempt)
+                End Try
+                If Not retryWithBackoff Then Exit While
+                Dim delayOk = True
+                Try
+                    Await Task.Delay(TimeSpan.FromSeconds(45), cancellationToken)
+                Catch
+                    delayOk = False
+                End Try
+                If Not delayOk Then Exit While
+            End While
+            Return False
+        End Function
+
+        ''' <summary>Flushes the offline score queue (web parity: kh_score_q flush on
+        ''' boot/sign-in and when the network returns). Returns the number still queued.</summary>
+        Public Async Function FlushOfflineScoresAsync(cancellationToken As CancellationToken) As Task(Of Integer)
+            If Not IsAuthenticated Then Return OfflineScoreQueue.Current.PendingCount()
+            Return Await OfflineScoreQueue.Current.FlushAsync(_apiClient, _currentProfile.AuthToken, cancellationToken)
         End Function
 
         Public Async Function FetchAccountStateAsync(cancellationToken As CancellationToken) As Task(Of String)
@@ -628,7 +651,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
                     Key .fromUserId = _currentProfile.UserId
                 }
                 Try
-                    Await _apiClient.SendRoomEventAsync(inbox, System.Text.Json.JsonSerializer.Serialize(evt), meName, _currentProfile.AuthToken, cancellationToken)
+                    Await SendInboxEventSafeAsync(targetUserId, System.Text.Json.JsonSerializer.Serialize(evt), meName, cancellationToken)
                 Catch
                 End Try
             End If
@@ -683,7 +706,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
             Catch
             End Try
             Dim payload = New With {.type = "CHAT_REQUEST", .code = code, .name = roomName, .fromName = meName, .fromUserId = _currentProfile.UserId}
-            Await _apiClient.SendRoomEventAsync(inbox, System.Text.Json.JsonSerializer.Serialize(payload), meName, _currentProfile.AuthToken, cancellationToken)
+            Await SendInboxEventSafeAsync(hash, System.Text.Json.JsonSerializer.Serialize(payload), meName, cancellationToken)
             Return group
         End Function
 
@@ -725,7 +748,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
                     }, _currentProfile.AuthToken, cancellationToken)
                 Catch
                 End Try
-                Await _apiClient.SendRoomEventAsync(inbox, payload, meName, _currentProfile.AuthToken, cancellationToken)
+                Await SendInboxEventSafeAsync(hash, payload, meName, cancellationToken)
             Next
         End Function
 
@@ -758,7 +781,7 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
                     }, _currentProfile.AuthToken, cancellationToken)
                 Catch
                 End Try
-                Await _apiClient.SendRoomEventAsync(inbox, payload, meName, _currentProfile.AuthToken, cancellationToken)
+                Await SendInboxEventSafeAsync(hash, payload, meName, cancellationToken)
             Next
             Return group
         End Function
@@ -782,7 +805,23 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
             Catch
             End Try
             Dim payload = New With {.type = eventType, .fromName = _currentProfile.DisplayName, .fromUserId = _currentProfile.UserId, .fromHash = _currentProfile.AuthToken.Substring(0, Math.Min(16, _currentProfile.AuthToken.Length))}
-            Await _apiClient.SendRoomEventAsync(inbox, System.Text.Json.JsonSerializer.Serialize(payload), _currentProfile.DisplayName, _currentProfile.AuthToken, cancellationToken)
+            Await SendInboxEventSafeAsync(hash, System.Text.Json.JsonSerializer.Serialize(payload), _currentProfile.DisplayName, cancellationToken)
+        End Function
+
+        ''' <summary>Web parity: inbox events go through the kh_inbox_send RPC first;
+        ''' only if that fails do they ride the legacy relay-room insert.</summary>
+        Private Async Function SendInboxEventSafeAsync(targetHash As String, payloadJson As String, displayName As String, cancellationToken As CancellationToken) As Task
+            Dim sent = False
+            Try
+                sent = Await _apiClient.SendInboxEventAsync(_currentProfile.AuthToken, targetHash, payloadJson, displayName, cancellationToken)
+            Catch ex As Exception
+                _logger.LogWarning(ex, "kh_inbox_send failed for {Target}", targetHash)
+            End Try
+            If sent Then Return
+            Dim inbox = RelayRooms.InboxRoomCodeFor(targetHash)
+            If inbox.Length > 0 Then
+                Await _apiClient.SendRoomEventAsync(inbox, payloadJson, displayName, _currentProfile.AuthToken, cancellationToken)
+            End If
         End Function
 
         Private Function RoomIsOpen(code As String) As Boolean

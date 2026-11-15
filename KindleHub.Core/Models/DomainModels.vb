@@ -33,6 +33,9 @@ Public Class AuthResult
     Public Property Username As String
     Public Property Adjusted As Boolean
     Public Property [Error] As String
+    ''' <summary>Non-blocking advisory (e.g. the opt-in password-leak heads-up).
+    ''' Success is still True when a warning is present.</summary>
+    Public Property Warning As String
     Public Property Profile As UserProfile
     ''' <summary>SHA-256 auth token (kh_users.hash == the AES-256 key). Only set on success.</summary>
     Public Property AuthToken As String

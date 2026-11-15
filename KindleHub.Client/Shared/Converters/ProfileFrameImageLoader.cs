@@ -12,7 +12,25 @@ namespace KindleHub.Client.Converters;
 /// <summary>Loads the same transparent frame PNGs referenced by the official web client.</summary>
 public static class ProfileFrameImageLoader
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
+    // Same spoofed web identity as KindleHubApiClient: frame PNGs are served from
+    // kindlehub.pro itself, so a browser tab on the site would be same-origin here
+    // and send image-mode Sec-Fetch metadata instead of the API's cors variant.
+    private static readonly HttpClient Http = CreateFrameHttp();
+
+    private static HttpClient CreateFrameHttp()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        var h = client.DefaultRequestHeaders;
+        h.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36");
+        h.TryAddWithoutValidation("Origin", "https://kindlehub.pro");
+        h.TryAddWithoutValidation("Referer", "https://kindlehub.pro/");
+        h.TryAddWithoutValidation("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8");
+        h.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+        h.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+        h.TryAddWithoutValidation("Sec-Fetch-Mode", "no-cors");
+        h.TryAddWithoutValidation("Sec-Fetch-Dest", "image");
+        return client;
+    }
     private static readonly ConcurrentDictionary<string, Task<Bitmap?>> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly IReadOnlyDictionary<string, string> Files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {

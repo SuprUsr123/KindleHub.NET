@@ -1,952 +1,738 @@
-# KindleHub Pro API Reference
+# KindleHub Pro — Architecture
 
-This document describes the service contract used by the official web client and
-the desktop client. It is an API reference: endpoint paths, table fields, request
-shapes, authentication, encryption, and interoperable wire formats are the source
-of truth. The official browser implementation is in `../AppFetch/kindlehub.pro/kh-app.js`
-and its view modules; the desktop REST adapter is
-`KindleHub.Core/Api/KindleHubApiClient.vb`.
+This document is the result of a full analysis of `kindlehub.pro.zip` and replaces the
+previous API-reference-only draft. It documents the actual code in the archive:
+what the repository is, how the runtime is put together, the wire protocols the
+clients speak, and where the earlier reference was wrong. Section 5 lists every
+correction against the previous draft with evidence.
 
-## Service and request conventions
+Analysis snapshot: **v10.70.1, build mark `9ce6d7c329e9`, fetched 2026-11-15** (per
+`.kh-update-state.json` and `update.log`). All line references like `kh-app.js@1252687`
+are byte offsets, because the shipped bundles are single-line files.
+
+## 1. What this repository is
+
+`kindlehub.pro` is a **deobfuscated working mirror of the live https://kindlehub.pro
+website** — a web app for Kindle e-ink browsers ("apps, 120+ games, AI & tools for your
+e-reader"). The production site is a **Cloudflare Pages** project serving a static HTML
+shell plus three large JS bundles; all dynamic data flows through **first-party Cloudflare
+Workers** in front of a Supabase-compatible (PostgREST) datastore. Nothing in the archive
+is a server: it is the client source, the sub-sites, and the tooling used to keep the
+mirror in sync with production.
+
+| Path | Size | Role |
+|---|---|---|
+| `index.html` | 190,814 B | App shell: CSP, stall logger, subdomain guards, boot splash, e-ink CSS, `<script src="kh-app.js">` |
+| `kh-app.js` | 2,631,463 B | Core runtime: state, auth, crypto, REST layer, sync, presence, routing, multiplayer core (`KH_MP`), score pipeline |
+| `kh-views.js` | 2,539,713 B | View layer: 105 `view-*` sections (features from notes to weather to app store) |
+| `kh-games.js` | 2,146,180 B | Games layer: 127 launchable game objects driven by `launchGame` |
+| `lite.html` | 190,814 B | Byte-identical copy of `index.html` so `/lite` has a target |
+| `kh-lite.js` + `kh-lite-views.js` | 1,906,717 + 916,931 B | Standalone lite client (`window.KH_LITE=1`, 16 views, stale at v10.15.0) |
+| `landing.html` | 17,915 B | Marketing page (author Aran Keyhan-Rad, pricing £0.99/mo, links `/security/`, `/legal.html`, `/guides/`) |
+| `edu/` | — | **KindleHub Edu**: offline study app (`plan.js` homework planner, `questions.js` seeded question banks); only network call is the AI tutor proxy |
+| `read/` | — | **KindleHub Read**: standalone Project Gutenberg reader + reading tracker (localStorage account, `/t/` tunnel routes) |
+| `mod/` | — | **KindleHub Mods**: download shelf for jailbroken Kindles (Vera/WinterBreak/LanguageBreak, KUAL, MRPI, KOReader); serves from `files.json` or a worker `/mod/list` — *not* a moderator console |
+| `status/` | — | **KindleHub Status**: checks `API /stats`, `/t/api/`, shared AI proxy, gutendex, gutenberg, `tube.kindlehub.pro/health` (Raspberry Pi video preparer) |
+| `serve.py` | 4,979 B | Local mirror server emulating the site's `_redirects` (deep links → shell, `/lite`→lite.html, `/edu/`→edu/, JS MIME, no-cache HTML) |
+| `update.py` | 39,355 B | Site-fetch/update tool: pulls the live site, detects layout, deobfuscates, rewrites the mirror (see §7) |
+| `.kh-tools/` | — | Babel-based identifier renamer (`rename.js`) + node_modules (currently disabled by `update.py`) |
+| `robots.txt` | 750 B | Allow-all + unusual "network interference" policy comment |
+| `icon.svg`, `kindlehub.pro.code-workspace` | — | Brand mark; workspace also referencing the `../../KindleHub.NET` desktop repo |
+
+**Git state of the archive:** two commits on `main` by "KindleHub Dev"
+(`95c49b1` 2026-09-25 initial commit, `665be54` 2026-09-26 "Document desktop client
+architecture"). The working tree is **dirty and ahead of HEAD**: the Nov 15 mirror update
+(~20 modified files) is uncommitted, and the tracked `ARCHITECTURE.md` (368 lines,
+4 sections) and `KINDLEHUB_DESKTOP_HANDOFF.md` (156 lines) are **deleted from the working
+tree** but recoverable from git. `.kh-tools/node_modules` is committed wholesale, and a
+prunable detached worktree (`stormy-basement`) points at the original author's machine
+(`/home/suprusr124/...`). The in-repo ARCHITECTURE.md and handoff doc are still the best
+statement of the .NET desktop client, which is **not** part of this archive.
+
+## 2. System architecture
+
+### 2.1 Request flow
+
+```text
+Kindle/Silk & desktop browsers
+        │  https://kindlehub.pro (Cloudflare Pages, _redirects catch-all)
+        ▼
+index.html shell ──► kh-app.js ──► kh-views.js / kh-games.js (lazy)
+        │
+        ├── kindlehub-api.arancool3000.workers.dev   ← the API gateway
+        │     ├── /rest/v1/{table}                   (PostgREST-shaped reads/writes)
+        │     ├── /rest/v1/rpc/{name}                (~45 server RPCs)
+        │     ├── /functions/v1/kh-gemini-proxy      (shared-AI proxy; also used by edu/)
+        │     └── /stats                             (status page)
+        ├── email-worker.arancool3000.workers.dev    (recovery-code mail send)
+        ├── kindlehub-state.arancool3000.workers.dev (photo/gallery store, /state legacy gateway)
+        ├── kindlehub-helpers.arancool3000.workers.dev, vpn.arancool3000.workers.dev (fetch tunnel)
+        ├── ai.kindlehub.pro / ai2.kindlehub.pro     (local AI; KH_LOCAL_AI)
+        ├── read./tube./game./game3./browse./browse2./kindletube./static./static2. kindlehub.pro
+        └── third-party providers (AI, books, weather, news, media — §6)
+```
+
+All Supabase access goes through the `kindlehub-api` worker — there is no direct
+`supabase.co` URL in any bundle. The worker enforces row filters, secret checks and rate
+limits that a raw PostgREST URL would not.
+
+### 2.2 Shell and boot sequence (`index.html`)
+
+1. **Stall logger** (line 6, inline): opt-in (`kh_stall_log=1`, or auto-on for user
+   `aran/arancool3000` on Kindle/Silk/Android). Monkey-patches `setTimeout`/`setInterval`/
+   `requestAnimationFrame` (logs ≥30 ms callbacks into a 14-entry ring buffer), samples a
+   250 ms ticker for >500 ms main-thread gaps, wraps `fetch`; flushes every 60 s and on
+   `pagehide` as `kh_errors` rows `{id:"stall_"+Date.now(), text:"[STALL] …" ≤3800 chars, date}`.
+2. **Subdomain guards** (lines 8–18): one-liners redirecting `edu.` → `/edu/…`,
+   `mod.` → `/mod/`, `read.` → `/read/`, `status.` → `/status/`, `vexiq.` → `/vexiq/`;
+   `lite.` → strips the prefix (lite is a bundle switch, not a different shell).
+3. **Landing guard**: a bare `/` visit without `kh_seen_landing` (set by `?app=1`) bounces
+   to `/landing`; `ksim=1` spoofs a `…Kindle/3.0` UA for simulator testing.
+4. **CSP**: strict `script-src 'self' 'unsafe-eval' cdn.jsdelivr.net` with 14 per-inline
+   `sha256-…` hashes; a violation handler shows one of six fallback dialogs.
+5. **Boot splash** (line 115): e-ink/Kindle detection, logo splash, `__khBootDone/Fail`;
+   on bundle script error re-appends `<script src="kh-app.js?khretry=…">`, clears caches
+   and **unregisters service workers** (the only `serviceWorker` references in the shell
+   are cleanup calls).
+6. `<script src="kh-app.js" data-kh-bundle="1">` — plain name, **no `?v=` query** in this
+   snapshot ("plain" layout; the Oct 5 run used hashed `?v=` names — see §7).
+7. Cloudflare Insights beacon; Kindle on-screen keyboard module (`window._khKeyboard`).
+
+`lite.html` is **byte-identical** to `index.html`; the lite bundle is swapped in for
+`lite.kindlehub.pro` server-side, with `kh-lite.js` setting `window.KH_LITE=1` and
+tolerated by kh-app.js (`/kh-(app|lite)\.js/` "already declared" suppression).
+
+### 2.3 Deep-link routing
+
+The site serves the same shell for every deep link (`/chess`, `/notes`, `/uno`, …); the
+client opens the view from the path. In kh-app.js: `_khDeepSlug` @1771665 takes the first
+pathname segment, `_khApplyDeepLink()` @1771900 maps it through `GAME_HELP` (→
+`launchGame`) or `BUILDERS[slug]` (→ `showView`), with a `popstate` listener for
+back/forward. `showView` @1775994 also handles `kapp:{id}` published apps, split views and
+`pushState`. `serve.py` replicates the `_redirects` behavior for offline mirrors.
+
+## 3. Front-end architecture
+
+### 3.1 kh-app.js — core runtime
+
+The file is one minified line; references below are byte offsets. It exposes a large
+`window._kh*` API surface that kh-views.js/kh-games.js consume guarded by
+`"function"==typeof X` (so views can load before the core finishes).
+
+**Global state.** `SK="kindlehub_v5"` @7380; `defaultState()` @7390 builds the account
+state; the live object `S` @11651 is initialized from
+`_khDecodeStateBlob(localStorage.getItem(SK))`. The local blob supports prefixes
+`KHZ2:` (inflate + dictionary decompress), `KHZ1:` (inflate), `KHD1:` (dictionary) and
+plain JSON. State has ~140 keys — identity (`userId`, `authToken`, `email`), preferences
+(`theme`, `fontSize`, `uiMode`, `wallpaper`), AI keys (`geminiKey`, `openrouterKey`,
+`anthropicKey`, `openaiKey`, `aiProvider`, models), social (`friends`, `friendRequests`,
+`friendReqTombs`, `chatRequests`, `msgGroups`, `leftGroups`, `blockedUsers`),
+content (`notes`, `books`, `flashDecks`, `rssFeeds`, `recipes`, `flipbooks`, `kanban`,
+`checklists`), games (`games`, `gamesAt`, `stats`), profile (`profileName`, `profileAvatar`,
+`profileFrame`, `profileBio`, `profileHobbies`, `profilePronouns`), photos
+(`photoKey`, `photoKey2`, `photoKeys`, `photoStores`) and security (`superlock`, `acctV2`,
+`modCode`, `knownDevices`, `recoveryEmail`, `ageRange`). `profileName` and `simpleMode`
+are optional/runtime keys, not defaults.
+
+**Persistence and sync.** `save(e=1200)` debounces to `_persistState` @222300; hot fields
+(`games`/`stats`/`gamesAt`) split into `kh_hot`; `visibilitychange`/`pagehide` flush held
+writes. Cloud sync is **not** a fixed 30 s loop: `scheduleCloudSync` @23802 debounces by
+load with 45 s retry backoff, `_startPeriodicSync` @206867 runs every **90 s**
+(skipping hidden/busy/idle tabs), plus three post-load syncs 5 s apart. `_trimStateForCloud`
+@1270810 strips device-only keys before upload. `_khKeepAlive` pings
+`kh_messages?select=id&limit=1` every 6 h.
+
+**Authentication.** `_userKey(user, pass)` @1252687 =
+`SHA-256("kh::" + canonical.toLowerCase().trim() + "::" + password)` — the 64-hex token is
+both the account key and the AES key; `userId = token.slice(0,16)`.
+`_khCanonicalUsername` @1445273 maps `"aran"`→`"arancool3000"`. `authRegister` @1445506
+enforces charset `/^[a-z0-9._-]{1,40}$/`, profanity (`_badUsername`), reserved names
+(`aran`, `afriend`, `amazonenforcer` + staff words), weak-password and **HIBP leak checks**
+(api.pwnedpasswords.com), device ban/mute gates and `kh_banned_usernames` lookups.
+`authLogin` @1459650 has an **offline fast path**: `_offlineCred` (max 2 LRU accounts in
+`kh_offline_cred`) decrypts locally before touching the network. `_saveCreds` now only
+deletes the legacy plaintext `kh_creds`.
+
+**Crypto.** Account key = raw hex-decoded token bytes (`_deriveAesKey` @1252745, AES-GCM
+256, **no PBKDF2**). `_encryptState` @1266551: 12-byte IV; plaintext = one flag byte +
+body, where flag `'G'` (0x47) = `gzip(dictionaryCompressed(JSON))` when `CompressionStream`
+exists, `'c'` (0x63) = raw dictionary-compressed JSON on low-memory devices, legacy `'g'`
+(0x67) = gzip without dictionary (decrypt-only); envelope
+`b64(iv) + "." + b64(ciphertext||16-byte tag)`. Dictionary `_COMP_DICT` @9996 (~100 JSON
+fragments) encoded as `0x01` + index char. Messages: `_msgKey` @808960 =
+`SHA-256("khmsg::" + groupCode)`; `_msgEncrypt` @809244 emits `enc1:`/`enc2:` (gzip only
+when smaller) with the same envelope; decrypt failures render a placeholder, never crash.
+Mail uses the context string `"mail:" + recipient` (key = `SHA-256("khmsg::mail:" + normalized recipient)`) — both sides derive it from the recipient name.
+Separately PBKDF2-protected (key-stretching, not the account key): `KHS1:` note lock
+(210k iters), `KHSP1:` superchat passphrase (210k), `KHSL1:` superlock wrap (600k),
+`KHA2:` account-v2 wrap incl. recovery "rec" boxed variant (120k). Photo-gallery address
+= `SHA-256("khphoto::acct::" + authToken)` @323800.
+
+**Supabase REST layer.** `_sbBase()` @776053 → `KH_DEFAULT_API_GATEWAY =
+"https://kindlehub-api.arancool3000.workers.dev"` @760022. `_sbFetch` @797700 adds GET
+result caching (80 entries, per-table TTL, secret in cache key), timeouts (8 s GET /
+20 s writes / 60 s account upsert), retries on kh_users upserts, and a
+**`vpn.arancool3000.workers.dev` fetch-tunnel fallback** on failure. Helpers: `_sbSelect`
+@805366, `_sbUpsert` @806742 (`?on_conflict=` + `Prefer: resolution=merge-duplicates,
+return=representation`; kh_users refuses empty `state`; supports `X-KH-Rekey-From/-Name`),
+`_sbInsert` @807345 (`X-KH-Secret: S.authToken`), `_sbUpdate`, `_sbDelete`.
+`_khOwnerSec` @776300 auto-attaches the account token whenever an `X-KH-Admin` header is
+present.
+
+**Tables touched:** `kh_users`, `kh_presence`, `kh_scores`, `kh_groups`, `kh_messages`,
+`kh_mail`, `kh_store_apps`, `kh_feedback`, plus **`kh_errors`** (client error telemetry,
+queued in `kh_err_queue`, flushed 4 s after boot and on `online`) and
+**`kh_banned_usernames`** (login/register ban lookups with canned ban reasons).
+
+**Server RPCs called (superset of the previous reference's list):**
+`kh_set_reaction`, `kh_app_get`, `kh_app_put`, `kh_app_list`, `kh_app_enhance(_status)`,
+`kh_recovery_set`, `kh_inbox_send`, `kh_run_start`, `kh_store_download`, `kh_store_pending`,
+`kh_store_rate`, `kh_store_review`, `kh_mod_stats`, `kh_mod_claim`, `kh_mod_badges`,
+`kh_mod_ranks`, `kh_mod_create`, `kh_mod_list`, `kh_smod_reports`, `kh_age_verify`,
+`kh_age_mine`, `kh_age_self_set`, `kh_age_marks`, `kh_birthday_claim`, `kh_member_count`,
+`kh_mod_age`, `kh_poll_delete/list/save/stats/vote/voters`, `kh_meme_list/use`,
+`kh_gift_claim`, `kh_redeem_gift`, `kh_helper_link/status/unlink`, `kh_add_comment`,
+`kh_follower_counts`, `kh_id_report`, `kh_id_watched`, `kh_plan_counts`, `kh_score_boost_list`,
+`kh_pid_lookup`, `kh_public_id`, `kh_head_withdraw_warning`.
+
+**Realtime vs polling.** kh-app.js core has no websockets. The chat view in kh-views.js
+@2325xxx **does** subscribe to Supabase realtime (`topic:"realtime:public:kh_messages:
+group_code=eq.<code>"`, phoenix `phx_join`, 25 s heartbeat) with an **adaptive polling
+fallback** (`_khChatWant`, `_KH_CHAT_TICK`/`_KH_CHAT_FULL_MS`, `_groupLatestId`
+short-circuit: quiet rooms poll slower, active rooms speed up). Everything else polls:
+notification sweep `ts=gt.<now-120s>` batched 100 group codes per query @1589600,
+`KH_MP` relay every 3 s, inbox/mail probes on intervals that skip hidden tabs.
+
+**Presence.** `_pingPresence` @1243100 upserts `kh_presence {user_id, display_name,
+last_seen, avatar: S.profileAvatar, profile}`; `_startPresence` @1249100 beats every
+**100 s** (180 s in simple mode) plus on `visibilitychange`; the online window is ~7 min.
+Identity falls back to `anon-<deviceId>`. Profile blob `_khMyProfileBlob` @1244649 =
+`{p pronouns≤28, h hobbies≤160, b bio≤320, s status≤80, tz, f friends≤24+sf, j joined,
+nameStyle…}`. Discovery reads `last_seen=gte.<-14d>&limit=400`.
+
+**Avatars.** 22×22 grid (`AV_N=22`), 12 background colors (index 0..11), 16-ink palette.
+`KHAV1:{bg}.{hex}` packs four 1-bit pixels per hex digit LSB-first (`_khFlipPack`
+@126047); `KHAV2:{bg}.{b64}` packs two 4-bit ink indices per byte high-nibble-first
+(`_khAv2Pack` @168646, used when any cell's ink index >1); `_khAvatarCode` @168900 picks
+the version. Parse/paint via `_khAvatarParse/_khAvatarPaint`.
+
+**Service worker.** `_khRegisterSW` @1940171 registers `sw.js?v=<version>` (https/
+localhost only) and posts a `{kh:"precache", urls:[kh-app.js, kh-games.js, kh-views.js,
+…]}` message; `_khPrecacheGames` falls back to `fetch(..., {cache:"force-cache"})`. The
+`sw.js` file itself is served by Pages and not part of this mirror. No PWA manifest.
+
+### 3.2 kh-views.js — view layer
+
+A registry of 105 builder thunks, each returning `el("section",{id:"view-<name>",
+className:"view"})`; views self-register teardown via `section._khStop = fn`. One named
+export: `_khOpenDashboardBody` @0 (dashboard overlay `#kh-dashboard`, widget grid:
+agenda, goal, habits, countdown, reading, moon, timer, remote, note, quote, news, stocks,
+onthisday). Overlay openers (`_khOpenProfile`, `_khOpenAvatarEditor`, `_khOpenDrawPad`,
+`_khOpenMemePicker`, `_khOpenModChat`, …) are defined in the core and referenced here.
+
+Grouped inventory of the 105 views:
+
+| Group | Views |
+|---|---|
+| Productivity/utilities | spelling, calc, tools, sheets, cipher, translate, notes, kanban, formulas, unitconv, tipcalc, passgen, countdown, tally, cite, decide, budget, qrgen, files, worldclock, habits, chores, wheel, timetable, homework, calendar, mdjournal, foodlog, sleeplog, readspeed, lifeweeks, periodic, science, gazette, dictionary, phrasebook, verses, firstaid, cookbook, recipes, stash |
+| Study | study, timestables, fractions, bookbingo, events |
+| Reading/media | reading, rss, gallery, imagesearch, lyrics, watchq, comics, shorts, kindletube, spotify, music (LibriVox + Internet Archive), browser |
+| Communication | chat (AI chatbot), messages, topics, mail, community, feed, bluesky, fandom, wikipedia, contacts, feedback |
+| Creation | asciiart, draw, pixelart, flipbook, slides, code, screenshot, memes, polls |
+| Games hosted here | lifegame, quizparty (realtime lobby, no server scores), pokigames, kesschess, adventure, artillery, pet (achievement ids), truthdare, animals, bugid |
+| Life/info | maps, weather, starmap, sun, moon, breathe, sports, stocks, moneytools, countries, histday, lifehacks, discover, quotes |
+| System | settings, appstore |
+
+**Messaging details.** Tabs Chats/Friends/Saved; fixed rooms are codes starting
+`800000`/`900000`; 12-digit codes display as `1234-5678-9012`; per-room transcript cache
+`kh_mc_<code>`; starred messages in `kh_starred_meta`. Outbound
+`{id:_khMsgId(), userId, displayName, text, ts, replyTo, _pending}` through `_groupSend`
+@2314850. Per-message actions: Reply, React, Copy, Translate, Star, To-notes, Important,
+Pin, Edit; **unsend** deletes via `_sbDelete("kh_messages","id=eq.<id>", _getMsgSecret(id))`
+@1851501 and fails with "Owner secret missing (sent from another device?)" when the
+per-message secret isn't local (fallback stored in `S.localEdits`). **Reply previews
+resolve parents from the in-memory message map**, not a `?id=in.(...)` batch (the desktop
+client does the batch read — client-side divergence to keep in mind when porting).
+Reaction values are arrays of 16-char user ids. AI moderation hooks (`_khAiModWatch`,
+`_khAiModSweep`, MOD_ badges, per-room mutes) wrap the transcript.
+
+**Friends.** `S.friends` rows `{hash, name}`; requests in `S.friendRequests` with
+`S.friendReqTombs` tombstones; accept/decline via `_khAcceptFriendRequest`/
+`_khDeclineFriendRequest`; DMs are real groups named `"DM: <me> & <them>"` with
+`KH_MP.sendDmInvite(userId, code, name)`; group creation invites via
+`kh_users?email=ilike.<name>` lookup then the same DM invite. The
+`FRIEND_REQUEST`/`FRIEND_ACCEPT`/`DM_INVITE` JSON event envelopes live in the core,
+not the view.
+
+**App Store view.** Catalogue via `_khStoreList` + `_khOtherStorePages` (downloads-desc
+or new-first), category chips, sandboxed preview iframe (`_khAppSandbox`,
+`_khWrapAppSecure`), install/remove for built-ins and community apps, publish via
+`_khPublishApp` @1790xxx — with **AI review** (statuses approved / waitlisted /
+declined+reason), edit flow carrying `editId`+`editSecret`, private saves
+(`S.publishedApps`, capped 60), and the **512 KiB (524,288 chars) HTML limit** enforced
+at save and import. `KHAPP1:` share codes confirmed:
+`"KHAPP1:"+btoa(unescape(encodeURIComponent(JSON.stringify({label,color,icon,html}))))`
+@1800013, with the inverse on import.
+
+### 3.3 kh-games.js — games layer
+
+Pattern: one global object per game launched by `_doLaunch` (kh-app.js @1946442), a
+single `switch` over **127 slugs**. `launchGame` @1941337 sets `window._currentGame`,
+exits the previous immersive session, records `S.lastPlay`, waits for the lazy loader,
+then dispatches. Games render into a shared immersive overlay (`enterImmersive`:
+`#immersiveRoot` + title/score/help/scores strips; `immersiveContent` referenced 928×).
+11 heavy games (Galaga, Solitaire, SpaceInvaders, Battleship, TowerDef, …) are
+lazy-compiled IIFEs on first launch; three are OSS iframe shells (hextris, clumsybird,
+micropolis) and three run Doom WASM (`doom`, `freedoom1/2`).
+
+The shared loop `_khGameLoop({step, tick, draw, live, interp})` uses a fixed timestep
+(min 8 ms, max 4 catch-up steps) with rAF interpolation when smooth scrolling is allowed,
+else `setInterval` with an **e-ink draw floor of 120 ms** (`KH_EINK_DRAW_MS`) on
+`isKindleBrowser()`; it suspends on `document.hidden`. `_khGameMenu` (58 call sites)
+builds the daily-challenge/mode menu; `newGameGuard` confirms before abandoning a run.
+
+Genre inventory (127 slugs):
+
+| Genre | Slugs |
+|---|---|
+| Arcade (~38) | doom, freedoom1/2, hextris*, clumsybird*, micropolis*, bucketline, kitchen, kickdummy, skyscuffle, raildash, citycourier, clawmachine, barrage, lander, lastlight, snake, slither, geometrydash, flappy, platformer, pacman, crossyroad, arena, tetris, spaceinv, galaga, fruitninja, eightball (pool), digquest, stronghold, cargames (hub) |
+| Casual (~13) | deepvein, cookieclicker, burrow, isle, manyhands, sketchguess, quickcount, nextinline, farm, akinator (MindReader), perfectcircle, roller, craft (InfiniteCraft) |
+| Travel/car (10) | keepgoing, samepage, platewords, spotbingo, storychain, categories, rhymetime, carcricket, wouldyourather, alphabethunt |
+| Strategy (~16) | silkroad, bannerlands, lastladder, ninenights, lineman, sleepercrew, nim, dquest, lanternvale, deephalls, emberdeck, wildforms, corridor, tiletrader, flightsim, towerdef |
+| Puzzle (~24) | numberlink, kakuro, futoshiki, pegs, traffic, mahjong, numslide, sumlines, bridges, cargorun, beambalance, loopwire, sudoku, lightsout, mastermind, nonogram, minesweeper, picpuzzle, maze, g2048, candycrush, blockblast, hanoi, sokoban, simon |
+| Word (13) | cryptogram, wordladder, pairup, oddone, hangman, wordle, wordsearch, anagrams, nerdle, connections, spellingbee, strands, trivia |
+| Board (12) | gomoku, dominoes, chess, ttt, connect4, battleship, snakesladders, checkers, dotsboxes, yahtzee, reversi, set |
+| Card (6) | freecell, solitaire, memory, blackjack, crazy8, unoflip |
+
+\* OSS iframe shells. 72 slugs call `_khSubmitScore` (kh-views.js defines **no** games;
+kh-games.js has **zero** direct `kh_groups`/`kh_messages` references — multiplayer goes
+through the core's `KH_MP`).
+
+### 3.4 Multiplayer core (`KH_MP`, kh-app.js @1955401)
+
+- **Rooms.** `createRoom(name)`: short = `_khRoomDigits(6)`; **room code = `"900000" +
+  short`** (12 digits); group **name** = `mp-{game}-{short}`; persisted via
+  `_groupCreate` → INSERT `kh_groups {code,name,creator,created_at,updated_at}`
+  @1562273. `joinRoom(short)` looks the name up or creates it, returning
+  `{code, short, role:"host"|"guest"}`. Note: `mp-…` is the room *name* family; the
+  *code* family is `900000xxxxxx`.
+- **Transport.** `KH_MP.send` wraps event JSON as an ordinary message
+  `{id:uuid, userId, displayName, text:JSON.stringify(event), ts}` → `_groupSend`
+  @1570243 → `_msgEncrypt` with a per-message `owner_secret` → INSERT `kh_messages`.
+  `subscribe(code, handler)` does an initial fetch then **polls every 3 s**
+  (`_groupLatestId` short-circuit, hidden-tab skip, dedupe cap 400), dispatching
+  `{type, payload, from:{userId,name}, id, ts}`. Fallback to local `_masterWrite` when
+  Supabase is down.
+- **Events.** Long form: `JOIN`, `BYE`, `CHAT`, `ACT` (crazy8 play), `STATE` (crazy8 hand
+  sync), `TTT_STATE`/`MOVE_TTT`, `MOVE_C4`/`C4_STATE`, `DB_INIT`/`DB_MOVE`, `MOVE`
+  (chess `{fr,fc,tr,tc,flag,promo}`); short form `t:`: `ST` (state sync
+  `{b,tn,lm,ov,…}`), `SH`/`RS` (battleship shot/result), `MV`/`AC` (arena), `CL`
+  (checkers click). Party games use `SG_START/SG_PIC/SG_GUESS/SG_TURN/SG_SKIP/SG_RESULT/
+  SG_BYE` (Sketch & Guess). There is **no `OPEN` event** in the shipped code.
+- **Invites/lobby.** `sendInvite` posts `{type:"GAME_INVITE", game, roomShort, fromName,
+  fromUserId}` via the `kh_inbox_send` RPC (or the recipient's inbox group). Acceptors
+  registered as `window._khGameAcceptors.{ttt, connect4, dotsboxes, reversi, battleship,
+  crazy8, artillery}` plus `chess`. Open lobby room: **`800000777777`** named
+  `open-games-lobby` @1959900. `openParty` runs 2–4 player co-op (Barrage, Last Ladder
+  share a seeded run; Sketch & Guess is 4-player).
+- **Modes.** Single-device pass-and-play (`local2` in battleship/reversi/gomoku/nim/ttt/
+  connect4/dominoes), online 2-player (chess rated with a fair-play review RPC, reversi,
+  ttt, connect4, dotsboxes, gomoku, battleship, crazy8, eightball, set), co-op (above).
+- **Authority.** Turn validation is per game and host-replays state on `JOIN`
+  ("Waiting for the host to set up the board…"); transport delivery is never game
+  authority. Online results are not submitted to the leaderboard ("Two-player games stay
+  out of the Ladder, the Daily and the leaderboard").
+
+## 4. Data and service contract (verified against the shipped client)
+
+The gateway is authoritative: it applies filter and secret rules beyond PostgREST syntax.
+A successful request to a Supabase-shaped URL does not imply unrestricted access. All
+timestamps are UTC ISO-8601; JSON is UTF-8; table/field names are snake_case.
+
+### 4.1 Conventions
 
 | Property | Value |
 |---|---|
-| API gateway | `https://kindlehub-api.arancool3000.workers.dev` |
-| Data API | Supabase-compatible REST endpoints under `/rest/v1/` |
-| JSON | UTF-8 JSON; table and field names are snake_case |
-| Authenticated write header | `X-KH-Secret: <64-character lowercase account token>` |
-| Conflict upsert | `?on_conflict=<column>` with `Prefer: resolution=merge-duplicates` |
+| Gateway | `https://kindlehub-api.arancool3000.workers.dev` (`KH_DEFAULT_API_GATEWAY`) |
+| Data API | `/rest/v1/{table}`; RPCs at `/rest/v1/rpc/{name}` |
+| Write auth | `X-KH-Secret: <64-char lowercase account token>` |
+| Upsert | `?on_conflict=<col>` + `Prefer: resolution=merge-duplicates,return=representation` |
+| Inserts | `Prefer: return=representation` (or `return=minimal` for fire-and-forget RPCs) |
+| Filters | PostgREST forms: `eq.`, `gt.`, `gte.`, `ilike.`, `in.(…)`; URL-encode every scalar |
+| Read discipline | Explicit `select=` list, exact row/room filter, `order=`, capped `limit` (web chat reads cap at 30/poll; desktop caps at 200; discovery lists 100–400) |
+| Client resilience | GET cache (80 entries, per-table TTL), 8–60 s timeouts, kh_users upsert retries, `vpn.arancool3000.workers.dev` tunnel fallback |
 
-The gateway enforces its own filter and secret rules. A successful request to a
-Supabase-shaped URL does not imply that an unrestricted table read or write is
-allowed. Reads generally use `select=...`, an exact or bounded filter, ordering,
-and a capped `limit`. The desktop client centralizes request construction and
-response parsing in `KindleHubApiClient`.
-
-## Authentication and encrypted account state
-
-### Account identity
-
-The web and desktop clients derive the same account token locally:
+### 4.2 Identity and encrypted account state
 
 ```text
-canonical = lowercase(canonicalize(username))
-authToken = SHA-256(UTF-8("kh::" + canonical + "::" + password))
-userId    = lowercase(authToken[0..16])
+canonical = lowercase(trim(username)); if canonical == "aran": canonical = "arancool3000"
+authToken = lowercase_hex(SHA256(UTF8("kh::" + canonical + "::" + password)))   // 64 hex
+userId    = authToken[0:16]                       // public, not a secret
+AES key   = raw 32 bytes hex-decoded from authToken (AES-GCM-256; no PBKDF2)
 ```
 
-The password is case-sensitive and is not sent to the API. The 64-character
-token is the account proof for writes and the key material used by account
-encryption. Treat it as a credential; never log it or include it in a public
-request URL.
+The password is case-sensitive and never leaves the device. The token is the write
+credential (`X-KH-Secret`) and the encryption key; treat it as a secret — never in URLs,
+logs or crash reports.
 
-### `kh_users`
+`kh_users.state` is an encrypted string, not a JSON object:
+`base64(iv) + "." + base64(ciphertext || 16-byte GCM tag)`, random 12-byte IV. The
+plaintext's first byte is a format flag: `'G'` (0x47) = gzip of dictionary-compressed
+UTF-8 JSON, `'c'` (0x63) = uncompressed dictionary-compressed JSON (low-memory fallback),
+legacy `'g'` (0x67) = gzip without dictionary (decrypt-only today). The dictionary
+(~100 shared JSON fragments, `0x01` + index-char tokens) is embedded as `_COMP_DICT`
+@kh-app.js:9996. Account-state edits must be read/decrypt → modify only intended keys →
+re-encrypt with a fresh IV → upsert; unknown keys must survive (older clients must not
+erase newer preferences). `_trimStateForCloud` strips device keys (`_encKey`,
+`superlock*`, `acctV2`, `authToken`, wallpapers, …) and caps long arrays before upload.
 
-| Column | Meaning |
+PBKDF2 applies only to optional extras, never to the account key: `KHS1:` note lock
+(210,000 iters), `KHSP1:` superchat passphrase (210,000), `KHSL1:` superlock wrap
+(600,000), `KHA2:` account-v2/recovery wrap (120,000); envelopes are
+`PREFIX:salt:iters:blob`.
+
+| `kh_users` column | Meaning |
 |---|---|
-| `hash` | Account token; unique account key |
+| `hash` | Account token; unique key |
 | `email` | Canonical username |
 | `state` | Encrypted account-state envelope |
-| `updated_at` | Last successful account sync |
+| `updated_at` | Last successful sync |
 
-| Operation | Request |
-|---|---|
-| Register | `POST /rest/v1/kh_users?on_conflict=hash`; body `{hash,email,state,updated_at}` |
-| Login/restore | `GET /rest/v1/kh_users?hash=eq.<token>&select=state,updated_at` |
-| Name availability | `GET /rest/v1/kh_users?email=eq.<canonical>&select=email&limit=1` |
-| Sync | Same upsert as register; `state` is encrypted before upload |
+Operations: register/sync = `POST /rest/v1/kh_users?on_conflict=hash` with
+`{hash,email,state,updated_at}` (registration initial state = encrypted `{}`; sync must
+reject an empty state); login/restore = `GET …?hash=eq.<token>&select=state,updated_at`;
+name availability = `GET …?email=eq.<canonical>&select=email&limit=1`; friend search =
+`GET …?email=ilike.*<term>*&select=hash,email&limit=20` (returns `{hash:<16-char prefix>,
+name:<email prefix>}`; the full hash must never be shown). A legacy configurable state
+gateway (`kh_state_gateway` localStorage, `/state` GET/PUT with `X-KH-Secret`) exists but
+`KH_DEFAULT_STATE_GATEWAY` is empty — the main REST path is the only active one.
 
-Account-state JSON is encrypted client-side. Unknown keys must survive edits so
-newer web-client preferences are not erased by an older desktop client. Current
-shared keys include `profileName`, `profileAvatar`, `fontSize`, `theme`,
-`simpleMode`, `syncEnabled`, `notes`, `msgGroups`, `leftGroups`, `friends`,
-`friendRequests`, and `friendReqTombs`. Friend rows use `{hash,uid,name,since,mid}`;
-pending requests use `{hash,uid,name,ts,msgTs,mid}`. The official
-Messages client stores joined chat rooms as `msgGroups`, an array of
-`{code,name,joinedAt}` rows, and excludes rooms in `leftGroups`. Desktop room
-joins use that same shape and sync it through the encrypted `kh_users.state`
-account vault so the joined room list follows the account to other clients.
-Global/fixed chats, inbox rooms, and multiplayer relay rooms are not user-joined
-message groups and are not written to `msgGroups`.
+### 4.3 Room codes (corrected)
 
-Friend lists and requests are encrypted account-state data, not presence rows.
-The desktop Friends section refreshes synced state and polls the signed-in
-account's inbox for friend-request and acceptance events. Resolving requests or
-removing friends records the event id in `friendReqTombs` to prevent old inbox
-replays from restoring resolved state. Preserve these keys when editing other
-account-state fields.
+| Family | Code | Notes |
+|---|---|---|
+| Global chat | `000000000000` | `KH_GLOBAL_GROUP_CODE` @1551541, ensured by `_ensureGlobalGroup` |
+| Crosschat | `000000000001` | `KH_BRIDGE_GROUP_CODE` ("Crosschat") @1551577 |
+| Open games lobby | `800000777777` | Group named `open-games-lobby` @1959900 |
+| Multiplayer rooms | `900000` + 6-digit short | 12-digit **code**; the group *name* is `mp-{game}-{short}` |
+| User inbox | `800000` + 6 digits | 12-digit code; each digit = `parseInt(pidHex[i],16) % 10` of the recipient's 6-hex **public id**; validated `/^800000[0-9]{6}$/`; room auto-created as `"inbox-"+hash.slice(0,8)`; sends prefer the `kh_inbox_send` RPC |
+| Direct messages | random 12-digit codes | Rooms **named** `"DM: <me> & <them>"`; `DM:` is a name prefix, not a code prefix |
+| Topics | random 12-digit codes | Group names begin `TOPIC: ` (`_KH_TOPIC_PREFIX`), categories gen/book/tech/game/help/make/off |
+| Age rooms | `9300000000{05..18}` | `KH_AGE_ROOMS` @1551650 |
 
-## Profile pictures and online presence
+The previous reference's "inbox = `800000` + 16-char user id (16 chars total)" is wrong —
+inbox codes are 12 digits derived from the public id, and the desktop handoff's
+"800000 + six digits of user ID" matches the 12-digit family.
 
-### Shared picture representation
-
-The official client stores the profile picture at account-state key
-`profileAvatar` and publishes the same value in `kh_presence.avatar`. This lets
-the signed-in user sync the editable picture through `kh_users.state`, while
-other clients can load it without decrypting that account state.
-
-Avatar codes are compact, interoperable pixel art rather than image URLs:
-
-```text
-KHAV1:<background-index>.<hex-packed-1-bit-pixels>
-KHAV2:<background-index>.<base64-packed-4-bit-pixels>
-```
-
-Both versions use a 22 × 22 grid (484 pixels) and a background palette index in
-`0..11`. `KHAV1` packs four 1-bit pixels into each hexadecimal digit, least
-significant bit first. `KHAV2` packs two 4-bit palette indices into each byte,
-high nibble first; the 16 ink colors are shared with the web client's avatar
-palette. Empty/zero pixels show the selected background. Clients should validate
-the prefix, background index, encoded length, and decoded palette values before
-rendering. The desktop codec is `KindleHub.Client/Models/ProfileAvatar.cs`.
-
-### `kh_presence`
+### 4.4 Messages: `kh_messages`
 
 | Column | Meaning |
 |---|---|
-| `user_id` | 16-character account id; unique presence row |
-| `display_name` | Name shown in online lists |
-| `last_seen` | ISO timestamp refreshed by heartbeat |
-| `avatar` | `KHAV1`/`KHAV2` string or empty string |
-| `profile` | Optional public profile JSON (`p`, `h`, `b`, `s`, `f`, `j`, `fr`, `g`, etc.) |
-
-| Operation | Request |
-|---|---|
-| Heartbeat | Upsert `POST /rest/v1/kh_presence?on_conflict=user_id` with `{user_id,display_name,last_seen,avatar}` |
-| Online list | `GET /rest/v1/kh_presence?last_seen=gt.<ISO>&select=user_id,display_name,last_seen,avatar&order=last_seen.desc&limit=N` |
-| Batch pictures | `GET /rest/v1/kh_presence?user_id=in.(<id>,...)&select=user_id,avatar&limit=N` |
-
-The official client refreshes presence periodically and caches avatar codes by
-user id. The desktop heartbeat must preserve the account's current `profileAvatar`
-value; sending an empty `avatar` on each ping erases the picture other clients
-would see. The optional `profile` column is a public-profile JSON blob: for
-example, `g` is a game-stat line, not a room code. The desktop heartbeat omits
-`profile` so an upsert leaves web-client profile data intact. Missing/invalid
-avatar data falls back to an initial; it must not make the player row disappear.
-
-The desktop Messages view resolves message authors through this same batch
-lookup, keyed by each message's `user_id`; chat message payloads do not include
-avatar snapshots. The client caches codes for the active session and falls back
-to the sender's initial when a presence row or valid picture is unavailable.
-The desktop polls the active room every two seconds and keeps a bottom-follow
-anchor as messages, reply previews, and images change transcript height. It
-stops following when the reader scrolls away. Replies are independent message
-rows with `reply_to` pointing to the parent id, show a quoted preview, and are
-not visually grouped into the preceding message. Consecutive non-reply messages
-from one author may share a sender header for five minutes; local-date dividers
-are presentation only.
-
-## Scores and leaderboards
-
-### `kh_scores`
-
-| Column | Meaning |
-|---|---|
-| `id` | Unique score submission id |
-| `game` | Canonical game slug |
-| `score` | Non-negative integer score |
-| `display_name` | Name captured when submitted |
-| `user_id` | 16-character account id |
-| `date` | ISO submission timestamp |
-
-Submit with `POST /rest/v1/kh_scores` and `X-KH-Secret`. Read a game's public
-leaderboard with
-`GET /rest/v1/kh_scores?game=eq.<slug>&order=score.desc&limit=N&select=id,score,display_name,date,user_id`.
-Profile pictures are joined separately through `kh_presence` using the returned
-`user_id` values; old score rows do not contain an avatar snapshot.
-
-Single-player records may be submitted through the leaderboard API. Online
-crossplay matches use room state and are not personal score submissions.
-
-## Social rooms, messages, and multiplayer
-
-### `kh_groups`
-
-Groups/rooms are addressed by `code`. Common code families are `DM:*` for direct
-messages, the global-chat code for public chat, `800000` plus the account id for
-the user's inbox, and `mp-{game}-{id}` for multiplayer rooms. Topic groups use a
-`TOPIC: ` name prefix. Group creation is an authenticated upsert/insert; lookups
-and lists request only the relevant codes or bounded directory rows.
-
-### `kh_messages`
-
-| Column | Meaning |
-|---|---|
-| `id` | Message id |
-| `group_code` | Containing room |
-| `user_id` | Sender id |
-| `display_name` | Sender name |
-| `text` | Encrypted message or a recognized `KH*` media marker |
-| `ts` | ISO timestamp |
-| `reactions` | JSON reaction counts |
+| `id` | Client-generated (`_khMsgId()`); keep it to dedupe |
+| `group_code` | Exact room code (required filter on every read) |
+| `user_id` | Sender's 16-char id |
+| `display_name` | Sender name (≤40 chars) |
+| `text` | `enc1:`/`enc2:` ciphertext, or a `KH*` media marker |
+| `ts` | UTC ISO timestamp |
+| `edited`, `important` | Boolean flags |
+| `reply_to` | Optional parent id; replies are separate rows |
+| `reactions` | JSON: emoji → array of 16-char user ids |
+| `owner_secret` | Random per-message secret enabling author-only mutations |
 | `device_hint`, `location_hint` | Moderation hints where supplied |
 
-Normal message text is encrypted client-side before it is written. Bounded
-message reads include the caller's `X-KH-Secret` and the required exact
-`group_code` filter. The desktop wire envelopes are `enc1:<iv>.<ciphertext>.<tag>` for AES-GCM and `enc2:` for
-gzip-compressed AES-GCM payloads. Room keys and message keys are client-side;
-the service relays ciphertext and room metadata.
+Encryption: room key = `SHA-256(UTF8("khmsg::" + groupCode))`; AES-GCM-256, 12-byte IV,
+16-byte tag; gzip only when it shrinks the payload (`enc2:`), else `enc1:`; envelope
+`<prefix>:<b64(iv)>.<b64(ciphertext||tag)>`; no associated data. Decrypt failure →
+placeholder, never a crash. The web client resolves reply previews from memory; the
+desktop reads parents with `GET …?id=in.(…)` (≤40 ids).
 
-Multiplayer actions are JSON event bodies sent as encrypted room messages. The
-room transports membership and state; each game defines its own event types and
-turn validation. Common crossplay game slugs include `ttt`, `connect4`,
-`dotsboxes`, and `reversi`. Match results do not go to `kh_scores`.
+Mutations: edit = `PATCH …?id=eq.<id>` `{"text":…,"edited":true}` with
+`X-KH-Secret: <owner_secret>`; unsend = `DELETE …?id=eq.<id>` same header; important =
+`PATCH … {"important":true}` same header; reaction toggle =
+`POST /rest/v1/rpc/kh_set_reaction` `{p_msg_id,p_key,p_user_id}` (atomic server-side,
+`return=minimal`). Deletes also accept `X-KH-Room-Owner: 1` for room-owner cleanup.
+Don't send the account token where an owner-secret is required — they are different
+secrets.
 
-### Other social operations
+**Inbox events** (client protocol, not a server graph): JSON serialized, encrypted as
+ordinary room text, inserted into the recipient's inbox room (or via `kh_inbox_send`).
+Types: `DM_INVITE {code,name,fromName,fromUserId}`, `CHAT_REQUEST {code,name,…}`,
+`FRIEND_REQUEST {fromHash,fromUserId,fromName}`, `FRIEND_ACCEPT {…}`, `GAME_INVITE
+{game,roomShort,fromName,fromUserId}`. Friends/requests live in encrypted account state
+(`friends`, `friendRequests`, `friendReqTombs`); processed inbox ids are tombstoned so
+old messages can't replay resolved state. Dedupe by message id.
 
-Reactions, edits, unsends, reports, and invitation events are authenticated
-operations over `kh_messages` or worker-supported report routes. Invitation
-notifications are delivered to the recipient's inbox room. Direct messages and
-community topics use the same room/message transport; clients must preserve the
-server's room filter and owner-secret requirements for mutations.
+### 4.5 Chat media markers (`KH*`)
 
-## Mail
+All ride in `kh_messages.text`; the server treats them as opaque strings. Detection
+regex @kh-app.js:30829 covers `KHIMG1|KHAPP1|KHDRAW1|KHFLIP1|KHPOLL1|KHVOTE1|KHSTK1|
+KHSTORY1|KHMEME1`.
 
-### `kh_mail`
+| Prefix | Payload | Limits |
+|---|---|---|
+| `KHIMG1:` | `data:image/{jpeg,png,gif,webp};base64,…` | send budget 110 KB, hard cap 220 KB; optional hidden `KHCAP1` caption trailer in the base64 (≤600 B) |
+| `KHAPP1:` | b64(encodeURIComponent(JSON `{shareId,label,color,icon,html}`)) | html ≤ 512 KiB |
+| `KHDRAW1:` | b64 JSON `{n,w,h,layers[]}` | layers = non-empty `[{type,data}]` |
+| `KHFLIP1:` | b64 JSON `{n,w,h,fps,f[]}` | ≤60 frames, ≤64×64, fps 1..15 |
+| `KHPOLL1:` | b64 JSON `{pid,q,opts[],o}` | q ≤140, 2–6 options ≤60 chars |
+| `KHVOTE1:` | `{pid}:{idx}` or `{pid}:t:{b64(other≤40)}` | 0-based option index |
+| `KHSTK1:` | sticker id `^[fawt]_[a-z0-9_]{1,22}$` | sliced to 24 |
+| `KHSTORY1:` | b64 JSON `{s,h,l:[{r,t}]}` | s ≤60, h ≤40, ≤120 entries, t ≤1800 |
+| `KHMEME1:` | meme id `^[a-z0-9-]{1,40}$` | served by `kh_meme_list/use` RPCs |
+| `KHPIX1:` | b64 JSON `{w,h,d,pal≤36,n≤40}` | pixel-art posts, ≤64×64 |
+
+### 4.6 Presence: `kh_presence`
+
+Upsert on `user_id`: `{user_id, display_name, last_seen, avatar, profile}` with
+`X-KH-Secret`. Beat every 100 s (180 s simple mode) + on visibility change; ~7 min
+online window; **never** send an empty `avatar` on a beat — it erases the picture other
+clients see; preserve `profile` keys you don't own. `profile` is a JSON *object*:
+`{p,h,b,s,tz,f,sf,j,nameStyle,…}` plus short keys `fr` (frame), `ns` (name style),
+`r` (role), `pl` (plan). Reads: online list
+`?last_seen=gt.<cutoff>&select=user_id,display_name,last_seen,avatar,profile&order=last_seen.desc&limit=N`
+(≤100); discovery sweeps use 14 days/limit 400; avatar batch
+`?user_id=in.(…)&select=user_id,avatar&limit=100` (≤100 ids, 16-hex each; cache per
+session; missing/invalid avatar falls back to an initial, never hides the row).
+
+### 4.7 Scores: `kh_scores` (corrected — run tokens)
+
+Submission requires sign-in; flow in `_khSubmitScore` @kh-app.js:1549026:
+
+1. Clamp: integer **1..1,000,000,000** (≤0 and >1e9 rejected).
+2. **Run token**: `POST /rest/v1/rpc/kh_run_start {p_hash}` returns a `"khr1."`-prefixed
+   token (cached in `kh_runtok`, 24 h sweep, submit-valid 20 h). No token → queue and
+   retry in 90 s.
+3. 30 s same-score dedupe per game (`kh_lastsubmit_{game}`).
+4. Insert `{id:"<userId>_<game>_<Date.now()>_<rand>", game ≤40ch, score, display_name
+   ≤40ch ("Reader"→""), user_id, date, run:<token>, proof?:<object>}` with
+   `X-KH-Secret`.
+5. Server errors `SCORE_MAX/SCORE_GAME/SCORE_UPDATE` swallowed; `SCORE_TOKEN` → refresh
+   the token and retry; HTTP 422 swallowed; other failures → offline queue.
+
+Offline queue `kh_score_q`: best-score-only per game, optional proof, LRU cap 60,
+flushed 6 s after boot and on `online`. Reads are public:
+`?game=eq.<slug>&order=score.desc&limit=N` with **ban filtering**
+(`kh_banned_usernames`-backed `_khIsBannedSync`) and per-name dedupe. Multiplayer/online
+results never hit `kh_scores`. `proof` payloads (e.g. hanoi submits the full move log)
+allow server-side replay; `kh_id_report` behavioral-biometrics telemetry and
+`kh_chess_fairplay` flag "look closer" — nothing is auto-banned.
+
+Spot-checked formulas: minesweeper `max(1,bombs×50−seconds)`; wordle
+`max(1,(7−attempts)×100+wordLen×10)`; hanoi `100×discs+time-bonus` (+proof); freecell
+`max(1,2000−moves)`; mahjong `10×cleared+cleanWins`; hangman `10×streak`; ttt
+`10×streak+wins`; dominoes `50×matches+rounds`; nerdle `(tries−guesses+1)×10+len`.
+
+### 4.8 Mail: `kh_mail`
 
 | Column | Meaning |
 |---|---|
-| `id` | Mail id |
-| `to_user`, `from_user` | Canonical account names |
-| `from_id` | Sender's 16-character account id |
-| `subject`, `body` | Encrypted client-side with the shared mail key |
-| `ts` | ISO timestamp |
-| `reply_to` | Optional parent message id |
-| `owner_secret` | Sender token used for sender-side unsend |
+| `id` | `m_<sender-id>_…` |
+| `to_user`, `from_user` | Canonical names (trim → lowercase → before `@` → ≤40 chars) |
+| `from_id` | Sender's 16-char id |
+| `subject`, `body` | Encrypted with the **recipient-name context** |
+| `ts`, `reply_to`, `owner_secret` | Metadata; unsend is `DELETE …?id=eq.<id>` with the owner secret |
 
-Inbox and Sent share one bounded read. The gateway constrains authenticated
-reads to mail belonging to the caller; the client separates Inbox/Sent locally.
-The official and desktop clients derive the encryption key from the normalized
-recipient name, so sender and recipient can decrypt the same subject and body.
-Unsend is an owner-secret-gated delete.
+Key derivation: `_msgEncrypt("mail:" + to_user, …)` → AES key
+`SHA-256("khmsg::mail:" + normalizedRecipient)`; both sender and recipient can derive it,
+so this is compatibility encryption, not recipient-only confidentiality. Body ≤8,000
+chars; inbox/sent split locally by `from_id`; reads are worker-scoped to the caller
+(`X-KH-Secret`), cap 200. The web UI also surfaces external providers
+(gmail/outlook/yahoo/proton/icloud/fastmail) as open-in-new-tab cards. Recovery-code
+email is separate: `POST https://email-worker.arancool3000.workers.dev/send` with
+`{to,from_user,subject,body}` — contains a recovery secret; never log or reuse as
+generic mail.
 
-## App Store
+### 4.9 Groups, topics, and the app namespace
+
+`kh_groups` rows are `{code,name,creator,created_at,updated_at}`. Look up by exact code;
+create with `POST /rest/v1/kh_groups` + account secret (insert, not upsert — never
+`on_conflict=code` against an existing room; on 409 look the room up instead). Batch
+known-code reads at ≤40 codes per request with `code=in.(…)`. Blind directory scans are
+blocked by the gateway.
+
+**Topics** are a directory inside the app-namespace RPCs, not a scan: list =
+`POST /rest/v1/rpc/kh_app_list {p_hash:<token>, p_app:"khtopics", p_room:"index",
+p_limit:200}`; rows `{k:<12-digit room code>, v:<JSON string {n ≤220, t:unix-ms,
+a ≤40, x:hidden}>, at, by}`; hidden (`x:true`), malformed or non-12-digit rows are not
+active listings. Create = insert the `kh_groups` row, then
+`POST /rest/v1/rpc/kh_app_put {p_hash, p_app:"khtopics", p_room:"index", p_key:<code ≤16>,
+p_value:<JSON {n,t,a}>}`; mods delete via `kh_app_put` with a removal `p_token`.
+Live previews read `kh_messages` in batches of 12 rooms (`order=ts.desc&limit=400`).
+
+The same `kh_app_list`/`kh_app_put` key-value namespace is the **cloud-save** store:
+`p_app` is the app id (`stronghold` in kh-games.js, rooms `world`/`clan_<id>`, keys ≤40
+chars), user-scoped by `p_hash`, with server quota errors `APP_QUOTA/APP_ROWS/APP_VALUE`.
+`kh_app_get` fetches one key.
+
+### 4.10 App Store: `kh_store_apps`
 
 | Operation | Request |
 |---|---|
-| Catalogue | `GET /rest/v1/kh_store_apps?select=...&order=downloads.desc&limit=N` |
-| Download | `GET /rest/v1/kh_store_apps?id=eq.<id>&select=id,name,cat,author,html&limit=1` |
-| Publish | `POST /rest/v1/kh_store_apps` with owner secret; includes app metadata and HTML |
-| Count download | `POST /rest/v1/kh_store_download` |
-| Unpublish | `DELETE /rest/v1/kh_store_apps?id=eq.<id>` with owner secret |
+| Catalogue | `GET …?select=id,name,cat,author,model,created_at,downloads,preview,icon_art,age_rating,rating_sum,rating_count&order=downloads.desc,created_at.desc&limit=200` |
+| Download | `GET …?id=eq.<id>&select=id,name,cat,author,html&limit=1` (author can pass owner secret to read a pending row) |
+| Publish | `POST …` + `X-KH-Secret`, body `{id,name,html,cat,author,created_at,downloads,owner_secret}`; ids `pub_<11 hex>`, name ≤60, cat ≤24 (default `Fun`), author ≤40 |
+| Rate / review / pending | `POST /rest/v1/rpc/kh_store_rate`, `kh_store_review`, `kh_store_pending` |
+| Count download | `POST /rest/v1/rpc/kh_store_download {p_id}` — best-effort; install must succeed if it fails |
+| Unpublish | `DELETE …?id=eq.<id>` with the owner secret |
 
-Public listing is limited to approved apps. Authors may fetch their own pending
-app when the matching `owner_secret` is supplied. HTML is run locally after the
-download; it is not executed by the API.
+Publishing runs an **AI review** (approved / waitlisted "every review model is busy" /
+declined+reason); public listing only shows approved rows. HTML ≤512 KiB is enforced
+client-side at publish and import. Downloaded HTML is untrusted: the web client runs it
+in a sandboxed iframe (`_khAppSandbox`, `_khWrapAppSecure`); the desktop writes it to
+`KindleHubPro/apps` and launches the system browser. `KHAPP1:` codes are the local
+import/export format `{label,color,icon,html}` — device-local transfer, not a publish
+API.
 
-The desktop App Store is a native Avalonia surface for catalogue search,
-category filters, app metadata, downloads, publishing, and local app management.
-Downloaded HTML is stored under the user's application-data
-`KindleHubPro/apps` directory and launched through the operating-system browser;
-the desktop client does not embed app content in a webview. A standalone shim
-provides app-scoped local storage and a restrictive content security policy.
+### 4.11 Moderation, feedback, and misc RPCs
 
-Portable app codes use the official `KHAPP1:` prefix and base64-encoded UTF-8
-JSON containing `{label,color,icon,html}`. The native Import/Share dialog accepts
-these codes, enforces the 512 KiB HTML limit, stores imported apps locally, and
-can export a downloaded app in the same format. This is a device-local transfer,
-not a catalogue publish. Publishing accepts an HTML file or clipboard content
-and uses the shared store API.
+- **Reports** → `kh_feedback` rows `{id:"urep_"|"aifix_"|"rep_"+ts, type:"bug", text ≤1990,
+  votes:0, date}`; text carries `[REPORT] [SECURITY] [USERNAME]` tags, subject ids,
+  reporter and AI-triage verdict ("AI: BAN"/"AI: WARN" — human confirm required).
+  Moderator applications are **not** `[MODAPP]` in the current web client; they are
+  redirected to Settings → Account → Apply to be a moderator.
+- **Moderator ops**: `kh_mod_stats {p_token:<mod code>}` → `{level, users, onlineNow,
+  visitsToday, visitors7d, messages, groups, feedbackOpen, appsPending?}`;
+  `kh_mod_claim {p_code_hash:<sha256 of uppercased trimmed invite>, p_name, p_uid}` —
+  the invite itself is never sent. `kh_mod_badges/ranks/create/list`, `kh_smod_reports`
+  support the mod tools; `kh_mod_code` is stored in localStorage and excluded from cloud
+  sync.
+- **Age/verify**: `kh_age_verify`, `kh_age_mine`, `kh_age_self_set`, `kh_age_marks`,
+  `kh_birthday_claim`; age rooms `9300000000{05..18}`.
+- **Polls** (chat polls live on server state): `kh_poll_save/vote/voters/stats/list/delete`.
+- **Misc**: `kh_member_count`, `kh_follower_counts`, `kh_gift_claim`, `kh_redeem_gift`,
+  `kh_helper_link/status/unlink`, `kh_pid_lookup`/`kh_public_id` (public-id inbox
+  addressing), `kh_plan_counts`, `kh_head_withdraw_warning`, `kh_score_boost_list`.
+- **Photo/gallery worker** (`kindlehub-state.arancool3000.workers.dev`): `GET /photos`,
+  `PUT /photo {id,data}`, `GET/DELETE /photo?id=…` with headers `X-KH-Secret:
+  <SHA-256("khphoto::"+photoKey)>` and `X-KH-Account: <authToken>`; `data` is
+  client-sealed. Routes are inferred from the web source, not a published schema.
 
-## Desktop API mapping
+## 5. Corrections against the previous reference
 
-| Layer | Responsibility |
+The previous ARCHITECTURE.md (uploaded alongside the zip, "KindleHub Pro API Reference",
+952 lines) was written mostly from the desktop adapter. Checking it against the shipped
+web client produced these corrections:
+
+| # | Previous claim | What the code says | Evidence |
+|---|---|---|---|
+| 1 | Inbox room = `800000` + 16-char user id (16 chars) | Inbox codes are **12 digits**: `800000` + 6 digits derived from the recipient's 6-hex public id (`parseInt(hexDigit,16) % 10`), validated `/^800000[0-9]{6}$/`; sends prefer the `kh_inbox_send` RPC | kh-app.js @1958427, @1562800 |
+| 2 | Multiplayer room codes are `mp-{game}-{id}` | `mp-{game}-{short}` is the group **name**; the code is `900000` + the 6-digit short | kh-app.js @1960244, @1562273 |
+| 3 | Direct messages use a `DM:*` **code** family | DM rooms are ordinary random 12-digit codes; `DM:` is a room **name** prefix (`"DM: <me> & <them>"`) | kh-app.js @808573, @71819 |
+| 4 | Message transport is polling only (desktop docs) / realtime (old in-repo doc) | Chat view subscribes to **Supabase realtime** (phoenix protocol, 25 s heartbeat) with adaptive-polling fallback; core sweeps, `KH_MP` (3 s) and inbox/mail probes poll | kh-views.js @2325xxx; kh-app.js @1589600 |
+| 5 | (In-repo doc) account key via PBKDF2 210,000 iterations | Account key is the **raw token bytes**; PBKDF2 210k is only `KHS1:` note lock / `KHSP1:` superchat; `KHSL1:` 600k, `KHA2:` 120k | kh-app.js @1252745, @1253300, @814143, @1259978 |
+| 6 | (In-repo doc) cloud sync every ~30 s (`_khSaveLoop`) | No such loop: debounced saves + **90 s** periodic sync (load/idle-scaled) + post-load syncs, 45 s retry backoff | kh-app.js @23802, @206867 |
+| 7 | Scores are plain `{id,game,score,…}` rows | Submissions carry a server-issued **run token** (`khr1.`, via `kh_run_start`) plus optional `proof` (e.g. hanoi move log); 1..1e9 clamp, 30 s dedupe, offline queue cap 60 | kh-app.js @1549026, @1548362 |
+| 8 | Reaction JSON maps emoji → counts | Values are **arrays of 16-char user ids**; counts are array lengths (both docs agree on the read shape) | kh-views.js @2285xxx |
+| 9 | Reply parents read via `GET …?id=in.(…)` | That's the **desktop** behavior; the web client resolves parents from the in-memory transcript map | kh-views.js @2277500 |
+| 10 | Moderator applications posted as `[REPORT] [MODAPP]` kh_feedback rows | The web client redirects mod applications to Settings → Account; only `[REPORT]`/`[SECURITY]`/`[USERNAME]` tags are built | kh-views.js @892155, @2267460 |
+| 11 | Game relay events include `OPEN` | No `OPEN` event exists; observed: `JOIN`, `BYE`, `CHAT`, `ACT`, `STATE`, `TTT_STATE`, `MOVE_TTT`, `MOVE_C4`, `C4_STATE`, `DB_INIT`, `DB_MOVE`, `MOVE`, `ST`, `SH`, `RS`, `MV`, `AC`, `CL`, `SG_*` | kh-games.js throughout |
+| 12 | (In-repo doc) `bucketbrigade` co-op exists, `pool` slug | Neither exists: `bucketline` is single-player arcade; pool is slug **`eightball`**; co-op party games are Barrage, Last Ladder, Sketch & Guess | kh-games.js `_doLaunch` |
+| 13 | Media markers limited to 8 prefixes | Full set: `KHIMG1` (+`KHCAP1` trailer), `KHAPP1`, `KHDRAW1`, `KHFLIP1`, `KHPOLL1`, `KHVOTE1`, `KHSTK1`, `KHSTORY1`, **`KHMEME1`**, **`KHPIX1`** | kh-app.js @30829, @143749, @128624 |
+| 14 | RPC set ends at `kh_store_download`/`kh_mod_*`/`kh_recovery_set` | ~45 RPCs in use (see §3.1), incl. `kh_run_start`, `kh_inbox_send`, `kh_poll_*`, `kh_meme_*`, `kh_age_*`, `kh_id_report`, `kh_gift_*`, `kh_pid_lookup` | kh-app.js RPC call sites |
+| 15 | Tables list has 8 tables | Also `kh_errors` (client telemetry, incl. the shell's stall logger) and `kh_banned_usernames` (ban lookups) | kh-app.js @1280173, @1460455; index.html line 6 |
+| 16 | `mod/` assumed to be moderator tooling | `mod/index.html` is a **Kindle jailbreak download shelf** (Vera/WinterBreak/LanguageBreak, KUAL, MRPI, KOReader) served from `files.json`/worker `/mod/list` | mod/index.html |
+| 17 | Third-party meme templates via `api.imgflip.com` | Memes are first-party now: `kh_meme_list/use` RPCs + `KHMEME1:` chat cards + `api.memegen.link` | kh-app.js; kh-views.js @2408810 |
+| 18 | Presence heartbeat cadence unspecified | 100 s beat (180 s simple mode), ~7 min online window, discovery window 14 days | kh-app.js @1243100, @1249100, @996997 |
+| 19 | Topic rows `{n,t,a}` only | Rows also carry a hidden flag `x`, and `k` must be a 12-digit code; `p_key` ≤16 chars | kh-views.js @1723279 |
+| 20 | Uploaded doc ends with a dangling table fragment (CommunityViewModel.cs …) | Merged artifact; removed here. The desktop-ViewModel rows belong to the (unavailable) desktop repo docs | uploaded ARCHITECTURE.md lines 946–953 |
+
+Confirmed-and-kept: token derivation (incl. `aran`→`arancool3000`), userId = first 16
+chars, state envelope flags `G`/`c`/`g` + dictionary, `enc1/enc2` chat envelopes,
+`khmsg::` room-key derivation, `khmsg::mail:` mail context, `KHAV1/KHAV2` avatar formats,
+`KHAPP1` 512 KiB limit, `kh_set_reaction` contract, `kh_recovery_set {p_hash,p_email}`,
+store endpoints/owner-secret semantics, fixed codes `000000000000`, `000000000001`,
+`800000777777`.
+
+## 6. External services actually referenced
+
+First-party: `kindlehub-api` (REST+RPC+AI proxy+`/stats`), `email-worker` (recovery
+mail), `kindlehub-state` (photos + legacy `/state`), `kindlehub-helpers`, `vpn` (fetch
+tunnel), `ai.kindlehub.pro`/`ai2.kindlehub.pro`, `read./tube./game./game3./browse./
+browse2./kindletube./static./static2.` subdomains, `frames/*.png` profile-frame PNGs
+(`KH_FRAMES`), origin relay `/rv/{a,b}`, `tube.kindlehub.pro/health` (Raspberry Pi video
+preparer, checked by the status page).
+
+Third-party by feature family (requests are assembled client-side; treat as unstable
+contracts):
+
+| Family | Hosts |
 |---|---|
-| `KindleHubApiClient.vb` | REST paths, headers, serialization, filters, and table-row parsing |
-| `KindleHubCore.vb` | Authenticated account context, encrypted state, and high-level API methods |
-| `AccountState.vb` | Safe JSON updates that retain unknown web-client state keys |
-| `LeaderboardViewModel.cs` | Loads scores and presence, then resolves leaderboard avatar codes in one bounded batch |
-| `SettingsViewModel.cs` | Edits the shared pixel grid and stores its official avatar code under `profileAvatar` |
-| `ProfileAvatar.cs` | Validates, encodes, and renders the shared KHAV1/KHAV2 formats |
+| AI | generativelanguage.googleapis.com, openrouter.ai, api.openai.com, api.anthropic.com, api.mistral.ai, image.pollinations.ai, r.jina.ai; keys live in account state (`geminiKey`, `openrouterKey`, `anthropicKey`, `openaiKey`, `mistralKey`) with a shared community key through `callAI()`/`kh-gemini-proxy` |
+| Translation/dictionary | translate.googleapis.com, api.mymemory.translated.net, api.dictionaryapi.dev, api.lyrics.ovh |
+| Books | gutenberg.org (cache/epub + files), gutendex.com, openlibrary.org, archive.org, librivox.org, standardebooks.org |
+| Weather/maps | api.open-meteo.com (+ air-quality/geocoding), api.bigdatacloud.net, ipapi.co, nominatim.openstreetmap.org, overpass-api.de, router.project-osrm.org, api.rainviewer.com tiles |
+| News/feeds | api.rss2json.com (primary pipeline), feeds.bbci.co.uk, news.google.com; CORS proxies api.allorigins.win / api.codetabs.com |
+| Media | accounts.spotify.com / api.spotify.com, YouTube frontends (youtube-nocookie, yewtu.be, inv.nadeko.net, inv.tux.pizza, invidious.nerdvpn.de, pipedapi.kavin.rocks / drgns.space / adminforge.de / private.coffee), images.unsplash.com, picsum.photos, images-api.nasa.gov, api.artic.edu, commons.wikimedia.org, api.memegen.link, i.ytimg.com, cdn.jsdelivr.net, fonts.cdnfonts.com |
+| Utilities | api.pwnedpasswords.com (registration leak check), api.adviceslip.com, v2.jokeapi.dev, www.themealdb.com, numbersapi.com, stooq.com, ntfy.sh, en.wikipedia.org |
 
-## Interoperability guide for independent clients
+## 7. Mirror tooling
 
-This section is intended for a client written in another language. It describes
-the requests currently made by `KindleHubApiClient.vb`, including the worker RPCs
-that are not ordinary table CRUD. The gateway is authoritative: it applies
-access rules beyond PostgREST syntax, so do not assume that adding `select=*`,
-omitting a room filter, or changing a secret header will work. The desktop
-adapter is the most complete executable reference; the official browser code
-remains the compatibility reference for shared formats.
+- **update.py** (923 lines) fetches production and rewrites the mirror: fetch shell →
+  extract `kh-app.js?v=<hex>` (or plain name), version from `KH_FULL_VERSION`, build mark
+  from `<meta name="kh-src">`; fetch guard pages (`/edu/`, `/edu/plan.js`,
+  `/edu/questions.js`, `/lite`, `/read/`, `/status/`, `/mod/`) stripping the rotating
+  Cloudflare challenge script; detect layout (`query` = hashed `?v=` names, `plain` =
+  plain names — this snapshot is plain); BFS-collect every `kh-*.js` bundle; deobfuscate;
+  diff vs keep-set (retired hashed files are orphans); write atomically; update
+  `.kh-update-state.json` + `update.log`. **Deobfuscation is currently a no-op**: the
+  renamer branch is disabled ("scope renaming can break bundled runtime assumptions"),
+  so bundles ship as fetched; the Oct 5 runs used the query layout (v10.15.0,
+  unlabeled=56419→0), Oct 9+ runs are plain (v10.18.0, v10.70.1).
+- **.kh-tools/rename.js** (byte-identical to the heredoc inside update.py) is a
+  Babel-based scope-aware identifier renamer (`_0x…`, single letters, 1–3 char names →
+  role-inferred stable names), currently disabled.
+- **serve.py** replicates `_redirects`: `/lite`→lite.html, `/edu/…`→edu/, any single
+  no-dot segment → shell, `kh-*.js?v=hash` mapped to plain files, no-cache HTML vs cached
+  bundles.
 
-### Base URL, headers, filters, and errors
+## 8. Desktop client context (from the handoff doc in git)
 
-Use `https://kindlehub-api.arancool3000.workers.dev` as the base URL. Paths in
-the tables below are relative to it. Send UTF-8 JSON with
-`Content-Type: application/json` on writes. Use `Accept: application/json` on
-reads. Do not send a Supabase `apikey` or bearer token unless the gateway is
-updated to require one; this client proves write identity with `X-KH-Secret`.
+The archive's git history carries `KINDLEHUB_DESKTOP_HANDOFF.md` (deleted from the
+working tree, recoverable via `git show 665be54:KINDLEHUB_DESKTOP_HANDOFF.md`): a .NET 8
+desktop client (`KindleHub.Core` VB.NET + `KindleHub.Client` C#/Avalonia 11.0.10) that
+re-implements this protocol — the same token derivation, AES-GCM state format,
+`enc1/enc2` chat, topics RPCs, store, and game relay — using this web source as the
+compatibility reference. Avalonia-specific fixes (TextTrimming enum values,
+AppStoreViewModel constructor kick) are desktop-repo concerns and are not verifiable
+from this mirror. The old in-repo ARCHITECTURE.md section 4 documents that client's
+structure (`KindleHubApiClient.vb`, `ChatMedia.vb`, `RoomRegistry`, `ChatPrefsStore`,
+session file `~/.config/KindleHubPro/session.json`, local app HTML under
+`KindleHubPro/apps` launched via the system browser).
 
-| Header | Use |
+## 9. Compatibility checklist (updated)
+
+- UTF-8, lowercase hex, UTC ISO timestamps; `kh_presence.profile` must be a JSON object,
+  never a string; ignore unknown keys.
+- Keep the account token, per-message owner secrets, moderator codes and recovery data
+  out of URLs and logs; the token is a reusable credential even though it isn't a bearer
+  token.
+- Scope every `kh_messages` read to an exact room or id list; respect per-client caps
+  (web 30/poll, desktop 200, discovery sweeps 100–400) and batch RPC/in-list sizes.
+- Fresh 12-byte IV per encryption; 16-byte GCM tag; never reuse an IV with a key.
+- Preserve unknown account-state keys; edits are read → modify → re-encrypt → upsert.
+- Scores need a fresh `khr1.` run token (`kh_run_start`); clamp 1..1e9; dedupe 30 s;
+  queue offline (cap 60) and flush on `online`.
+- Inbox codes are 12 digits from the public id (`kh_inbox_send` preferred); MP room
+  codes are `900000xxxxxx` (name `mp-{game}-{short}`); global/crosschat/lobby are fixed.
+- Tombstone processed inbox event ids (`friendReqTombs`) before syncing account state.
+- Decrypt failures must render placeholders, never crash; treat store HTML, messages,
+  game events and presence JSON as untrusted input.
+- Handle 401/403 (policy/secret), 409 (conflict → re-read), 429 (rate limit), 422
+  (swallow for scores) without crashing; don't retry non-idempotent inserts blindly.
+
+## 10. Source map
+
+| Concern | Where |
 |---|---|
-| `X-KH-Secret: <64 lowercase hex>` | Account-authenticated writes and protected reads. It is the derived account token; keep it secret. |
-| `Prefer: return=representation` | Inserts where the caller wants the inserted row back. |
-| `Prefer: resolution=merge-duplicates,return=representation` | Account and presence upserts. The conflict key must be explicit in the URL. |
-| `Prefer: return=minimal` | Writes/RPCs where a response row is unnecessary. |
-
-REST filters use PostgREST forms: `eq.<value>`, `gt.<value>`, `gte.<value>`,
-`ilike.<pattern>`, and `in.(<a>,<b>)`. URL-encode each user-supplied scalar;
-encode a value before inserting it into a filter. A `select` list is a
-comma-separated list of column names. The gateway requires bounded reads and
-an exact room or row filter for chat; unfiltered scans are rejected. Clamp
-limits to the ranges listed below. All timestamps are UTC ISO-8601 strings.
-
-Successful reads normally return a JSON array, even for a single row. RPCs
-return JSON objects. Inserts configured with `return=minimal` usually return an
-empty body. A failed request is an HTTP error; the desktop adapter raises an
-exception for failed GET/POST calls, returns `false` for failed PATCH/DELETE
-mutations, and logs at most a short response excerpt. Treat `401`/`403` as
-authentication or policy failures, `404`/empty arrays as absent rows, `409` as
-a unique-key conflict, `429` as a rate limit, and `5xx` as a transient service
-failure. Do not retry a non-idempotent insert blindly: use a stable client
-message id where the schema permits it, or read back the object first.
-
-### Authentication, identity, and encrypted state
-
-The account token is computed locally; there is no password submission or
-server-issued bearer token:
-
-```text
-canonical = trim(username)
-if lowercase(canonical) == "aran": canonical = "arancool3000"
-canonical = lowercase(canonical)
-authToken = lowercase_hex(SHA256(UTF8("kh::" + canonical + "::" + password)))
-userId = authToken[0:16]
-```
-
-Only the username is trimmed/canonicalized. Password casing and whitespace are
-significant. The token is both the `kh_users.hash` lookup key and a 32-byte
-AES-256 key (hex decode the token). Never put it in a URL, log, crash report,
-or UI. `userId` is a public 16-character lowercase prefix, not a write secret.
-
-`kh_users.state` is an encrypted string, not a JSON object. Its current packed
-form is `base64(iv) + "." + base64(ciphertext || tag)`, using a random 12-byte
-IV, AES-256-GCM with a 16-byte tag, and the raw 32 bytes from `authToken` as
-the key. Plaintext starts with a one-byte format flag: ASCII `G` (`0x47`) means
-gzip of dictionary-compressed UTF-8 JSON; ASCII `c` (`0x63`) means uncompressed
-dictionary-compressed UTF-8 JSON; legacy ASCII `g` (`0x67`) means gzip without
-the dictionary pass. The dictionary is the ordered shared table in
-`KindleHub.Core/Crypto/KindleHubCompressionDictionary.vb`; each matched entry
-is encoded as byte `0x01` followed by its zero-based dictionary index as one
-character. Decompression is a single left-to-right pass. Account-state formats
-are versioned implicitly by this flag and the shared dictionary, so preserve
-unknown JSON properties and do not reserialize state into a different wire
-format without compatibility testing.
-
-The account-state object is client-owned and evolves. Current keys include
-`profileName`, `profileAvatar`, `fontSize`, `theme`, `simpleMode`, `syncEnabled`,
-`notes`, `msgGroups`, `leftGroups`, `friends`, `friendRequests`, and
-`friendReqTombs`. A safe edit is read/decrypt → modify only the intended keys →
-encrypt with a new IV → upsert. Never replace the whole object with a partial
-settings model. Room/friend list changes should be merged carefully if multiple
-devices can write concurrently; the API does not expose a field-level merge.
-
-### Endpoint index
-
-The desktop adapter currently calls these resources:
-
-| Resource | HTTP method and path | Purpose |
-|---|---|---|
-| Account | `GET/POST /rest/v1/kh_users` | Existence, login, register, encrypted state sync |
-| Groups | `GET/POST /rest/v1/kh_groups` | Read/create one room or fetch known room codes |
-| Messages | `GET/POST/PATCH/DELETE /rest/v1/kh_messages` | Chat, room events, message mutations, reply parent reads |
-| Reaction RPC | `POST /rest/v1/rpc/kh_set_reaction` | Atomic reaction toggle |
-| App namespace RPCs | `POST /rest/v1/rpc/kh_app_list`, `kh_app_put` | Topic directory and per-account app/cloud-save key-value data |
-| Recovery RPC | `POST /rest/v1/rpc/kh_recovery_set` | Set recovery email |
-| Moderator RPCs | `POST /rest/v1/rpc/kh_mod_stats`, `kh_mod_claim` | Aggregate stats and moderator-code claim |
-| Store | `GET/POST/DELETE /rest/v1/kh_store_apps` | Catalogue, app HTML, publish, unpublish |
-| Download count RPC | `POST /rest/v1/rpc/kh_store_download` | Best-effort app install count |
-| Scores | `GET/POST /rest/v1/kh_scores` | Public scores and signed-in submissions |
-| Mail | `GET/POST/DELETE /rest/v1/kh_mail` | Encrypted inbox/sent mail and sender unsend |
-| Presence | `GET/POST /rest/v1/kh_presence` | Heartbeats, active users, avatar and public-profile lookup |
-| Feedback | `POST /rest/v1/kh_feedback` | Message/name reports and moderator applications |
-
-The desktop `GetServerStatusAsync` is local and synthetic: it returns
-`{online:true,version:"1.0"}` without contacting an endpoint. A real client
-should establish availability with a normal bounded request and report network
-failure separately from an empty result.
-
-## Endpoint reference
-
-### Accounts: `kh_users`
-
-#### Register or sync state — `POST /rest/v1/kh_users?on_conflict=hash`
-
-Use `X-KH-Secret` and `Prefer: resolution=merge-duplicates,return=representation`.
-The body is `{hash,email,state,updated_at}`. `hash` is the 64-character token,
-`email` is the lowercased canonical username, `state` is the encrypted account
-envelope, and `updated_at` is a UTC timestamp. Registration uses encrypted `{}`
-as the initial state. Sync must reject an empty state rather than overwrite an
-existing account with blank data. A username conflict can return `409`.
-
-```http
-POST /rest/v1/kh_users?on_conflict=hash
-X-KH-Secret: <authToken>
-Prefer: resolution=merge-duplicates,return=representation
-Content-Type: application/json
-
-{"hash":"<64-hex>","email":"reader","state":"<iv>.<ciphertext-and-tag>","updated_at":"2026-10-05T12:00:00Z"}
-```
-
-#### Login/restore — `GET /rest/v1/kh_users?hash=eq.<token>&select=state,updated_at`
-
-There is no plaintext-password endpoint. Derive the token locally and query by
-that exact hash. Decrypt `state`; no row means either the username or password
-is wrong, so a second bounded query may disambiguate:
-`GET /rest/v1/kh_users?email=eq.<canonical>&select=email&limit=1`. This second
-lookup reveals whether the name exists, not its state. An account row with an
-empty state must be reported as an unusable/unsynced account rather than
-silently treated as a new account.
-
-#### Name existence/search
-
-`CheckUserExists` uses the exact-email query above with `limit=1`. Friend search
-uses `GET /rest/v1/kh_users?email=ilike.*<term>*&select=hash,email&limit=20`;
-terms shorter than two characters are ignored and `%`/`_` are stripped before
-building the pattern. The API returns each match as `{hash:<first 16 hex>,
-name:<email prefix before @>}`. The full hash must never be shown to another
-user. The search endpoint is account-directory data; apply throttling and avoid
-repeated broad queries in a UI.
-
-### Groups and room directory: `kh_groups`
-
-#### Look up a room
-
-`GET /rest/v1/kh_groups?code=eq.<encoded-code>&select=code,name,creator,created_at`
-returns zero or one group. Group rows have `code`, `name`, `creator`,
-`created_at` and may also carry server-maintained fields such as `updated_at`.
-Room codes are identifiers, not authorization secrets; the gateway determines
-what subsequent reads/writes are allowed.
-
-#### Create a room
-
-`POST /rest/v1/kh_groups` with `X-KH-Secret` and `Prefer: return=representation`.
-Body: `{code,name,creator,created_at,updated_at}`. Use a cryptographically
-random room code if the service has no allocation RPC. The desktop generates a
-12-digit code. A create is an insert, not an upsert: do not use
-`on_conflict=code` to claim another user's existing room. On `409`, look up the
-existing row and continue only if the intended flow permits joining it.
-
-#### Fetch known rooms in batches
-
-`GET /rest/v1/kh_groups?code=in.(<code1>,<code2>)&select=code,name,creator,created_at&order=created_at.desc&limit=N`.
-Only query codes the client already knows from account state, room invites, or
-fixed-room configuration. The implementation batches at most 40 codes per
-request. A general directory scan is intentionally not used for groups.
-
-#### Topic directory and topic creation
-
-The gateway blocks a blind `kh_groups` scan. Discover topics through
-`POST /rest/v1/rpc/kh_app_list` with
-`{"p_hash":"<authToken>","p_app":"khtopics","p_room":"index","p_limit":N}`.
-The response is an object containing `rows`; each row has `k` (room code), `v`
-(a JSON string), `at`, and `by`. Parse `v` as JSON; active topic entries contain
-`n` (room name beginning `TOPIC: `), optional `a` (creator), and `t` (creation
-time in Unix milliseconds). Rows with `x:true`, malformed values, or no `n`
-are not active listings.
-
-Creating a topic is two steps: create its `kh_groups` row, then publish its
-directory entry via `POST /rest/v1/rpc/kh_app_put` with
-`{"p_hash":"<authToken>","p_app":"khtopics","p_room":"index","p_key":"<room-code>","p_value":"<JSON string>"}`.
-The `p_value` JSON currently uses `{n:<topic room name>,t:<unix-ms>,a:<display name>}`.
-If publishing fails, the room may exist but will not appear in topic discovery.
-
-### Messages, replies, and mutations: `kh_messages`
-
-#### Send message — `POST /rest/v1/kh_messages`
-
-Authenticated insert (`X-KH-Secret`, `Prefer: return=representation`). Fields:
-
-| Field | Meaning |
-|---|---|
-| `id` | Client-generated unique message id. |
-| `group_code` | Exact room code. |
-| `user_id` | Usually first 16 characters of the auth token. |
-| `display_name` | Sender name, max 40 characters in the desktop client. |
-| `text` | `enc1:`/`enc2:` ciphertext for normal text and relay JSON; some media uses documented `KH*` markers. |
-| `ts` | UTC timestamp. |
-| `edited`, `important` | Boolean flags. |
-| `reply_to` | Optional parent message id. Replies are separate rows. |
-| `owner_secret` | Random per-message secret used for author-only mutations. |
-
-The response may be suppressed by gateway `return=minimal` behavior; retain
-your locally generated id and owner secret. Keep the per-message owner secret
-locally (secure storage); it is not the account token. Without it the sender
-cannot edit, unsend, or change the important flag later.
-
-#### Encryption and read — `GET /rest/v1/kh_messages?...`
-
-Always include an exact room filter, order, a bounded limit, and explicit
-columns. The desktop requests:
-
-```text
-GET /rest/v1/kh_messages?group_code=eq.<code>&order=ts.desc&limit=100
-  &select=id,group_code,user_id,display_name,text,ts,edited,important,
-          reactions,reply_to,device_hint,location_hint
-```
-
-The adapter caps `limit` at 200. Optional paging filters are `offset=N`,
-`id=gt.<id>`, and `ts=gte.<ISO timestamp>`. Since the result is newest-first,
-reverse it after parsing to display oldest-first. The API does not provide a
-durable cursor contract; clients should deduplicate by `id` when polling.
-
-Normal message text is AES-GCM encrypted on the client. Derive the room key as
-`SHA256(UTF8("khmsg::" + groupCode))`; use a random 12-byte IV and 16-byte GCM
-tag. Compress with gzip only when it makes the UTF-8 payload smaller. The
-serialized form is `enc1:<base64(iv)>.<base64(ciphertext || tag)>` for raw bytes
-and `enc2:<base64(iv)>.<base64(ciphertext || tag)>` for gzip bytes. There is no
-additional associated data in the current implementation. A decrypt failure
-must not crash the transcript; retain an undecryptable placeholder. `KH*`
-markers may represent structured images, stickers, polls, stories, or flipbooks;
-use the media parsers/format descriptions in `KindleHub.Core/Crypto/ChatMedia.vb`
-before assuming every decrypted string is plain prose.
-
-Reaction JSON returned by the gateway maps emoji keys to arrays of 16-character
-user ids. Counts are array lengths. Authors, role badges, profile frames and
-avatars are joined from presence data; they are not snapshots in each message.
-
-#### Edit, delete/unsend, important flag
-
-| Action | Request |
-|---|---|
-| Edit | `PATCH /rest/v1/kh_messages?id=eq.<id>` body `{"text":"<new enc1/enc2 value>","edited":true}`, header `X-KH-Secret: <owner_secret>` |
-| Unsend | `DELETE /rest/v1/kh_messages?id=eq.<id>`, header `X-KH-Secret: <owner_secret>` |
-| Set important | `PATCH /rest/v1/kh_messages?id=eq.<id>` body `{"important":true}`, header `X-KH-Secret: <owner_secret>` |
-| Toggle reaction | `POST /rest/v1/rpc/kh_set_reaction` body `{"p_msg_id":"<id>","p_key":"<emoji>","p_user_id":"<16-char uid>"}` |
-
-Edits use the same room-derived encryption key and must preserve the message's
-room. Mutations are owner-secret gated; do not send `X-KH-Secret` with the
-account token for an owner-secret operation. Reaction toggles are atomic on the
-server; the RPC uses `Prefer: return=minimal`, and the desktop includes the
-account token header when available.
-
-#### Read reply parents by id
-
-`GET /rest/v1/kh_messages?id=in.(<id1>,<id2>)&select=id,group_code,user_id,display_name,text,ts,edited,important&limit=N`.
-The adapter sends at most 40 ids. Decrypt each result using its exact
-`group_code`. Missing/deleted parent rows are valid; render a generic unavailable
-reply preview. Replies remain separate messages with `reply_to` referencing
-the parent id.
-
-### Inbox events, DMs, friends, and game relay
-
-There is no separate event endpoint. An event is JSON serialized, encrypted as
-ordinary room text, and inserted into `kh_messages`. To send:
-
-```json
-{"type":"FRIEND_REQUEST","toHash":"<recipient 16-char hash>","fromHash":"<sender 16-char uid>","fromUserId":"<sender uid>","fromName":"Reader"}
-```
-
-Store the event in the target user's inbox room, conventionally
-`800000<recipient-user-id>` (16 characters total). Poll with the normal
-room-filtered messages request and decrypt using that inbox code as the room
-key. Parse JSON only after decryption. Common event types used by the desktop:
-
-| `type` | Important fields | Meaning |
-|---|---|---|
-| `DM_INVITE` | `code`, `name`, `fromName`, optionally `fromUserId` | Tell a recipient about a newly created direct/group room. |
-| `CHAT_REQUEST` | `code`, `name`, `fromName`, `fromUserId` | Request that the recipient open a chat room. |
-| `FRIEND_REQUEST` | `fromHash`, `fromUserId`, `fromName` | Add a pending friend request to local encrypted account state. |
-| `FRIEND_ACCEPT` | `fromHash`, `fromUserId`, `fromName` | Add the sender to the local friends list. |
-| `GAME_INVITE` | `game`, `roomShort`, `fromName` | Invite the recipient to a supported game's six-digit lobby. |
-
-Game-specific relay events use the same transport. Send JSON in the message
-`text`, with the room code as encryption context, then poll the room and accept
-only events for that game's slug. Current desktop slugs are `ttt`, `connect4`,
-`dotsboxes`, and `reversi`; their event schemas are implemented in
-`KindleHub.Client/Games/*Session.cs`. Examples include `JOIN`, `OPEN`,
-`MOVE_C4`, `C4_STATE`, `DB_MOVE`, `DB_INIT`, and `ST`. Each game must validate
-turn, board dimensions, player identity, and state transitions itself: transport
-delivery is not game authority.
-
-Global chat uses code `000000000000`; Crosschat uses `000000000001`; the open
-games lobby uses `800000777777`. These are fixed protocol values. A six-digit
-game room suffix is not the same thing as a 12-digit chat room code. Use the
-appropriate room family and event schema.
-
-Friend relationship state is stored in encrypted account state (`friends`,
-`friendRequests`, `friendReqTombs`), not a server friend table. Inbox events are
-the notification channel. Deduplicate by message id, ignore tombstoned ids,
-and sync changes to account state. This event convention is client protocol
-behavior, not a transactional server-side friend graph.
-
-### Presence and public profiles: `kh_presence`
-
-#### Heartbeat/upsert
-
-`POST /rest/v1/kh_presence?on_conflict=user_id` with upsert `Prefer` and
-`X-KH-Secret`:
-
-```json
-{"user_id":"0123456789abcdef","display_name":"Reader",
- "last_seen":"2026-10-05T12:00:00Z","avatar":"KHAV2:...",
- "profile":{"p":"...","fr":"frame-id","ns":"style-id","r":"Member","pl":"Free"}}
-```
-
-`profile` must be a JSON object (or omitted), never a JSON-encoded string.
-`game_room` is not a `kh_presence` column in the current adapter; game
-availability is advertised through lobby room events. Preserve profile fields
-you do not own; heartbeat callers should build/merge a JSON object instead of
-replacing it with `null` or a string.
-
-#### Active people and profile lookup
-
-`GET /rest/v1/kh_presence?last_seen=gt.<UTC cutoff>&select=user_id,display_name,last_seen,avatar,profile&order=last_seen.desc&limit=N`
-returns up to 100 users. Avatar batch lookup:
-`GET /rest/v1/kh_presence?user_id=in.(<16-hex ids>)&select=user_id,avatar&limit=100`.
-Public profile lookup uses the same filter and
-`select=user_id,avatar,profile`. Batch at most 100 ids, validate each id as 16
-hex chars, and cache results by `user_id` for the session. Avatar code formats
-are defined above. `profile` is public JSON; current short keys include `fr`
-(profile frame), `ns` (name style), `r` (role), and `pl` (plan/tier). The
-complete public profile schema belongs to the official client; ignore unknown
-keys and display only fields whose meaning is known.
-
-### Scores and game discovery
-
-#### Submit a score — `POST /rest/v1/kh_scores`
-
-Requires a valid account token in `X-KH-Secret`. The body is
-`{id,game,score,display_name,user_id,date}`. `user_id` is the first 16 token
-characters; `score` is clamped to a nonnegative value (desktop maximum
-999,999,999); `game` is a game slug; `date` is UTC ISO. The id should be unique
-per submission. A conflict is treated as already submitted.
-
-#### Read scores — `GET /rest/v1/kh_scores?game=eq.<slug>&order=score.desc&limit=N&select=id,score,display_name,date,user_id`
-
-Public read, maximum 100 rows per request. Scores sort descending. Fetch
-presence avatars separately using the returned `user_id`s. Known game names are
-derived from up to 100 recent `game` values and current open-game lobby events;
-the adapter falls back to a curated list if no score rows exist. There is no
-separate game-catalog RPC in this client.
-
-### App namespace and cloud saves
-
-#### List keys — `POST /rest/v1/rpc/kh_app_list`
-
-Body: `{"p_hash":"<authToken>","p_app":"<app-id>","p_room":"<room>","p_limit":N}`.
-The client requires a valid 64-hex token, strips app/room values to
-`[A-Za-z0-9_.-]`, caps each at 64 characters, defaults an empty room to
-`main`, and clamps limit to 1–200. Response shape is `{rows:[{k,v,at,by},...]}`;
-`k` is a key, `v` is the stored string value, `at` is the saved timestamp, and
-`by` is the writer label. Topic discovery reuses this RPC with app `khtopics`
-and room `index` (see Groups above). Cloud-save reads are user-scoped by
-`p_hash`. The desktop currently exposes cloud-save listing; it does not expose
-a verified general save-write method in `IKindleHubApiClient`.
-
-#### Write namespace key — `POST /rest/v1/rpc/kh_app_put`
-
-The verified desktop call is topic-directory publishing:
-`{"p_hash":"<authToken>","p_app":"khtopics","p_room":"index","p_key":"<code>","p_value":"<JSON string>"}`.
-The RPC's general key-value semantics are also used by the official app for
-cloud saves, but custom clients should verify the official save schema and
-limits before writing; the desktop adapter has no public generic save-write
-operation to copy. Do not confuse account-state sync (`kh_users.state`) with
-per-app cloud saves (`kh_app_*`).
-
-### Recovery and moderator operations
-
-| Operation | Request and behavior |
-|---|---|
-| Set recovery email | `POST /rest/v1/rpc/kh_recovery_set` body `{"p_hash":"<authToken>","p_email":"<email>"}`. Requires authenticated hash; validate a conventional email address and max 254 chars. |
-| Read aggregate moderator stats | `POST /rest/v1/rpc/kh_mod_stats` body `{"p_token":"<moderator code>"}`. Response fields: `level`, `users`, `onlineNow`, `visitsToday`, `visitors7d`, `messages`, `groups`, `feedbackOpen`, optional `appsPending`. This reports counts, not personal records. |
-| Claim moderator access | `POST /rest/v1/rpc/kh_mod_claim` body `{"p_code_hash":"<sha256 hex of uppercased trimmed invite>","p_name":"<display name>","p_uid":"<first 16 auth-token chars>"}`. The invite code itself is not sent to the RPC. |
-| Apply to moderate | `POST /rest/v1/kh_feedback` with `type:"bug"` and a `[REPORT] [MODAPP]` text body. No secret header is added by the desktop adapter; worker validation/rate limits apply. |
-
-`kh_mod_claim` and `kh_mod_stats` are worker RPCs, not general table reads.
-Do not treat the desktop's moderator code as an account password or log it.
-
-### App Store
-
-#### Catalogue — `GET /rest/v1/kh_store_apps?...`
-
-The desktop requests
-`select=id,name,cat,author,model,created_at,downloads,preview,icon_art,age_rating,rating_sum,rating_count`, ordered by downloads and creation date descending. It fetches at most 200 rows, then applies category and text filtering locally. Public catalogue visibility is controlled by the worker/review state; do not assume pending rows are public.
-
-#### Download HTML — `GET /rest/v1/kh_store_apps?id=eq.<id>&select=id,name,cat,author,html&limit=1`
-
-Public approved rows need no secret. An author may provide their 64-hex owner
-secret in `X-KH-Secret` to read their own pending row. Response fields are
-`id,name,cat,author,html`; an empty result is not found/not approved for this
-caller. Treat HTML as untrusted content. The desktop writes it to local storage
-and launches the system browser; it does not execute downloaded HTML inside the
-native process.
-
-#### Publish/unpublish
-
-`POST /rest/v1/kh_store_apps` uses `X-KH-Secret` and
-`Prefer: return=representation`. Body fields:
-`{id,name,html,cat,author,created_at,downloads,owner_secret}`. The desktop
-generates ids of the form `pub_<11 hex chars>`, caps name at 60, category at
-24, author at 40, starts downloads at zero, and defaults an empty category to
-`Fun`. The owner secret is the supplied owner secret or, if omitted, the
-account token. Successful publication may enter moderation before public
-listing. Delete via
-`DELETE /rest/v1/kh_store_apps?id=eq.<id>` with the same owner secret; this is
-author-only.
-
-#### Count download
-
-`POST /rest/v1/rpc/kh_store_download` body `{"p_id":"<app-id>"}`. It is a
-best-effort counter: install must still succeed if this RPC fails.
-
-Portable app transfer codes (`KHAPP1:`) are local files/clipboard data, not API
-requests. The decoded JSON is `{label,color,icon,html}` and the desktop applies
-a 512 KiB HTML limit. They are not an alternate authentication or publish
-format.
-
-### Mail: `kh_mail`
-
-#### Read Inbox and Sent — `GET /rest/v1/kh_mail?order=ts.desc&limit=200&select=...`
-
-Requires `X-KH-Secret`. The worker scopes results to mail where the caller is
-sender or recipient; do not send an arbitrary username filter. The response
-columns are `id,to_user,from_user,from_id,subject,body,ts,reply_to,owner_secret`.
-Inbox versus Sent is determined locally by whether `from_id` equals the
-current user's id. The adapter caps reads at 200.
-
-Normalize a mail identity by trim → lowercase → take text before first `@` →
-cap at 40 characters. Both `subject` and `body` are encrypted with the chat
-envelope format (`enc1`/`enc2`) but use the context string
-`mail:<normalized-to_user>`; because chat key derivation prepends `khmsg::`,
-the AES key is `SHA256(UTF8("khmsg::mail:" + normalizedRecipient))`. Subject is
-not plaintext. Both sender and recipient can derive this legacy shared key from
-the recipient name, so this is compatibility encryption, not strong
-recipient-only confidentiality.
-
-#### Send
-
-`POST /rest/v1/kh_mail` with `X-KH-Secret`, `Prefer: return=representation`.
-Body fields: `{id,to_user,from_user,from_id,subject,body,ts,reply_to,owner_secret}`.
-The desktop generates an id prefixed `m_<sender-id>_`, caps subject at 160
-characters and body at 8,000, stores normalized recipient and sender names,
-encrypts subject/body using the recipient context above, and sets
-`owner_secret` to the account token.
-
-#### Unsend
-
-`DELETE /rest/v1/kh_mail?id=eq.<mail-id>` with
-`X-KH-Secret: <owner_secret>`. Only the sending account should be able to
-delete its outgoing mail. A false/4xx result should not be represented as a
-successful unsend.
-
-### Reports: `kh_feedback`
-
-Message and username reports are inserted with `POST /rest/v1/kh_feedback`.
-The payload is `{id,type:"bug",text,votes:0,date}`. `text` is a bounded
-human-readable report (maximum 1,990 characters) containing report kind,
-reason, subject id/context, reporter, and optional note. Username reports can
-include `[SECURITY]` when the user flags a potential account-security issue.
-Moderator applications use the same table and are marked in text as
-`[REPORT] [MODAPP]`. The adapter treats reports as best-effort and returns
-false on failure. Do not use this endpoint for arbitrary user content or include
-secrets/private message bodies beyond the compact quoted excerpt required for
-the report.
-
-## Other network resources used by the desktop client
-
-These calls are outside the KindleHub API gateway but affect visible client
-features. They do not use `X-KH-Secret`.
-
-| Host and request | Use | Notes |
-|---|---|---|
-| `GET https://kindlehub.pro/frames/<frame-file>.png` | Download official profile-frame PNGs. | Only known frame ids are mapped to filenames. Desktop caches files under the app-data `KindleHubPro/profile-frames` directory and keeps decoded images in memory for the session. A network or decode failure falls back to no frame. |
-| `GET https://api.imgflip.com/get_memes` | Retrieve outside meme-template catalogue. | This is Imgflip's public template list, not KindleHub content. The desktop filters/selects templates client-side and then fetches a selected image URL. |
-| `GET <selected Imgflip template URL>` | Download selected template image bytes. | URL is provided by the template listing. Treat remote image bytes and metadata as untrusted; enforce timeouts and image-size limits. |
-| `https://www.youtube.com/watch?v=...` | Browser launch for the virtualinsanity Easter egg. | This is an operating-system browser launch, not an API call used for app data. |
-
-The official website also contains optional mini-apps and reader tools that
-call third-party providers directly. The URL inventory in
-`../AppFetch/kindlehub.pro/kh-app.js` and `kh-views.js` includes these service
-families; they are not dependencies of the desktop's core protocol:
-
-| Feature family | Referenced services/hosts (as currently present in the web source) |
-|---|---|
-| AI/chat/model catalogues | `api.openai.com`, `api.anthropic.com`, `generativelanguage.googleapis.com`, `openrouter.ai`, `api.mistral.ai`, `ai.kindlehub.pro`, `ai2.kindlehub.pro` |
-| Translation and language | `translate.googleapis.com`, `api.mymemory.translated.net`, `api.dictionaryapi.dev`, `api.lyrics.ovh` |
-| Books and reference | `gutendex.com`, `www.gutenberg.org`, `openlibrary.org`, `archive.org`, `en.wikipedia.org`, `bible-api.com`, `numbersapi.com` |
-| Weather, maps, and geography | `api.open-meteo.com`, `air-quality-api.open-meteo.com`, `geocoding-api.open-meteo.com`, `nominatim.openstreetmap.org`, `overpass-api.de`, `router.project-osrm.org`, `api.rainviewer.com`, `tilecache.rainviewer.com`, `server.arcgisonline.com` |
-| News and feeds | Direct RSS/news hosts, `api.rss2json.com`, `rsshub.app`, `hnrss.org`, `api.allorigins.win`, `api.codetabs.com`, `vpn.arancool3000.workers.dev`, `r.jina.ai` |
-| Media, images, and discovery | `api.spotify.com`, `accounts.spotify.com`, YouTube/Invidious/Piped hosts, `image.pollinations.ai`, `images.unsplash.com`, `picsum.photos`, `images-api.nasa.gov`, `api.nasa.gov`, `api.artic.edu`, `commons.wikimedia.org` |
-| Utilities | `api.pwnedpasswords.com`, `ipapi.co`, `api.adviceslip.com`, `v2.jokeapi.dev`, `www.themealdb.com`, `finance.yahoo.com`, `query1.finance.yahoo.com`, `query2.finance.yahoo.com`, `numbersapi.com` |
-
-These mini-app integrations have provider-specific terms, credentials, rate
-limits, and response formats. Their request parameters are assembled by the
-web UI and are not a stable KindleHub API contract; reproduce one only when
-porting that specific mini-app, and consult its provider's current documentation.
-The first-party worker routes for account/mail/state and the external service
-catalogue are also declared in the web `kh-app.js`; the desktop API endpoint
-reference above intentionally describes the desktop adapter's verified call
-shapes rather than guessing undocumented worker internals.
-
-The checked-in official web source exposes a few additional first-party worker
-calls that the desktop `IKindleHubApiClient` does not currently use:
-
-| Worker call | Request contract visible in `kh-app.js` | Purpose and caveat |
-|---|---|---|
-| `POST https://email-worker.arancool3000.workers.dev/send` | Headers `Content-Type: application/json`, `X-KH-Secret: <authToken>`; body `{to,from_user,subject,body}`; JSON response may contain `error`. | Sends a recovery code email. The body contains a credential recovery secret: send only to the configured recovery address, do not log it, and do not use this endpoint as generic mail delivery. The desktop instead exposes ordinary user mail through `kh_mail`. |
-| `GET <configured-state-gateway>/state?meta=1` and `GET <configured-state-gateway>/state` | `X-KH-Secret: <authToken>`; response includes metadata or `{state,updated_at}`. | Legacy/configurable encrypted account-state sync. `KH_DEFAULT_STATE_GATEWAY` is empty in the checked-in web source, so normal builds use the main `kh_users` REST path. Do not assume a default gateway is active. |
-| `POST <configured-state-gateway>/state` | `Content-Type: application/json`, `X-KH-Secret: <authToken>`; body `{hash,email,state}`; response may include `updated_at`. | Legacy/configurable state write. The state string is the packed encrypted account envelope. This is a compatibility route, not a second state format. |
-| `GET https://kindlehub-state.arancool3000.workers.dev/photos` | Headers `Content-Type: application/json`, `X-KH-Secret: <photo-address-secret>`, `X-KH-Account: <authToken>`; response `{photos:[...]}`. | Lists remote photo/gallery object metadata for the photo gallery feature. `photo-address-secret` is SHA-256 hex of UTF-8 `"khphoto::" + photo key`; it is not the account auth token. |
-| `PUT https://kindlehub-state.arancool3000.workers.dev/photo` | Same photo headers; JSON body `{id,data}`. | Uploads a gallery item. `data` is client-sealed/encrypted and may contain a nested encrypted state payload. |
-| `GET/DELETE https://kindlehub-state.arancool3000.workers.dev/photo?id=<encoded-id>` | Same photo headers. GET returns an object with `data`; DELETE removes that id. | Gallery download/delete. Remote list entries refer to ids and photo-address keys; clients can have more than one address during key rotation. |
-
-The photo-worker routes are inferred from the checked-in website calls, not
-from a published server schema. The complete envelope, ownership, migration,
-key rotation, and quota behavior is in the web photo/gallery implementation;
-do not implement writes based only on this summary. The desktop API currently
-does not provide this gallery worker client.
-
-Game-session polling, friend/chat invites, chat requests, and game invites do
-not introduce other first-party endpoints: they use `kh_messages` in the room
-families described above. Profile-frame catalog metadata and public profiles
-are also separate concerns: `kh_presence.profile` chooses an id, while the PNG
-bytes come from `kindlehub.pro`.
-
-## Language-neutral examples
-
-### Derive an account lookup token
-
-This Python snippet shows the byte-level token derivation. It does not send or
-store the password and is not a substitute for a secure password UI:
-
-```python
-import hashlib
-
-def derive_token(username: str, password: str) -> str:
-    name = username.strip()
-    if name.lower() == "aran":
-        name = "arancool3000"
-    material = f"kh::{name.lower()}::{password}".encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
-
-token = derive_token("Reader", "case-sensitive password")
-user_id = token[:16]
-```
-
-Keep `token` in the platform's secret store, not preferences or logs. For
-account encryption, hex-decode it to 32 bytes and follow the AES-GCM packing
-format above. For a first custom client, implement public read-only endpoints
-and presence first; test account encryption against known official-client
-fixtures before attempting state writes.
-
-### Generic JSON POST pattern
-
-```python
-import requests
-
-BASE = "https://kindlehub-api.arancool3000.workers.dev"
-
-def rpc(path, payload, token=None):
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    if token:
-        headers["X-KH-Secret"] = token
-    response = requests.post(BASE + path, json=payload, headers=headers, timeout=20)
-    response.raise_for_status()
-    return response.json() if response.content else None
-
-rows = rpc("/rest/v1/rpc/kh_app_list", {
-    "p_hash": token,
-    "p_app": "khtopics",
-    "p_room": "index",
-    "p_limit": 50,
-})
-```
-
-Always set a timeout, handle an empty successful body, and distinguish a
-transport failure from a valid empty array. This helper only demonstrates HTTP
-framing; every operation still needs its endpoint-specific validation and
-filter rules.
-
-## Minimal implementation recipes
-
-The examples use shell placeholders; substitute a safely stored token and
-URL-encode all untrusted values. They illustrate request shapes rather than
-providing a complete crypto implementation.
-
-### Read active people
-
-```sh
-curl -G 'https://kindlehub-api.arancool3000.workers.dev/rest/v1/kh_presence' \
-  --data-urlencode 'last_seen=gt.2026-10-05T11:00:00Z' \
-  --data-urlencode 'select=user_id,display_name,last_seen,avatar,profile' \
-  --data-urlencode 'order=last_seen.desc' \
-  --data-urlencode 'limit=50'
-```
-
-### Fetch a room's messages
-
-```sh
-curl -G 'https://kindlehub-api.arancool3000.workers.dev/rest/v1/kh_messages' \
-  -H "X-KH-Secret: $KH_AUTH_TOKEN" \
-  --data-urlencode 'group_code=eq.000000000000' \
-  --data-urlencode 'order=ts.desc' \
-  --data-urlencode 'limit=50' \
-  --data-urlencode 'select=id,group_code,user_id,display_name,text,ts,edited,important,reactions,reply_to'
-```
-
-Decrypt `text` using the exact `group_code`, sort the returned rows by
-timestamp ascending for display, and deduplicate by `id` between polls.
-
-### Poll an inbox for invitations
-
-Derive `user_id` from the first 16 token characters, compute the inbox code as
-`800000` + `user_id`, fetch recent messages exactly as in the room example,
-decrypt with that inbox code, and parse JSON event envelopes. Process each
-message id once. This protocol uses polling; it is not a websocket subscription.
-
-### Create and publish a topic
-
-1. Generate a 12-digit room code and insert a `kh_groups` row with the account
-   token header.
-2. Build `p_value` as JSON text such as
-   `{"n":"TOPIC: Example | blurb","t":1791201600000,"a":"Reader"}`.
-3. Call `kh_app_put` using app `khtopics`, room `index`, and the room code as
-   `p_key`.
-4. Send chat rows to the new room using the room code as the encryption
-   context. Topic messages use the same `kh_messages` schema as other chat.
-
-## Compatibility checklist
-
-- Use UTF-8, lowercase hex, UTC timestamps, and JSON object values where the
-  schema expects objects (`kh_presence.profile` is a common gotcha).
-- Keep account token, message owner secrets, moderator codes, and recovery data
-  out of logs. The account token is a reusable credential even though it is not
-  an HTTP bearer token.
-- Keep every `kh_messages` read scoped to a known exact room code or known ids;
-  respect maximum batch/limit sizes.
-- Generate a fresh random GCM nonce for each encryption. Never reuse an IV with
-  the same AES key. Include and verify the 16-byte authentication tag.
-- Preserve unknown encrypted account-state JSON keys. Friends and joined-room
-  state are client-side synced data, not server-managed normalized tables.
-- Handle retries idempotently and deduplicate polled messages/events by id.
-- Do not assume room names, ids, or short game-room codes grant access. Handle
-  server `403` responses without crashing the client.
-- Treat store HTML, profile metadata, room messages, game events, and all
-  server-returned strings as untrusted input.
-
-## Source map for implementers
-
-| Concern | Reference implementation |
-|---|---|
-| HTTP endpoint paths, filters, row mappings, request headers | `KindleHub.Core/Api/KindleHubApiClient.vb` |
-| Account context, room permissions, group/inbox helpers, high-level methods | `KindleHub.Core/KindleHubCore.vb` |
-| Auth-token derivation, account-state encryption and compression | `KindleHub.Core/Crypto/Crypto.vb`, `KindleHub.Core/Crypto/KindleHubCompressionDictionary.vb` |
-| Chat encryption | `KindleHub.Core/Crypto/ChatEncryption.vb` |
-| Chat media markers and decoding | `KindleHub.Core/Crypto/ChatMedia.vb` |
-| Room and message identifiers | `KindleHub.Core/Models/RoomCodes.vb` |
-| Message event envelope model | `KindleHub.Core/Models/DomainModels.vb` |
-| Game relay event types | `KindleHub.Client/Games/*Session.cs` |
-| Official browser request and format behavior | `../AppFetch/kindlehub.pro/kh-app.js` and its view modules |
-
-This document describes the adapter and shared formats present in this
-repository at the time it was written. Before shipping an independent client,
-compare any new protocol behavior against the current official browser code and
-confirm that the gateway still accepts the documented filters and payloads.
-| `CommunityViewModel.cs` | Loads/syncs friend rows and processes inbox friend events |
-| `MessagesViewModel.cs` | Polls active rooms and sends replies as separate `reply_to` messages |
-| `AppStoreViewModel.cs` | Native catalogue, downloads, publishing, and KHAPP1 transfer |
-
-When changing an API contract, update this reference and the official-client
-interop behavior together. Keep requests bounded, do not weaken gateway filters,
-and do not replace encrypted account or message data with client-only formats.
+| Shell, CSP, guards, stall logger, boot | `index.html` |
+| State, auth, crypto, REST/RPC layer, sync, presence, avatars, routing, `KH_MP`, score pipeline | `kh-app.js` (byte offsets per §3.1) |
+| 105 feature views, chat UI, mail UI, app store UI, moderation UI | `kh-views.js` |
+| 127 games, game loop, leaderboard submission call sites | `kh-games.js` |
+| Lite client (16 views, same protocol, stale v10.15.0) | `kh-lite.js`, `kh-lite-views.js` |
+| Edu / Read / Mods / Status sub-sites | `edu/`, `read/`, `mod/`, `status/` |
+| Mirror updater + renamer + local server | `update.py`, `.kh-tools/rename.js`, `serve.py` |
+| Desktop client contract (outside this archive) | `git show 665be54:ARCHITECTURE.md` §4, `git show 665be54:KINDLEHUB_DESKTOP_HANDOFF.md` |
+
+This document reflects the mirror at v10.70.1 (2026-11-15). The live site can move
+faster than this archive; before shipping an interoperating client, re-check formats
+against a fresh `update.py` pull.

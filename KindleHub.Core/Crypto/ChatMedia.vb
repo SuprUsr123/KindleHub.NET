@@ -346,7 +346,11 @@ Public Function TryParsePoll(text As String) As Poll
     End Function
 
     Public Function EncodeVoteNote(pollId As String, note As String) As String
-        Return "KHVOTE1:" & pollId & ":t:" & WireEncode(note)
+        ' Web parity: the :t: payload (base64) is capped at 40 chars BEFORE it is
+        ' sealed, so long notes truncate identically on every client.
+        Dim wire = WireEncode(If(note, ""))
+        If wire.Length > PollOtherMax Then wire = wire.Substring(0, PollOtherMax)
+        Return "KHVOTE1:" & pollId & ":t:" & wire
     End Function
 
     Public Function TryParsePollOptions(text As String) As String()
@@ -405,14 +409,23 @@ Public Function TryParsePoll(text As String) As Poll
         Stickers("cry") = New StickerEntry With {.Label = "Cry", .Svg = "<svg viewBox=""0 0 100 100"" fill=""none"" stroke=""currentColor"" stroke-width=""5""><circle cx=""50"" cy=""50"" r=""40""/><circle cx=""37"" cy=""42"" r=""4"" fill=""currentColor""/><circle cx=""63"" cy=""42"" r=""4"" fill=""currentColor""/><path d=""M33 68 Q50 54 67 68"" stroke-linecap=""round""/></svg>"}
     End Sub
 
+    ''' <summary>Sticker id rules (web parity): web ids look like f_thumbs / a_cool
+    ''' (^([fawt])_[a-z0-9_]{1,22}$, 24 chars max). The desktop's local picker keeps
+    ''' its legacy plain-word ids; both render here so old desktop sends still work.</summary>
+    Public ReadOnly StickerIdPattern As New System.Text.RegularExpressions.Regex(
+        "^[fawt]_[a-z0-9_]{1,22}$", System.Text.RegularExpressions.RegexOptions.Compiled)
+
     Public Function TryParseSticker(text As String) As String
         Dim s = If(text, "")
         If Not s.StartsWith("KHSTK1:", StringComparison.Ordinal) Then Return Nothing
         Dim id = s.Substring(7).Trim()
         If String.IsNullOrEmpty(id) OrElse id.Length > 24 Then Return Nothing
-        EnsureStickersLoaded()
-        If Stickers.ContainsKey(id) Then Return id
-        Return Nothing
+        If Not StickerIdPattern.IsMatch(id) Then
+            ' Legacy local ids (plain words) stay renderable for older desktop sends.
+            EnsureStickersLoaded()
+            If Not Stickers.ContainsKey(id) Then Return Nothing
+        End If
+        Return id
     End Function
 
     Public Function IsStickerMessage(text As String) As Boolean
@@ -420,8 +433,13 @@ Public Function TryParsePoll(text As String) As Poll
     End Function
 
     Public Function EncodeSticker(id As String) As String
-        If String.IsNullOrEmpty(id) OrElse id.Length > 24 Then Return ""
-        Return "KHSTK1:" & id
+        Dim clean = If(id, "").Trim()
+        If clean.Length = 0 OrElse clean.Length > 24 Then Return ""
+        If Not StickerIdPattern.IsMatch(clean) Then
+            EnsureStickersLoaded()
+            If Not Stickers.ContainsKey(clean) Then Return ""
+        End If
+        Return "KHSTK1:" & clean
     End Function
 
     Public Function StickerLabel(id As String) As String
@@ -432,13 +450,9 @@ Public Function TryParsePoll(text As String) As Poll
     End Function
 
     Public Function TryParseStickerPrompt(text As String) As String
-        Dim s = If(text, "")
-        If Not s.StartsWith("KHSTK1:", StringComparison.Ordinal) Then Return Nothing
-        Dim id = s.Substring(7).Trim()
-        EnsureStickersLoaded()
-        Dim entry As StickerEntry = Nothing
-        If Stickers.TryGetValue(id, entry) Then Return entry.Label
-        Return Nothing
+        If TryParseSticker(text) Is Nothing Then Return Nothing
+        Dim id = If(text, "").Substring(7).Trim()
+        Return StickerLabel(id)
     End Function
 
     ' ── KHSTORY1 (AI story) ────────────────────────────────────────────────────

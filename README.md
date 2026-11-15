@@ -1,7 +1,7 @@
 # KindleHub.NET
 98% completed! Quite a lot of features requiring server is wired up now (except for admin/moderator-specific functions, I can't implement them without admin/mod roles). Also, aran, do NOT fuck with the GPL.
 
-Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Desktop builds run on Windows, Linux, and macOS; Android and iOS mobile hosts are in their initial port phase.
+Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Desktop builds run on Windows, Linux, and macOS; an Android mobile host is in its initial port phase. (The iOS host was removed.)
 
 ## Architecture
 
@@ -15,7 +15,7 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
   - MVVM architecture
   - Views: Home, Leaderboards, Community, Messages, App Store, Settings
   - Dependency injection with Microsoft.Extensions.Hosting
-- **KindleHub.Client.Android** and **KindleHub.Client.iOS** - .NET 10 platform launchers using the shared UI and a touch-sized bottom navigation bar.
+- **KindleHub.Client.Android** - .NET 10 platform launcher using the shared UI and a touch-sized bottom navigation bar.
 
 ## Prerequisites
 
@@ -30,7 +30,6 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 | **Linux** | Use bash script (`build.sh`). Supports X11 and native Wayland sessions. Tested on Debian 13+ (KDE Plasma 6.7.4, Wayland), EndavourOS (KDE Plasma 6.7.4, Wayland) |
 | **macOS** | Use bash script (`build.sh`). Requires macOS 12+ (Monterey). Release builds include separate Intel (`osx-x64`) and Apple Silicon (`osx-arm64`) packages. |
 | **Android** | Install the .NET Android workload, Android SDK Platform 36, Android build tools, and JDK 21. Build with `dotnet build KindleHub.Client.Android/KindleHub.Client.Android.csproj`. |
-| **iOS** | Requires .NET 10 and a Mac with Xcode for simulator/device builds and signing. Build with `dotnet build KindleHub.Client.iOS/KindleHub.Client.iOS.csproj -p:RuntimeIdentifier=iossimulator-arm64` on Apple Silicon or `iossimulator-x64` on Intel. |
 
 The mobile shell reuses the existing views and view models. Actions that open standalone desktop windows (such as story/game viewers and message action panels), and launching downloaded HTML apps, still need mobile page/dialog or platform-native replacements.
 
@@ -197,3 +196,4 @@ GPL License - see LICENSE file for details. (why does the agent keep messing thi
 
 ## NOTICE
 I'm so fucking tired with KindleHub, you know what, this client is discontinued, aran TRULY hates open-source software, privacy, and transparency. The APIs no longer work. They all report being "Forbidden".
+Wow aran. You did a perfect job of trying to hide your steps, and it's absolutely perfect for the community to stay dumb about what you did, amirite guys????? "Yo pay me because I need credits for Claude Max-" dude your site looks like you only did one fucking prompt every time you wanted to update anything, and shipped without a SINGLE FORM OF TESTING. And, better yet, that doesn't even look like you used Claude.

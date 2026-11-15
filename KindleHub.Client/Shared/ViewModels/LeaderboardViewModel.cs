@@ -76,7 +76,7 @@ public class LeaderboardViewModel : ViewModelBase, IDisposable
         });
         _ = InitialiseAsync();
         _pingTimer = new Timer(_ => Dispatcher.UIThread.Post(async () => await HeartbeatAsync()), null,
-            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(30));
+            TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(KindleHubApiClient.PresenceBeatSeconds));
     }
 
     private async Task InitialiseAsync()

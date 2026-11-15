@@ -1,6 +1,10 @@
 Public Class RegisterRequest
     Public Property Username As String
     Public Property Password As String
+    ''' <summary>Privacy-first default False: when True, an opt-in HIBP k-anonymity
+    ''' check runs BEFORE registration — but it never blocks, it only sets
+    ''' AuthResult.Warning. No password-derived data leaves the device otherwise.</summary>
+    Public Property CheckPasswordLeaks As Boolean = False
 End Class
 
 Public Class LoginRequest
@@ -13,6 +17,9 @@ Public Class SubmitScoreRequest
     Public Property Score As Long
     Public Property DisplayName As String
     Public Property UserId As String
+    ''' <summary>Optional replay evidence submitted alongside the run token (web parity:
+    ''' e.g. hanoi posts its full move log so the server can re-verify the run).</summary>
+    Public Property Proof As String
 End Class
 
 Public Class FetchScoresRequest

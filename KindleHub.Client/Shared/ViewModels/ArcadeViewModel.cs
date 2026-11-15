@@ -1069,6 +1069,7 @@ public class ArcadeViewModel : ViewModelBase
             bool posted = await _submitScore(game.Slug, game.Score, CancellationToken.None);
             if (!posted) throw new InvalidOperationException("The leaderboard did not accept the score.");
             _scoreSubmittedAttempt = attempt;
+            _ = _core.FlushOfflineScoresAsync(CancellationToken.None);
             if (Attempt == attempt && ReferenceEquals(_game, game))
             {
                 _status = $"Score {game.Score} submitted to the {game.Name} leaderboard.";
@@ -1078,6 +1079,9 @@ public class ArcadeViewModel : ViewModelBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Score submit failed for {Slug}", game.Slug);
+            // Web parity: queue the failed score (kh_score_q, best-per-game) so it
+            // flushes after the next successful submit or on network regain.
+            OfflineScoreQueue.Current.Enqueue(game.Slug, game.Score, null);
             _scoreFailedAttempt = attempt;
             if (Attempt == attempt && ReferenceEquals(_game, game))
             {

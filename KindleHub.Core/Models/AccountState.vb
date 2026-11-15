@@ -193,7 +193,10 @@ Public Module AccountState
         Return root.ToJsonString()
     End Function
 
-    ''' <summary>Builds the compact public profile blob consumed by kh_presence.</summary>
+    ''' <summary>Builds the compact public profile blob consumed by kh_presence.
+    ''' Privacy-first: it carries ONLY the fields the user typed in themselves
+    ''' (p/h/b/s/ns/fr). No timezone, no friend list, no device hints — the web
+    ''' client publishes more, but the desktop keeps its public surface minimal.</summary>
     Public Function ProfilePresenceJson(stateJson As String) As String
         Dim profile As New JsonObject()
         Dim fields As (Source As String, Target As String, Limit As Integer)() = {
@@ -206,6 +209,32 @@ Public Module AccountState
             If value.Length > 0 Then profile(field.Target) = JsonValue.Create(value.Substring(0, Math.Min(field.Limit, value.Length)))
         Next
         Return profile.ToJsonString()
+    End Function
+
+    ''' <summary>Web parity (_trimStateForCloud): strips device-only keys before the
+    ''' state is encrypted and uploaded, and caps long arrays so one runaway feed can't
+    ''' bloat the kh_users row. Unknown keys survive; only known-local keys are removed.</summary>
+    Public Function TrimStateForCloud(stateJson As String) As String
+        Dim root = TryParse(stateJson)
+        If root Is Nothing Then Return If(stateJson, "{}")
+        For Each deviceKey In {"authToken", "_encKey", "modCode", "knownDevices", "wallpaper", "wallpaperCustom",
+                               "kh_mod_code", "kh_err_queue", "kh_runtok", "deviceHint", "locationHint", "lastDevice", "acctV2"}
+            root.Remove(deviceKey)
+        Next
+        For Each item In root.ToArray()
+            If item.Key.StartsWith("superlock", StringComparison.Ordinal) OrElse item.Key.StartsWith("kh_", StringComparison.Ordinal) Then
+                root.Remove(item.Key)
+            End If
+        Next
+        For Each item In root.ToArray()
+            If TypeOf item.Value Is JsonArray Then
+                Dim arr = DirectCast(item.Value, JsonArray)
+                While arr.Count > 500
+                    arr.RemoveAt(arr.Count - 1)
+                End While
+            End If
+        Next
+        Return root.ToJsonString()
     End Function
 
     Private Function NodeText(node As JsonNode) As String
