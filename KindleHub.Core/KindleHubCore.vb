@@ -153,6 +153,7 @@ Public Class KindleHubCore
             Try
                 ' Re-verify the token is still live by pulling the account row.
                 Dim state = Await _apiClient.FetchAccountAsync(saved.AuthToken, cancellationToken)
+                If String.IsNullOrEmpty(state) Then Return False
                 Dim userId = KeyDerivation.DeriveUserId(saved.AuthToken)
                 _currentProfile = New UserProfile With {
                     .UserId = If(String.IsNullOrEmpty(saved.UserId), userId, saved.UserId),
@@ -169,8 +170,7 @@ Public Class KindleHubCore
                 RaiseEvent ProfileChanged(Me, _currentProfile)
                 Return True
             Catch ex As Exception
-                _logger.LogWarning(ex, "Saved session was no longer valid; clearing it.")
-                SessionStore.ClearSession()
+                _logger.LogWarning("Saved session could not be restored. Sign in again when the account is reachable.")
                 Return False
             End Try
         End Function
@@ -338,6 +338,13 @@ Public Async Function DownloadAppAsync(appId As String, cancellationToken As Can
         End Function
 
         ' ───────────────────── leaderboard / presence ─────────────────────
+        ''' <summary>Acquire score authorization when play begins, so the server's
+        ''' run clock includes the time spent playing rather than starting at submission.</summary>
+        Public Function PrepareScoreRunAsync(game As String, cancellationToken As CancellationToken) As Task(Of String)
+            If Not IsAuthenticated Then Return Task.FromResult("")
+            Return _apiClient.GetRunTokenAsync(_currentProfile.AuthToken, game, cancellationToken)
+        End Function
+
         Public Async Function SubmitScoreAsync(game As String, score As Long, cancellationToken As CancellationToken) As Task(Of Boolean)
             If Not IsAuthenticated Then Throw New AuthenticationException("Sign in to post a score to the global leaderboard.")
             Dim request = New SubmitScoreRequest With {

@@ -43,13 +43,13 @@ Write-Host "==========================================" -ForegroundColor Cyan
 
 # Check for .NET SDK
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    Write-Error "Error: .NET SDK not found. Install .NET 8.0+ from https://dotnet.microsoft.com/download"
+    Write-Error "Error: .NET SDK not found. Install .NET 10.0.100+ from https://dotnet.microsoft.com/download"
     exit 1
 }
 
 $dotnetVersion = (dotnet --version).Split('.')[0]
-if ([int]$dotnetVersion -lt 8) {
-    Write-Error "Error: .NET 8.0+ required (found $dotnetVersion)"
+if ([int]$dotnetVersion -lt 10) {
+    Write-Error "Error: .NET 10.0.100+ required (found $dotnetVersion)"
     exit 1
 }
 

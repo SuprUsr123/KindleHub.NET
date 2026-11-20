@@ -19,7 +19,7 @@ void NotHanging(string n, Action a, int ms = 10000)
 }
 
 var ported = GameRegistry.PortedSlugs;
-Ok("registry has 16 games", ported.Count == 16, $"{ported.Count}");
+Ok("registry has 17 games", ported.Count == 17, $"{ported.Count}");
 Ok("no duplicate slugs", ported.Distinct().Count() == ported.Count);
 Ok("snake is ported", GameRegistry.IsPorted("snake"));
 Ok("lookup is case-insensitive", GameRegistry.IsPorted("SNAKE"));
@@ -408,8 +408,8 @@ bool FullColumnRefused()
         core, Microsoft.Extensions.Logging.Abstractions.NullLogger<KindleHub.Client.ViewModels.ArcadeViewModel>.Instance);
 
     Ok("arcade: catalogue is the whole official set", vm.TotalCount == 83, $"{vm.TotalCount}");
-    // 16 from the registry plus tic-tac-toe, which plays on the relay screen.
-    Ok("arcade: 17 of them are playable here", vm.PortedCount == 17, $"{vm.PortedCount}");
+    // Registered games plus tic-tac-toe, which plays on the relay screen.
+    Ok("arcade: all registered games plus tic-tac-toe are playable here", vm.PortedCount == ported.Count + 1, $"{vm.PortedCount}");
     Ok("arcade: starts on the catalogue", vm.NotInGame && !vm.InGame);
     Ok("arcade: every unported game is labelled", vm.All.Count(g => !g.IsPorted) == vm.TotalCount - vm.PortedCount);
     Ok("arcade: unported games are still listed", vm.All.Any(g => !g.IsPorted));

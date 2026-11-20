@@ -346,11 +346,12 @@ Public Function TryParsePoll(text As String) As Poll
     End Function
 
     Public Function EncodeVoteNote(pollId As String, note As String) As String
-        ' Web parity: the :t: payload (base64) is capped at 40 chars BEFORE it is
-        ' sealed, so long notes truncate identically on every client.
-        Dim wire = WireEncode(If(note, ""))
-        If wire.Length > PollOtherMax Then wire = wire.Substring(0, PollOtherMax)
-        Return "KHVOTE1:" & pollId & ":t:" & wire
+        ' The website caps the cleaned text before base64 encoding, not the
+        ' encoded bytes. Truncating base64 produces undecodable Unicode votes.
+        Dim clean = Regex.Replace(If(note, ""), "\s+", " ").Trim()
+        If clean.Length = 0 Then Return ""
+        If clean.Length > PollOtherMax Then clean = clean.Substring(0, PollOtherMax)
+        Return "KHVOTE1:" & pollId & ":t:" & Convert.ToBase64String(Encoding.UTF8.GetBytes(clean))
     End Function
 
     Public Function TryParsePollOptions(text As String) As String()

@@ -13,7 +13,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Test desktop client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet test KindleHub.Tests/KindleHub.Tests.csproj --configuration Release
+      - run: dotnet test KindleHub.UiTests/KindleHub.UiTests.csproj --configuration Release
+      - run: dotnet run --project KindleHub.Client.Gametest --configuration Release
+
   version:
+    needs: test
     name: Choose release number
     runs-on: ubuntu-latest
     outputs:
@@ -70,7 +85,7 @@ jobs:
       - name: Publish self-contained app
         run: >-
           dotnet publish KindleHub.Client/KindleHub.Client.csproj
-          --configuration Releases
+          --configuration Release
           --runtime ${{ matrix.rid }}
           --self-contained true
           --output publish/${{ matrix.rid }}

@@ -13,20 +13,17 @@ Imports System.Security.Cryptography
 Imports KindleHub.Core
 
 Public Class KindleHubApiOptions
-    Public Property BaseUrl As String = "https://kindlehub-api.arancool3000.workers.dev"
+    Public Property BaseUrl As String = "https://kindlehub.pro/t/api"
+    Public Const DirectBaseUrl As String = "https://kindlehub-api.arancool3000.workers.dev"
     Public Property Timeout As TimeSpan = TimeSpan.FromSeconds(30)
     ''' <summary>Web parity: GET reads get the shortest clock (8s), writes 20s, and
     ''' kh_users upserts 60s — matching _sbFetch's per-call timeout budget.</summary>
     Public Property ReadTimeout As TimeSpan = TimeSpan.FromSeconds(8)
     Public Property WriteTimeout As TimeSpan = TimeSpan.FromSeconds(20)
     Public Property AccountUpsertTimeout As TimeSpan = TimeSpan.FromSeconds(60)
-    ''' <summary>The fetch-tunnel worker the web client falls back to when the API
-    ''' gateway is unreachable from the current network (?url=&lt;encoded target&gt;).</summary>
-    Public Const TunnelUrl As String = "https://vpn.arancool3000.workers.dev/?url="
-    ''' <summary>Spoofed identity: the desktop presents itself as ordinary browser
-    ''' traffic from kindlehub.pro (see the constructor) so the gateway fingerprints
-    ''' it exactly like the official web build. Override only if you must.</summary>
-    Public Property UserAgent As String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+    ''' <summary>Identify the native client honestly; no browser fingerprint headers are required.</summary>
+    Public Property UserAgent As String = "KindleHub.NET/1.0"
+
 End Class
 
 Public Class CreateTopicRequest
@@ -184,8 +181,11 @@ Public Class KindleHubApiClient
         Public Property Rows As List(Of JsonElement)
     End Class
     Private ReadOnly _cacheLock As New Object()
+    Private _cacheGeneration As Long
     Private ReadOnly _getCache As New Dictionary(Of String, CacheEntry)(StringComparer.Ordinal)
     Private ReadOnly _runTokens As New Dictionary(Of String, (Token As String, At As DateTimeOffset))(StringComparer.Ordinal)
+    Private ReadOnly _publicIds As New System.Collections.Concurrent.ConcurrentDictionary(Of String, (Id As String, At As DateTimeOffset))(StringComparer.Ordinal)
+    Private ReadOnly _accountEnvelopes As New System.Collections.Concurrent.ConcurrentDictionary(Of String, AccountEnvelope)(StringComparer.Ordinal)
     Private ReadOnly _scoreDedupe As New Dictionary(Of String, DateTimeOffset)(StringComparer.Ordinal)
     Private ReadOnly _banNames As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
     Private _banNamesAt As DateTimeOffset = DateTimeOffset.MinValue
@@ -196,23 +196,8 @@ Public Class KindleHubApiClient
         _logger = logger
         _httpClient.BaseAddress = New Uri(_options.BaseUrl.TrimEnd("/"c) & "/")
         _httpClient.Timeout = _options.Timeout
-        ' Spoofed web identity: the gateway fingerprints requests (Origin / Referer /
-        ' User-Agent / Sec-Fetch metadata), so every call the desktop makes presents
-        ' exactly what a fetch() from a browser tab on kindlehub.pro would send —
-        ' cross-site CORS from the site origin to this workers.dev gateway, mainstream
-        ' Chrome UA, standard Accept/Accept-Language. Applied once on the shared
-        ' HttpClient, so API reads/writes, presence traffic and anything else riding
-        ' this client all carry the same identity.
-        With _httpClient.DefaultRequestHeaders
-            .TryAddWithoutValidation("User-Agent", _options.UserAgent)
-            .TryAddWithoutValidation("Origin", "https://kindlehub.pro")
-            .TryAddWithoutValidation("Referer", "https://kindlehub.pro/")
-            .TryAddWithoutValidation("Accept", "*/*")
-            .TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9")
-            .TryAddWithoutValidation("Sec-Fetch-Site", "cross-site")
-            .TryAddWithoutValidation("Sec-Fetch-Mode", "cors")
-            .TryAddWithoutValidation("Sec-Fetch-Dest", "empty")
-        End With
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", _options.UserAgent)
+
     End Sub
 
     Private Function JsonOpts() As JsonSerializerOptions
@@ -281,7 +266,22 @@ Public Class KindleHubApiClient
             Dim packedState = JsonStr(rows(0), "state")
             Dim updatedAt = JsonDate(rows(0), "updated_at")
             If Not String.IsNullOrEmpty(packedState) Then
-                Dim decrypted = AccountEncryption.UnpackAccount(packedState, authToken)
+                Dim decrypted As String = Nothing
+                If packedState.StartsWith("KHSL1:", StringComparison.Ordinal) Then
+                    Return New AuthResult With {.Success = False, .Error = "This account uses Superlock. Unlock it with your PIN in the web app; PIN unlock is not supported by this client."}
+                ElseIf AccountEnvelope.IsWrapped(packedState) Then
+                    Dim envelope = Await Task.Run(Function()
+                                                     Dim opened As String = Nothing
+                                                     Dim result = AccountEnvelope.Open(packedState, request.Password, opened)
+                                                     Return (Context:=result, State:=opened)
+                                                 End Function, cancellationToken)
+                    decrypted = envelope.State
+                    If envelope.Context IsNot Nothing Then _accountEnvelopes(authToken) = envelope.Context
+                Else
+                    decrypted = AccountEncryption.UnpackAccount(packedState, authToken)
+                    Dim previous As AccountEnvelope = Nothing
+                    _accountEnvelopes.TryRemove(authToken, previous)
+                End If
                 If decrypted Is Nothing Then
                     Return New AuthResult With {.Success = False, .Error = "Decryption failed, wrong password?"}
                 End If
@@ -316,12 +316,26 @@ Public Class KindleHubApiClient
 
     Public Async Function SyncAccountAsync(authToken As String, email As String, stateJson As String, cancellationToken As CancellationToken) As Task(Of String) Implements IKindleHubApiClient.SyncAccountAsync
         If String.IsNullOrEmpty(stateJson) Then Throw New ValidationException("Refused to write an empty account. Nothing was changed.")
+        ' Read the current encryption envelope before writing: another device may
+        ' have enabled stronger encryption since this device last signed in.
+        Dim remote = Await GetRowsAsync($"rest/v1/kh_users?hash=eq.{Uri.EscapeDataString(authToken)}&select=state", authToken, cancellationToken)
+        Dim envelope As AccountEnvelope = Nothing
+        Dim packed As String
+        If remote.Count > 0 AndAlso AccountEnvelope.IsWrapped(JsonStr(remote(0), "state")) Then
+            If Not _accountEnvelopes.TryGetValue(authToken, envelope) OrElse envelope.Unpack(JsonStr(remote(0), "state")) Is Nothing Then
+                Throw New AuthenticationException("Unlock this account with your password again before syncing. The cloud copy was not changed.")
+            End If
+            packed = envelope.Pack(stateJson)
+        Else
+            If _accountEnvelopes.ContainsKey(authToken) Then Throw New AuthenticationException("The cloud account encryption changed. Sign in again before syncing.")
+            packed = AccountEncryption.PackAccount(stateJson, authToken)
+        End If
         Dim canonicalEmail = KeyDerivation.CanonicalizeUsername(email).ToLowerInvariant()
         Dim now = UtcIso()
         Dim payload = New With {
             Key .hash = authToken,
             Key .email = canonicalEmail,
-            Key .state = AccountEncryption.PackAccount(stateJson, authToken),
+            Key .state = packed,
             Key .updated_at = now
         }
         Try
@@ -335,7 +349,15 @@ Public Class KindleHubApiClient
     Public Async Function FetchAccountAsync(authToken As String, cancellationToken As CancellationToken) As Task(Of String) Implements IKindleHubApiClient.FetchAccountAsync
         Dim rows = Await GetRowsAsync($"rest/v1/kh_users?hash=eq.{Uri.EscapeDataString(authToken)}&select=state,updated_at", cancellationToken)
         If rows Is Nothing OrElse rows.Count = 0 Then Return Nothing
-        Return AccountEncryption.UnpackAccount(JsonStr(rows(0), "state"), authToken)
+        Dim packed = JsonStr(rows(0), "state")
+        If AccountEnvelope.IsWrapped(packed) Then
+            Dim envelope As AccountEnvelope = Nothing
+            If Not _accountEnvelopes.TryGetValue(authToken, envelope) Then Throw New AuthenticationException("Sign in with your password to unlock this encrypted account.")
+            Dim opened = envelope.Unpack(packed)
+            If opened Is Nothing Then Throw New AuthenticationException("Account encryption changed. Sign in with your password again.")
+            Return opened
+        End If
+        Return AccountEncryption.UnpackAccount(packed, authToken)
     End Function
 
     Public Async Function CheckUserExistsAsync(username As String, cancellationToken As CancellationToken) As Task(Of Boolean) Implements IKindleHubApiClient.CheckUserExistsAsync
@@ -349,10 +371,16 @@ Public Class KindleHubApiClient
         Return rows IsNot Nothing AndAlso rows.Count > 0
     End Function
 
-    Public Function GetServerStatusAsync(cancellationToken As CancellationToken) As Task(Of ServerStatus) Implements IKindleHubApiClient.GetServerStatusAsync
-        ' Reachability is proven by whatever call the UI makes next; the gateway has no
-        ' unfiltered table read and no general status RPC.
-        Return Task.FromResult(New ServerStatus With {.Online = True, .Version = "1.0"})
+    Public Async Function GetServerStatusAsync(cancellationToken As CancellationToken) As Task(Of ServerStatus) Implements IKindleHubApiClient.GetServerStatusAsync
+        Try
+            ' Bypass the cache: a previous successful read does not prove reachability now.
+            Await GetRowsCoreAsync("rest/v1/kh_scores?select=game&limit=1", Nothing, cancellationToken)
+            Return New ServerStatus With {.Online = True}
+        Catch ex As OperationCanceledException When cancellationToken.IsCancellationRequested
+            Throw
+        Catch ex As Exception
+            Return New ServerStatus With {.Online = False}
+        End Try
     End Function
 
     ' ───────────────────── chat (_groupSend / _groupFetchMessages) ─────────────────────
@@ -399,7 +427,7 @@ Public Class KindleHubApiClient
 
     Public Async Function FetchMessagesAsync(request As FetchMessagesRequest, authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of Message)) Implements IKindleHubApiClient.FetchMessagesAsync
         ' A kh_messages read must carry group_code= (or id=) — the gateway refuses blind reads.
-        Dim myId = UserIdFromToken(authToken) & ""
+        Dim myId = Await ResolvePublicIdAsync(authToken, cancellationToken)
         If String.IsNullOrEmpty(myId) AndAlso Hex64.IsMatch(If(authToken, "")) Then myId = authToken.Substring(0, 16).ToLowerInvariant()
         Dim limit = Math.Max(1, Math.Min(request.Limit, 200))
         Dim url = $"rest/v1/kh_messages?group_code=eq.{Uri.EscapeDataString(request.GroupCode)}&order=ts.desc&limit={limit}" &
@@ -433,6 +461,7 @@ Public Class KindleHubApiClient
                 .Reactions = New Dictionary(Of String, Integer)(),
                 .ReactionEmoji = New Dictionary(Of String, List(Of String))()
             }
+            If Not String.IsNullOrEmpty(msg.OwnerSecret) Then msg.IsMine = True
             If row.TryGetProperty("reactions", Nothing) AndAlso row.GetProperty("reactions").ValueKind = JsonValueKind.Object Then
                 For Each prop In row.GetProperty("reactions").EnumerateObject()
                     If prop.Value.ValueKind = JsonValueKind.Array Then
@@ -836,7 +865,7 @@ Public Class KindleHubApiClient
         Catch ex As ServerException When ex.StatusCode = 409
             MarkScoreDedupe(dedupeKey)
             Return True
-        Catch ex As ServerException When ex.StatusCode = 422
+        Catch ex As ServerException When ex.StatusCode = 422 AndAlso Not ex.Message.Contains("SCORE_TOKEN")
             ' Policy rejections (SCORE_* errors) are swallowed like the web client does.
             Return False
         Catch ex As ServerException
@@ -845,7 +874,7 @@ Public Class KindleHubApiClient
         End Try
         If retryNeeded Then
             SyncLock _runTokens
-                _runTokens.Remove(game.ToLowerInvariant())
+                _runTokens.Remove(authToken.ToLowerInvariant() & "|" & game.ToLowerInvariant())
             End SyncLock
             runToken = Await GetRunTokenAsync(authToken, game, cancellationToken)
             Dim retry = New With {
@@ -870,7 +899,8 @@ Public Class KindleHubApiClient
     ''' caches one per game for a day (kh_runtok) and a token stays submit-valid 20h.</summary>
     Public Async Function GetRunTokenAsync(authToken As String, game As String, cancellationToken As CancellationToken) As Task(Of String) Implements IKindleHubApiClient.GetRunTokenAsync
         If Not Hex64.IsMatch(If(authToken, "")) Then Return ""
-        Dim key = TrimStr(If(game, "game"), 40).ToLowerInvariant()
+        Dim cleanGame = TrimStr(If(game, "game"), 40).ToLowerInvariant()
+        Dim key = authToken.ToLowerInvariant() & "|" & cleanGame
         SyncLock _runTokens
             Dim hit = (Token := "", At := DateTimeOffset.MinValue)
             If _runTokens.TryGetValue(key, hit) AndAlso hit.Token.StartsWith("khr1.", StringComparison.Ordinal) AndAlso hit.At > DateTimeOffset.UtcNow.AddHours(-20) Then
@@ -879,7 +909,7 @@ Public Class KindleHubApiClient
         End SyncLock
         Dim payload = New With {
             Key .p_hash = authToken.ToLowerInvariant(),
-            Key .p_game = key
+            Key .p_game = cleanGame
         }
         Dim token = ""
         Try
@@ -887,6 +917,8 @@ Public Class KindleHubApiClient
             Using doc = JsonDocument.Parse(body)
                 token = JsonStr(doc.RootElement, "token")
             End Using
+        Catch ex As OperationCanceledException
+            Throw
         Catch
             ' Token fetch is fail-open: the gateway still accepts submissions without
             ' one when the RPC is unavailable, so the game keeps playing either way.
@@ -1114,14 +1146,13 @@ Public Class KindleHubApiClient
         Catch
             profileData = New JsonObject()
         End Try
-        ' Build a JSON DOM row explicitly. The endpoint validates `profile` as
-        ' an object; keeping it as JsonObject avoids accidentally sending the
-        ' compact JSON text as a quoted string.
+        ' The current web client sends its compact profile card as JSON text
+        ' inside the profile column, not as a nested object.
         Dim payload As New JsonObject From {
             {"user_id", JsonValue.Create(uid)},
             {"display_name", JsonValue.Create(TrimStr(If(displayName, "Reader"), 40))},
             {"last_seen", JsonValue.Create(UtcIso())},
-            {"profile", profileData}
+            {"profile", JsonValue.Create(If(profileData.Count = 0, "", profileData.ToJsonString()))}
         }
         ' Web parity: a beat never sends an empty avatar — omitting the field keeps
         ' the picture other clients already see instead of erasing it.
@@ -1161,7 +1192,7 @@ Public Class KindleHubApiClient
     End Function
 
     Public Async Function FetchAvatarCodesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, String)) Implements IKindleHubApiClient.FetchAvatarCodesAsync
-        Dim ids = If(userIds, Enumerable.Empty(Of String)()).Where(Function(id) Regex.IsMatch(If(id, ""), "^[a-fA-F0-9]{16}$")).Distinct(StringComparer.OrdinalIgnoreCase).Take(100).ToList()
+        Dim ids = If(userIds, Enumerable.Empty(Of String)()).Where(Function(id) Regex.IsMatch(If(id, ""), "^(?:[a-fA-F0-9]{16}|p[a-z2-7]{15})$")).Distinct(StringComparer.OrdinalIgnoreCase).Take(100).ToList()
         Dim result As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
         If ids.Count = 0 Then Return result
         Dim filter = String.Join(",", ids.Select(Function(id) id.ToLowerInvariant()))
@@ -1170,13 +1201,13 @@ Public Class KindleHubApiClient
         For Each row In rows
             Dim id = JsonStr(row, "user_id")
             Dim avatar = JsonStr(row, "avatar")
-            If Regex.IsMatch(id, "^[a-fA-F0-9]{16}$") AndAlso IsProfileAvatarCode(avatar) Then result(id) = avatar
+            If Regex.IsMatch(id, "^(?:[a-fA-F0-9]{16}|p[a-z2-7]{15})$") AndAlso IsProfileAvatarCode(avatar) Then result(id) = avatar
         Next
         Return result
     End Function
 
     Public Async Function FetchPublicProfilesAsync(userIds As IEnumerable(Of String), cancellationToken As CancellationToken) As Task(Of Dictionary(Of String, PublicProfileDetails)) Implements IKindleHubApiClient.FetchPublicProfilesAsync
-        Dim ids = If(userIds, Enumerable.Empty(Of String)()).Where(Function(id) Regex.IsMatch(If(id, ""), "^[a-fA-F0-9]{16}$")).Distinct(StringComparer.OrdinalIgnoreCase).Take(100).ToList()
+        Dim ids = If(userIds, Enumerable.Empty(Of String)()).Where(Function(id) Regex.IsMatch(If(id, ""), "^(?:[a-fA-F0-9]{16}|p[a-z2-7]{15})$")).Distinct(StringComparer.OrdinalIgnoreCase).Take(100).ToList()
         Dim result As New Dictionary(Of String, PublicProfileDetails)(StringComparer.OrdinalIgnoreCase)
         If ids.Count = 0 Then Return result
         Dim filter = String.Join(",", ids.Select(Function(id) id.ToLowerInvariant()))
@@ -1184,7 +1215,7 @@ Public Class KindleHubApiClient
         If rows Is Nothing Then Return result
         For Each row In rows
             Dim id = JsonStr(row, "user_id")
-            If Not Regex.IsMatch(id, "^[a-fA-F0-9]{16}$") Then Continue For
+            If Not Regex.IsMatch(id, "^(?:[a-fA-F0-9]{16}|p[a-z2-7]{15})$") Then Continue For
             Dim details As New PublicProfileDetails With {
                 .Avatar = If(IsProfileAvatarCode(JsonStr(row, "avatar")), JsonStr(row, "avatar"), "")
             }
@@ -1206,15 +1237,17 @@ Public Class KindleHubApiClient
 
     Public Async Function SearchFriendUsersAsync(query As String, authToken As String, cancellationToken As CancellationToken) As Task(Of List(Of FriendUser)) Implements IKindleHubApiClient.SearchFriendUsersAsync
         Dim result As New List(Of FriendUser)()
-        Dim term = If(query, "").Trim().Replace("%", "").Replace("_", "")
+        Dim term = If(query, "").Trim().Replace("%", "")
         If term.Length < 2 Then Return result
-        Dim rows = Await GetRowsAsync("rest/v1/kh_users?email=ilike." & Uri.EscapeDataString("*" & term & "*") & "&select=hash,email&limit=20", cancellationToken)
+        If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in to find people.")
+        Dim rows = Await GetRowsAsync("rest/v1/kh_users?email=ilike." & Uri.EscapeDataString("*" & term & "*") & "&select=hash,email&limit=20", authToken, cancellationToken)
         For Each row In rows
             Dim hash = JsonStr(row, "hash"), email = JsonStr(row, "email")
-            ' The store keeps the full 64-character auth hash. The official client
-            ' identifies a friend by its first 16 hex characters in inbox events.
-            If hash.Length >= 16 AndAlso Regex.IsMatch(hash, "^[a-fA-F0-9]+$") AndAlso email.Contains("@") AndAlso Not authToken.StartsWith(hash, StringComparison.OrdinalIgnoreCase) Then
-                result.Add(New FriendUser With {.Hash = hash.Substring(0, 16), .Name = email.Substring(0, email.IndexOf("@"c))})
+            Dim pid = JsonStr(row, "pid").ToLowerInvariant()
+            Dim uid = If(Regex.IsMatch(pid, "^p[a-z2-7]{15}$"), pid, If(hash.Length >= 16, hash.Substring(0, 16), ""))
+            If Regex.IsMatch(uid, "^(?:[a-fA-F0-9]{16}|p[a-z2-7]{15})$") AndAlso email.Length > 0 AndAlso
+               Not authToken.StartsWith(uid, StringComparison.OrdinalIgnoreCase) Then
+                result.Add(New FriendUser With {.Hash = uid, .Name = email.Split("@"c)(0)})
             End If
         Next
         Return result
@@ -1309,12 +1342,11 @@ Public Class KindleHubApiClient
     ''' <summary>Per-table GET cache TTLs, mirroring the web client's result cache.
     ''' Message and presence reads are never cached (they drive live polling).</summary>
     Private Shared Function CacheTtl(url As String) As TimeSpan
-        If url.Contains("kh_messages") OrElse url.Contains("kh_presence") Then Return TimeSpan.Zero
+        If url.Contains("kh_messages") OrElse url.Contains("kh_presence") OrElse url.Contains("kh_mail") OrElse url.Contains("kh_users") Then Return TimeSpan.Zero
         If url.Contains("kh_scores") Then Return TimeSpan.FromSeconds(30)
         If url.Contains("kh_store_apps") Then Return TimeSpan.FromSeconds(120)
         If url.Contains("kh_groups") Then Return TimeSpan.FromSeconds(60)
         If url.Contains("kh_banned_usernames") Then Return TimeSpan.FromMinutes(10)
-        If url.Contains("kh_users") Then Return TimeSpan.FromSeconds(15)
         Return TimeSpan.FromSeconds(20)
     End Function
 
@@ -1330,9 +1362,14 @@ Public Class KindleHubApiClient
                 End If
             End SyncLock
         End If
+        Dim generation As Long
+        SyncLock _cacheLock
+            generation = _cacheGeneration
+        End SyncLock
         Dim rows = Await GetRowsCoreAsync(url, secret, cancellationToken)
         If ttl > TimeSpan.Zero Then
             SyncLock _cacheLock
+                If generation <> _cacheGeneration Then Return rows
                 If _getCache.Count > 80 Then _getCache.Clear() ' web cache holds ~80 entries
                 _getCache(cacheKey) = New CacheEntry With {.Expires = DateTimeOffset.UtcNow.Add(ttl), .Rows = rows}
             End SyncLock
@@ -1345,27 +1382,28 @@ Public Class KindleHubApiClient
             linked.CancelAfter(_options.ReadTimeout)
             Using req As New HttpRequestMessage(HttpMethod.Get, url)
                 req.Headers.TryAddWithoutValidation("Accept", "application/json")
+                req.Headers.TryAddWithoutValidation("x-kh-want-pid", "1")
                 If Not String.IsNullOrEmpty(secret) Then req.Headers.TryAddWithoutValidation("X-KH-Secret", secret.ToLowerInvariant())
                 Try
                     Using resp = Await _httpClient.SendAsync(req, linked.Token)
                         Dim body = Await resp.Content.ReadAsStringAsync(linked.Token)
                         If Not resp.IsSuccessStatusCode Then
-                            _logger.LogWarning("GET {Url} failed: {Status} {Body}", url, CInt(resp.StatusCode), LeftOf(body, 300))
+                            _logger.LogWarning("GET {Path} failed: {Status}", url.Split("?"c)(0), CInt(resp.StatusCode))
                             Throw New ServerException($"API request failed: {resp.StatusCode}", CInt(resp.StatusCode))
                         End If
                         If String.IsNullOrWhiteSpace(body) Then Return New List(Of JsonElement)()
-                        Dim doc = JsonDocument.Parse(body)
-                        If doc.RootElement.ValueKind = JsonValueKind.Array Then
-                            Return doc.RootElement.EnumerateArray().ToList()
-                        End If
-                        ' A PGRST116 single-object error body can still be a 4xx; treat as empty
-                        Return New List(Of JsonElement) From {doc.RootElement}
+                        Using doc = JsonDocument.Parse(body)
+                            If doc.RootElement.ValueKind = JsonValueKind.Array Then
+                                Return doc.RootElement.EnumerateArray().Select(Function(row) row.Clone()).ToList()
+                            End If
+                            Return New List(Of JsonElement) From {doc.RootElement.Clone()}
+                        End Using
                     End Using
                 Catch ex As ServerException
                     Throw
                 Catch ex As Exception
                     If TypeOf ex Is OperationCanceledException Then Throw
-                    _logger.LogWarning(ex, "GET {Url} threw", url)
+                    _logger.LogWarning("GET {Path} could not reach the server", url.Split("?"c)(0))
                     Throw New NetworkException("Could not reach the server: " & ex.Message, ex)
                 End Try
             End Using
@@ -1454,6 +1492,13 @@ Public Class KindleHubApiClient
         End Try
     End Function
 
+    Private Sub InvalidateReads()
+        SyncLock _cacheLock
+            _cacheGeneration += 1
+            _getCache.Clear()
+        End SyncLock
+    End Sub
+
     Private Async Function PostInternalAsync(url As String, payload As Object, headers As Dictionary(Of String, String), cancellationToken As CancellationToken) As Task(Of String)
         Using linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
             linked.CancelAfter(If(url.Contains("kh_users"), _options.AccountUpsertTimeout, _options.WriteTimeout))
@@ -1463,9 +1508,10 @@ Public Class KindleHubApiClient
                 Using resp = Await _httpClient.SendAsync(req, linked.Token)
                     Dim body = Await resp.Content.ReadAsStringAsync(linked.Token)
                     If Not resp.IsSuccessStatusCode Then
-                        _logger.LogWarning("POST {Url} failed: {Status} {Body}", url, CInt(resp.StatusCode), LeftOf(body, 300))
+                        _logger.LogWarning("POST {Path} failed: {Status}", url.Split("?"c)(0), CInt(resp.StatusCode))
                         Throw New ServerException(SafeErr(body, resp), CInt(resp.StatusCode))
                     End If
+                    InvalidateReads()
                     Return body
                 End Using
             End Using
@@ -1480,9 +1526,10 @@ Public Class KindleHubApiClient
             Using resp = Await _httpClient.SendAsync(req, cancellationToken)
                 If Not resp.IsSuccessStatusCode Then
                     Dim body = Await resp.Content.ReadAsStringAsync(cancellationToken)
-                    _logger.LogWarning("PATCH {Url} failed: {Status} {Body}", url, CInt(resp.StatusCode), LeftOf(body, 300))
+                    _logger.LogWarning("PATCH {Path} failed: {Status}", url.Split("?"c)(0), CInt(resp.StatusCode))
                     Return False
                 End If
+                InvalidateReads()
                 Return True
             End Using
         End Using
@@ -1492,6 +1539,7 @@ Public Class KindleHubApiClient
         Using req As New HttpRequestMessage(HttpMethod.Delete, url)
             If Not String.IsNullOrEmpty(ownerSecret) Then req.Headers.TryAddWithoutValidation("X-KH-Secret", ownerSecret)
             Using resp = Await _httpClient.SendAsync(req, cancellationToken)
+                If resp.IsSuccessStatusCode Then InvalidateReads()
                 Return resp.IsSuccessStatusCode
             End Using
         End Using
@@ -1602,19 +1650,32 @@ Public Class KindleHubApiClient
     Public Async Function SendInboxEventAsync(authToken As String, toUserId As String, payloadJson As String, displayName As String, cancellationToken As CancellationToken) As Task(Of Boolean) Implements IKindleHubApiClient.SendInboxEventAsync
         If Not Hex64.IsMatch(If(authToken, "")) Then Throw New AuthenticationException("Sign in first.")
         Dim uid = TrimStr(If(toUserId, ""), 16).ToLowerInvariant()
-        If uid.Length <> 16 Then Throw New ValidationException("A recipient user id is required.")
+        If Not Regex.IsMatch(uid, "^(?:[a-f0-9]{16}|p[a-z2-7]{15})$") Then Throw New ValidationException("A valid recipient user id is required.")
+        Dim eventData As JsonNode
+        Try
+            eventData = JsonNode.Parse(If(payloadJson, "{}"))
+        Catch ex As JsonException
+            Throw New ValidationException("An inbox event must be a JSON object.")
+        End Try
+        If TypeOf eventData IsNot JsonObject Then Throw New ValidationException("An inbox event must be a JSON object.")
         Dim payload = New With {
             Key .p_hash = authToken.ToLowerInvariant(),
             Key .p_to = uid,
-            Key .p_payload = If(payloadJson, "")
+            Key .p_payload = eventData
         }
         Dim sent = False
         Try
             Await PostVoidAsync("rest/v1/rpc/kh_inbox_send", payload, MinimalHeaders(authToken), cancellationToken)
             sent = True
+        Catch ex As OperationCanceledException
+            Throw
+        Catch ex As ServerException When ex.StatusCode >= 400 AndAlso ex.StatusCode < 500 AndAlso ex.StatusCode <> 404
+            ' A refusal is authoritative. Do not turn it into a different write.
+            Throw
         Catch
             sent = False
         End Try
+        If Not sent AndAlso uid.StartsWith("p", StringComparison.Ordinal) Then Return False
         If Not sent Then
             ' Legacy route: post the event straight into the recipient's inbox room.
             Try
@@ -1687,6 +1748,7 @@ Public Class KindleHubApiClient
             req.Headers.TryAddWithoutValidation("X-KH-Secret", authToken.ToLowerInvariant())
             req.Headers.TryAddWithoutValidation("X-KH-Room-Owner", "1")
             Using resp = Await _httpClient.SendAsync(req, cancellationToken)
+                If resp.IsSuccessStatusCode Then InvalidateReads()
                 Return resp.IsSuccessStatusCode
             End Using
         End Using
@@ -1798,6 +1860,25 @@ Public Class KindleHubApiClient
     Private Function TrimStr(s As String, maxLen As Integer) As String
         s = If(s, "")
         Return If(s.Length <= maxLen, s, s.Substring(0, maxLen))
+    End Function
+
+    Private Async Function ResolvePublicIdAsync(token As String, cancellationToken As CancellationToken) As Task(Of String)
+        If Not Hex64.IsMatch(If(token, "")) Then Return ""
+        Dim hit = (Id:="", At:=DateTimeOffset.MinValue)
+        If _publicIds.TryGetValue(token, hit) AndAlso hit.At > DateTimeOffset.UtcNow.AddMinutes(-5) Then Return hit.Id
+        Dim uid = UserIdFromToken(token)
+        Try
+            Using doc = JsonDocument.Parse(Await PostJsonAsync("rest/v1/rpc/kh_public_id", New With {Key .p_hash = token}, MinimalHeaders(token), cancellationToken))
+                Dim pid = JsonStr(doc.RootElement, "pid")
+                If Regex.IsMatch(pid, "^p[a-z2-7]{15}$") Then uid = pid
+            End Using
+        Catch ex As OperationCanceledException
+            Throw
+        Catch
+            ' Older backends still identify accounts by their 16-hex prefix.
+        End Try
+        _publicIds(token) = (uid, DateTimeOffset.UtcNow)
+        Return uid
     End Function
 
     Private Function UserIdFromToken(token As String) As String

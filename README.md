@@ -195,5 +195,11 @@ See how to host your own instance (still legacy compared to the latest version d
 GPL License - see LICENSE file for details. (why does the agent keep messing this up, why was it originally MIT)
 
 ## NOTICE
-I'm so fucking tired with KindleHub, you know what, this client is discontinued, aran TRULY hates open-source software, privacy, and transparency. The APIs no longer work. They all report being "Forbidden".
-Wow aran. You did a perfect job of trying to hide your steps, and it's absolutely perfect for the community to stay dumb about what you did, amirite guys????? "Yo pay me because I need credits for Claude Max-" dude your site looks like you only did one fucking prompt every time you wanted to update anything, and shipped without a SINGLE FORM OF TESTING. And, better yet, that doesn't even look like you used Claude.
+~~I'm so fucking tired with KindleHub, you know what, this client is discontinued, aran TRULY hates open-source software, privacy, and transparency. The APIs no longer work. They all report being "Forbidden".
+Wow aran. You did a perfect job of trying to hide your steps, and it's absolutely perfect for the community to stay dumb about what you did, amirite guys????? "Yo pay me because I need credits for Claude Max-" dude your site looks like you only did one fucking prompt every time you wanted to update anything, and shipped without a SINGLE FORM OF TESTING. And, better yet, that doesn't even look like you used Claude.~~
+Guess what. He replied. What did he say? Well...
+
+"ok go on then suprusr(i know u made the evil helper thing on github, and you were also arancool3001 and i also know where you live and don't even try to trick me i spent no time locating you)
+also it was opus 5.5 and fable 5.2."
+
+Evil helper thing. Aran I'm so sick with your ass, I decided to extend support for this thing. If you hate transparency and FOSS software, then so be it. More FOSS software with GPL for you. What's wrong? Oh so you wanted to lock everyone to your web build? WELL BAD FUCKING LUCK. Open-source software documenting your shit is here to stay. Don't hide everything aran, you scummy little asshole.

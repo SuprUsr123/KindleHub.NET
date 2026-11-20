@@ -315,6 +315,7 @@ public class ArcadeViewModel : ViewModelBase
         {
             if (_game is null) return;
             _game.Reset();
+            _ = _core.PrepareScoreRunAsync(_game.Slug, CancellationToken.None);
             Attempt++;
             Refresh();
         });
@@ -936,6 +937,7 @@ public class ArcadeViewModel : ViewModelBase
         }
         _game = game;
         _game.Reset();
+        _ = _core.PrepareScoreRunAsync(_game.Slug, CancellationToken.None);
         _isRealTime = _game.IsRealTime;
         _cells = new ObservableCollection<GameCell>(_game.Cells);
         Attempt++;

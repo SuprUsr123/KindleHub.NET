@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOLUTION_FILE="$SCRIPT_DIR/KindleHub.sln"
+CLIENT_PROJECT="$SCRIPT_DIR/KindleHub.Client/KindleHub.Client.csproj"
 CONFIGURATION="${1:-Release}"
 PUBLISH=false
 SELF_CONTAINED=false
@@ -52,10 +52,10 @@ echo "Self-contained: $SELF_CONTAINED"
 echo "=========================================="
 
 # Avalonia 12's XAML source generators require the newer Roslyn compiler
-# shipped with .NET SDK 9.0.300 or later. Prefer the user-local SDK when the
+# shipped with .NET SDK 10.0.100 or later. Prefer the user-local SDK when the
 # system dotnet is older (common on Linux distributions).
 if ! command -v dotnet &> /dev/null; then
-    echo "Error: .NET SDK 9.0.300+ not found. Install it from https://dotnet.microsoft.com/download"
+    echo "Error: .NET SDK 10.0.100+ not found. Install it from https://dotnet.microsoft.com/download"
     exit 1
 fi
 
@@ -67,7 +67,7 @@ sdk_is_new_enough() {
     local sdk_major="${BASH_REMATCH[1]}"
     local sdk_minor="${BASH_REMATCH[2]}"
     local sdk_patch="${BASH_REMATCH[3]}"
-    (( sdk_major > 9 || (sdk_major == 9 && (sdk_minor > 0 || (sdk_minor == 0 && sdk_patch >= 300))) ))
+    (( sdk_major >= 10 ))
 }
 if [[ -x "$HOME/.dotnet/dotnet" ]]; then
     USER_DOTNET_VERSION="$("$HOME/.dotnet/dotnet" --version 2>/dev/null || true)"
@@ -78,7 +78,7 @@ if [[ -x "$HOME/.dotnet/dotnet" ]]; then
 fi
 
 if ! sdk_is_new_enough "$DOTNET_VERSION"; then
-    echo "Error: Avalonia 12 requires .NET SDK 9.0.300 or later (found ${DOTNET_VERSION:-none})."
+    echo "Error: Avalonia 12 requires .NET SDK 10.0.100 or later (found ${DOTNET_VERSION:-none})."
     echo "Install a newer SDK or put it earlier in PATH."
     exit 1
 fi
@@ -87,7 +87,7 @@ echo "Using .NET $DOTNET_VERSION ($DOTNET_CMD)"
 
 # Restore dependencies
 echo "Restoring dependencies..."
-"$DOTNET_CMD" restore "$SOLUTION_FILE"
+"$DOTNET_CMD" restore "$CLIENT_PROJECT"
 
 # Build core library first
 echo "Building KindleHub.Core..."

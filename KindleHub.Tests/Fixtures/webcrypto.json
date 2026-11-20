@@ -1,0 +1,47 @@
+{
+  "source": "https://kindlehub.pro/kh-app.js?v=7acd064949",
+  "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "room": "123456789012",
+  "text": "{\"notes\":[{\"text\":\"Hello 世界\",\"tags\":[\"chat\"]}],\"theme\":\"dark\",\"future\":{\"keep\":true}}",
+  "compressed": "{\u0001\u001b{\u0001(Hello 世界\u00019tags\u0001E\"chat\"]}],\"theme\":\"dark\u00019future\u0001<keep\u0001A}}",
+  "account": [
+    {
+      "format": "dictionary-plain",
+      "packed": "AAECAwQFBgcICQoL.+aPR74+N2a7SKmoJ3thCT2qKV1SFM7URUguCh8EVACLMSiwbEGG0CmDlsxvH0e2aEfih2lwWgQ2SA0S5N8s2CA+Uo6CqyblqW1nG7077+JjBl0Ob"
+    },
+    {
+      "format": "dictionary-gzip",
+      "packed": "AAECAwQFBgcICQoL.3cdb/PSM8ea3RhXNmKhUv1nvk5h1joMOk2kdVgtA7cDLnriDsO2KqxwB83NMRjjBKba5SoPKvy6qT8zAhSLFEavwe5g3db4+ZlmBSsZTezBp5byDoianWXtf3w9ND6JXaG6Hq3D3yF4="
+    },
+    {
+      "format": "raw-gzip",
+      "packed": "AAECAwQFBgcICQoL./cdb/PSM8ea3RhXNqPYx9sQyjec26YJcaKfv9BAvkx4j3pgRRPGjuPYh63PHuaxyirPJRt7vMWpFvp/d/OYVEmD/jrzUm9nRn7HerwGP36C/k218e3wHPfRlaYptlr2Zj/FXHxziXispADMMeNyND365FETr1ZvQ"
+    },
+    {
+      "format": "legacy",
+      "packed": "AAECAwQFBgcICQoL.4fq+m4DpgsSNHX1EilmCra8l+R3ZK7gZAe5/M0Xo7XTCNSUnWzDiWF6qtVGch6umHs6MwU4LkBWFRH+nOM8hEyz5/Lvrjf2VqtK+vWqNq1WQHMOVk1PCJNxp3BumiLQPb4GpmSGtAp8e"
+    }
+  ],
+  "chat": [
+    {
+      "packed": "enc1:AAECAwQFBgcICQoL.piMMDnZr1rdPTYWT6vbCE3s6NsVrFJpEacLL7TAsp3OAL0VSi2vIBsOrALvt3jk6P4nl3YDbQ6ZHdGSRseXdgb+M756J3uuV6SBGTL+NKAo9naeu90HWwcuHTAhwBENZ9BeVfCIl1Ulv"
+    },
+    {
+      "packed": "enc2:AAECAwQFBgcICQoL.wopqYQIOpZV1BVXnVFiVLnRWpgegLtxi5A4iyYVLY5xlxGZLXnswzzG0KenGj5KOYr1sG3h3NG76jAYTncLFhLfwrLKe+6i3zVgVfvT33TDgKwBA35TX6eSp4+7uevDMKKVaf4KIUZs3pi2826XmRe+apQ8GzRU="
+    }
+  ],
+  "wrapped": [
+    {
+      "format": "legacy-a2",
+      "password": "fixture password",
+      "key": "41048f407b07a5b645ee9d3bb3d4a4519eced1a5e854f1df2d44dcf848d921a1",
+      "packed": "KHA2:00112233445566778899aabbccddeeff:120000:BwcHBwcHBwcHBwcH.Y1toSYscjzMxgurmBF3tOTQIuaO640S8YQS4A/RUa8j5Xbe9tZr9cu3sp+WyJLeH6j/FvDdZ35ORAGRttgCKK7WKnK7145rh5QaELf/VgBEPI423Kw7ftp6CQ/k7QetJXQyA6M4iXqA="
+    },
+    {
+      "format": "recovery-a2",
+      "password": "fixture password",
+      "key": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "packed": "KHA2:00112233445566778899aabbccddeeff:R120000:BwcHBwcHBwcHBwcH.RyeAIuh/7FBS4ZouAaogPIObkg0QSXCnsAQBkz4KhD2/tz0bWlfU2JcG4cxg8mXew3m/du2T9qa4So5LDO9/ITLYKBgqWWOzP8SLsopFRf0=:BwcHBwcHBwcHBwcH.77QFdJ3btdA+VRNxDtQGxehTThUeAnoT3vq+nWyQeihrdMR/xqH8Jee+c6aVCh7yrz52pW4K/82xETxDJ9mB529oFZs8oRZuy66zSvAJiTA=:BwcHBwcHBwcHBwcH.Zfw3xS2vLqAz4FQ+ou+ukZumfXjTAJjmhiFb5tqSwptdtAPG0S01rv/KgW4wXxKQ/hkaXxaLE7vNj7sfvcwFKF3RwLXXOFMd22JLx6CINQS3aci40u+Sa0SAQFZ1RloGQ19B9TBYoBY="
+    }
+  ]
+}
