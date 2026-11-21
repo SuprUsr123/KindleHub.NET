@@ -1,5 +1,5 @@
 # KindleHub.NET
-98% completed! Quite a lot of features requiring server is wired up now (except for admin/moderator-specific functions, I can't implement them without admin/mod roles). Also, aran, do NOT fuck with the GPL.
+Every one of the 83 official arcade games is now playable in-process, scores flow to the shared `kh_scores` leaderboards, and App Store downloads carry the same polyfill runtime the website injects — so a store app behaves identically here and on the web build. (Admin/moderator-specific functions still need admin/mod roles, so they remain out. Also, aran, do NOT fuck with the GPL.)
 
 Cross-platform KindleHub client with a VB.NET core library and Avalonia UI frontend. Desktop builds run on Windows, Linux, and macOS; an Android mobile host is in its initial port phase. (The iOS host was removed.)
 
@@ -13,8 +13,11 @@ Cross-platform KindleHub client with a VB.NET core library and Avalonia UI front
 - **KindleHub.Client.Shared** (C#, Avalonia UI, .NET 8.0) - Shared views, view models, assets, and dependency setup used by each host.
 - **KindleHub.Client** (C#, Avalonia desktop host, .NET 8.0) - Windows, macOS, and Linux launcher with:
   - MVVM architecture
-  - Views: Home, Leaderboards, Community, Messages, App Store, Settings
+  - Views: Home, Arcade, Leaderboards, Community, Messages, App Store, Settings
   - Dependency injection with Microsoft.Extensions.Hosting
+- **The arcade** (`KindleHub.Client.Shared/Games/`) - All 83 official games playable in-process through one shared board view (`IGame`/`GameBase`/`GameCell`): every puzzle, word, card, board, real-time arcade and strategy title in the official `GAME_HELP` catalogue, each registered in `GameRegistry`. Real-time games (Snake, Tetris, Pac-Man, Galaga, …) run off the window's tick clock; everything else is tap/keyboard driven.
+- **Leaderboards** - Finishing a game submits `(slug, score)` to the global `kh_scores` board with the website's run-token pipeline (clamp 1..1e9, 30s dedupe, offline queue cap 60). After a submit the status line reports your rank, and the game window's "Top scores" strip shows the top 10 with your row highlighted. Score formulas match the official ones where they are known (FreeCell `2000−moves`, dominoes `50×matches+rounds`, mahjong `10×cleared+cleanWins`, nerdle, wordle, hangman, ttt …).
+- **App Store polyfills** - Downloaded/imported apps are wrapped in the same runtime the website seals them with (`AppPolyfills`): the CSP, the e-ink timer throttle, the guard (no forms, no WebRTC, no navigation), scoped `kh_appls_<id>` storage with the 64 KB cap, the canvas screenshot reporter, dialog boxes, a per-launch nonce, and a local bridge that answers the `{kh:"app"}` postMessage protocol (saveLocal / preview / cloudGet / cloudPut / cloudList / sendMail) with the website's reply shapes and error strings.
 - **KindleHub.Client.Android** - .NET 10 platform launcher using the shared UI and a touch-sized bottom navigation bar.
 
 ## Prerequisites

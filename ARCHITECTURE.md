@@ -699,6 +699,43 @@ structure (`KindleHubApiClient.vb`, `ChatMedia.vb`, `RoomRegistry`, `ChatPrefsSt
 session file `~/.config/KindleHubPro/session.json`, local app HTML under
 `KindleHubPro/apps` launched via the system browser).
 
+### 8.1 Desktop polyfill layer (App Store parity)
+
+The desktop client now ships a one-for-one port of the web app runtime so store apps
+downloaded by the desktop behave exactly as they do on the website
+(`KindleHub.Client.Shared/Models/AppPolyfills.cs`, verified against kh-app.js):
+
+| Web function | Desktop port |
+|---|---|
+| `_khAppCsp` | the sealed CSP, byte-identical, first thing in `<head>` |
+| `_khFrameWrite` perf injection | e-ink aware rAF/timeout/interval throttle (12 FPS / 33 ms floor on Kindle UAs, 30 FPS / 16 ms elsewhere, hidden-tab skip, `devicePixelRatio=1` on e-ink) |
+| `_khAppGuardShim` | bye announce, document.open/write re-arm, form + `HTMLFormElement.submit` blocked, WebRTC deleted |
+| `_khAppStorageShim` + `_khAppLsRead` | scoped `localStorage`/`sessionStorage` seeded from `kh_appls_<scope>`, debounced (400 ms / 500 ms) `saveLocal` posts, `KH_APP_LS_MAX` 64 KB cap |
+| `_khAppScreenshotShim` | largest canvas ≥400 px² downscaled to ≤280 px, JPEG ≤16 KB, `preview` post |
+| `_khAppDialogShim` | alert/confirm/prompt as in-page boxes (confirm→true, prompt→default) |
+| `_khRegisterAppFrame` nonce | fresh 32-hex `KH_APP_NONCE` per launch |
+| parent message handler (@807200) | a local bridge answering `saveLocal`/`preview`/`cloudGet`/`cloudPut`/`cloudList`/`sendMail` with the same reply shapes and error strings |
+
+Two deliberate adaptations, both documented in the source: (1) in a standalone page
+`parent === window`, so the bridge re-wraps `window.postMessage` to hand `{kh:"app"}`
+requests straight to the handler without echoing them back to the app — reproducing
+the iframe topology where only the parent's *replies* arrive as message events;
+(2) cloud saves are emulated against per-device localStorage (`kh_appkv_<scope>_<room>`)
+because a standalone file holds no credentials and its CSP refuses network. `sendMail`
+answers `ok:false "mail is unavailable"` — the web parent's own fallback when the mail
+service is missing. Legacy helpers from the desktop's first polyfill layer
+(`NOW`, `saveGame`, `_khRunSave`/`_khRunLoad`) are still provided for older apps.
+
+### 8.2 Desktop arcade + leaderboards
+
+All 83 catalogue games are ported natively (`IGame` on a shared cell-grid board view).
+Score formulas follow §4.7 where documented (minesweeper, wordle, hanoi, freecell,
+mahjong, hangman, ttt, dominoes, nerdle); the rest use formulas in the same spirit,
+documented per game. Submission rides the same run-token pipeline (`kh_run_start`,
+clamp 1..1e9, 30 s dedupe, `kh_score_q` offline queue cap 60); the game window also
+shows the per-game top 10 with the player's row highlighted, and the submit status
+reports the landed rank.
+
 ## 9. Compatibility checklist (updated)
 
 - UTF-8, lowercase hex, UTC ISO timestamps; `kh_presence.profile` must be a JSON object,

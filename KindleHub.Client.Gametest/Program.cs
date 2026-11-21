@@ -19,7 +19,7 @@ void NotHanging(string n, Action a, int ms = 10000)
 }
 
 var ported = GameRegistry.PortedSlugs;
-Ok("registry has 17 games", ported.Count == 17, $"{ported.Count}");
+Ok("registry has every catalog game ported", ported.Count == 82, $"{ported.Count}");
 Ok("no duplicate slugs", ported.Distinct().Count() == ported.Count);
 Ok("snake is ported", GameRegistry.IsPorted("snake"));
 Ok("lookup is case-insensitive", GameRegistry.IsPorted("SNAKE"));
@@ -412,7 +412,10 @@ bool FullColumnRefused()
     Ok("arcade: all registered games plus tic-tac-toe are playable here", vm.PortedCount == ported.Count + 1, $"{vm.PortedCount}");
     Ok("arcade: starts on the catalogue", vm.NotInGame && !vm.InGame);
     Ok("arcade: every unported game is labelled", vm.All.Count(g => !g.IsPorted) == vm.TotalCount - vm.PortedCount);
-    Ok("arcade: unported games are still listed", vm.All.Any(g => !g.IsPorted));
+    // Every official game now has a native implementation, so nothing sits in
+    // the unported group any more — the whole catalogue is playable here.
+    Ok("arcade: no game is left unported", vm.All.All(g => g.IsPorted),
+       string.Join(",", vm.All.Where(g => !g.IsPorted).Select(g => g.Slug)));
 
     // ── the two groups the page shows ────────────────────────────────────
     Ok("arcade: the ported group holds exactly the ported games",
@@ -432,7 +435,7 @@ bool FullColumnRefused()
     Ok("arcade: the ported group is the registry plus tic-tac-toe",
        vm.PortedGames.Select(g => g.Slug).OrderBy(x => x).SequenceEqual(expectedPorted),
        string.Join(",", vm.PortedGames.Select(g => g.Slug).Except(expectedPorted)));
-    Ok("arcade: both groups are visible before filtering", vm.HasPorted && vm.HasUnported);
+    Ok("arcade: both groups are visible before filtering", vm.HasPorted && !vm.HasUnported);
     // The board is gated on InGame. It used to be `_game != null`, which stayed
     // false for a live Connect 4 match — so the board never appeared and there
     // was nothing to tap. That is exactly "where do I press to play".
@@ -474,18 +477,19 @@ bool FullColumnRefused()
        vm.PortedGames.All(g => g.IsPorted) && vm.UnportedGames.All(g => !g.IsPorted));
     Ok("arcade: filter finds Snake in the ported group",
        vm.PortedGames.Any(g => g.Slug == "snake"));
-    Ok("arcade: filter finds Snakes & Ladders in the unported group",
-       vm.UnportedGames.Any(g => g.Slug == "snakesladders"), "no snakesladders");
+    Ok("arcade: filter finds Snakes & Ladders in the ported group",
+       vm.PortedGames.Any(g => g.Slug == "snakesladders"), "no snakesladders");
     Ok("arcade: filtered groups still sum to what is visible",
        vm.PortedGames.Count + vm.UnportedGames.Count == vm.Visible.Count);
 
-    // A search that only matches unported games must empty the ported group, so
-    // its header disappears rather than showing an empty section.
-    vm.SearchText = "akinator";   // "Mind Reader" in the catalogue, unported
-    Ok("arcade: a purely-unported search empties the ported group",
-       vm.PortedGames.Count == 0 && !vm.HasPorted, $"{vm.PortedGames.Count} ported left");
-    Ok("arcade: ...and still shows the unported one",
-       vm.HasUnported && vm.UnportedGames.Any(g => g.Slug == "akinator"), "no akinator");
+    // Every search now lands in the ported group; the unported section must stay
+    // empty and hidden rather than showing a stray header.
+    vm.SearchText = "akinator";   // "Mind Reader" — now ported like everything else
+    Ok("arcade: a single-match search shows just that game",
+       vm.PortedGames.Count == 1 && vm.HasPorted, $"{vm.PortedGames.Count} ported left");
+    Ok("arcade: ...and it is the searched one",
+       vm.PortedGames.Any(g => g.Slug == "akinator"), "no akinator");
+    Ok("arcade: ...with no unported group showing", !vm.HasUnported);
 
     // ...and one that only matches a ported game empties the other group.
     vm.SearchText = "g2048";
@@ -523,13 +527,10 @@ bool FullColumnRefused()
         Ok($"arcade: {entry.Name} status is set", !string.IsNullOrWhiteSpace(vm.Status));
     }
 
-    // An unported game must not start, and must say so.
-    var unported = vm.All.First(g => !g.IsPorted);
+    // With the whole catalogue ported, every game must start and render a board —
+    // the loop above already proved that per game, so just re-confirm the count.
     vm.BackCommand.Execute(null);
-    vm.PlayCommand.Execute(unported);
-    Ok("arcade: an unported game does not start", vm.NotInGame, vm.Status);
-    Ok("arcade: an unported game explains itself",
-       vm.Status.Contains("hasn't been ported"), vm.Status);
+    Ok("arcade: every catalog game starts a board", vm.All.All(g => g.IsPorted));
 
     core.Dispose();
 }
@@ -582,6 +583,54 @@ bool FullColumnRefused()
     Ok("arcade: a new attempt submits its own score", submittedScores.Count == 3,
        $"{submittedScores.Count} submissions");
     core.Dispose();
+}
+
+// Leaderboard support: the strip under the game board, and the rank report
+// after a successful submit. Both run against an injected fetcher so the
+// headless harness never touches the network.
+{
+    var core = KindleHub.Core.KindleHubCoreFactory.CreateCore(
+        Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance,
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kh_gametest_secrets3.json"));
+    var board = new List<KindleHub.Core.LeaderboardEntry>
+    {
+        new() { Game = "snake", Score = 900, DisplayName = "Ace", UserId = "u1", Date = DateTimeOffset.UtcNow },
+        new() { Game = "snake", Score = 800, DisplayName = "Bo", UserId = "u2", Date = DateTimeOffset.UtcNow },
+        new() { Game = "snake", Score = 700, DisplayName = "Cy", UserId = "u3", Date = DateTimeOffset.UtcNow },
+    };
+    var submitted = new List<(string Slug, int Score)>();
+    var vm = new KindleHub.Client.ViewModels.ArcadeViewModel(
+        core, Microsoft.Extensions.Logging.Abstractions.NullLogger<KindleHub.Client.ViewModels.ArcadeViewModel>.Instance,
+        submitScore: (slug, score, _) => { submitted.Add((slug, score)); return Task.FromResult(true); },
+        fetchLeaderboard: (slug, limit, _) => Task.FromResult(board.ToList()));
+
+    Ok("leaderboard: strip starts empty and hidden",
+       !vm.LeaderboardVisible && !vm.HasTopScores && vm.TopScores.Count == 0);
+
+    vm.PlayCommand.Execute(vm.All.First(g => g.Slug == "snake"));
+    for (int i = 0; i < 200 && !vm.ScoreCounts; i++) vm.Tick(TimeSpan.FromMilliseconds(300));
+    Ok("leaderboard: a finished run submits and announces",
+       submitted.Count == 1 && vm.Status.Contains("submitted"), vm.Status);
+
+    vm.ToggleLeaderboardCommand.Execute(null);
+    // The fetch completes synchronously through the injected Task.FromResult.
+    Ok("leaderboard: the strip loads the top scores",
+       vm.LeaderboardVisible && vm.TopScores.Count == 3, $"{vm.TopScores.Count}");
+    Ok("leaderboard: rows carry rank, name and score",
+       vm.TopScores[0].Rank == 1 && vm.TopScores[0].Name == "Ace" && vm.TopScores[0].Score == 900);
+    Ok("leaderboard: status describes the board", vm.LeaderboardStatus.Contains("Top 3"), vm.LeaderboardStatus);
+    Ok("leaderboard: a signed-out player is unranked", vm.MyRank == 0);
+
+    vm.ToggleLeaderboardCommand.Execute(null);
+    Ok("leaderboard: the strip closes", !vm.LeaderboardVisible && vm.HasTopScores);
+
+    // Switching games drops the stale rows so the next game loads its own.
+    vm.PlayCommand.Execute(vm.All.First(g => g.Slug == "tetris"));
+    Ok("leaderboard: switching games clears the strip", vm.TopScores.Count == 0 && !vm.HasTopScores);
+    vm.BackCommand.Execute(null);
+    Ok("leaderboard: leaving hides the strip", !vm.LeaderboardVisible && vm.TopScores.Count == 0);
+    core.Dispose();
+}
 
     // Reversi must be able to finish and score too.
     var rev = new ReversiGame(); rev.Reset();
@@ -602,7 +651,6 @@ bool FullColumnRefused()
     Ok("score: memory finishes scored", SolvesMemory());
     Ok("score: numslide finishes scored", SolvesNumSlide());
     Ok("score: lights out finishes scored", SolvesLightsOut());
-}
 
 // The summary has to come before the helper functions, and the non-zero exit is
 // what makes this usable as a build gate.

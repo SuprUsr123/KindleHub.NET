@@ -59,6 +59,7 @@ public class ArcadeViewModel : ViewModelBase
     private readonly ILogger<ArcadeViewModel> _logger;
     private readonly Func<string, int, CancellationToken, Task<bool>> _submitScore;
     private readonly bool _scoreSubmitWasInjected;
+    private readonly Func<string, int, CancellationToken, Task<List<LeaderboardEntry>>> _fetchLeaderboard;
     private int _scoreSubmittingAttempt = -1;
     private int _scoreSubmittedAttempt = -1;
     private int _scoreFailedAttempt = -1;
@@ -174,6 +175,71 @@ public class ArcadeViewModel : ViewModelBase
         "nim" => 44,
         "simon" => 76,
         "dotsboxes" => 38,
+
+        // Dense boards (13-20 columns) stay compact so they fit the window.
+        "slither" => 22,
+        "gomoku" => 30,
+        "platformer" => 30,
+        "geometrydash" => 26,
+        "maze" => 30,
+        "crossyroad" => 34,
+        "tetris" => 30,
+        "digquest" => 34,
+        "deephalls" => 36,
+        "tiletrader" => 40,
+        "wordsearch" => 38,
+        "strands" => 44,
+        "arena" => 34,
+        "towerdef" => 36,
+        "cargorun" => 36,
+        "dominoes" => 40,
+        "dquest" => 40,
+        "flightsim" => 44,
+        "craft" => 40,
+        "stronghold" => 38,
+        "pacman" => 34,
+        "galaga" => 36,
+        "spaceinv" => 36,
+        "fruitninja" => 40,
+        "futoshiki" => 40,
+        "sumlines" => 44,
+        "kakuro" => 44,
+        "loopwire" => 40,
+        "blockblast" => 42,
+        "candycrush" => 44,
+        "battleship" => 38,
+        "chess" => 52,
+        "checkers" => 52,
+        "eightball" => 46,
+        "freecell" => 56,
+        "solitaire" => 58,
+        "mahjong" => 40,
+        "anagrams" => 44,
+        "connections" => 48,
+        "cryptogram" => 36,
+        "nerdle" => 44,
+        "spellingbee" => 48,
+        "wordladder" => 40,
+        "akinator" => 60,
+        "beambalance" => 56,
+        "blackjack" => 56,
+        "crazy8" => 56,
+        "emberdeck" => 56,
+        "trivia" => 60,
+        "nextinline" => 56,
+        "oddone" => 60,
+        "quickcount" => 52,
+        "pairup" => 60,
+        "perfectcircle" => 44,
+        "picpuzzle" => 68,
+        "roller" => 52,
+        "set" => 52,
+        "snakesladders" => 44,
+        "sokoban" => 44,
+        "traffic" => 52,
+        "nonogram" => 40,
+        "wildforms" => 56,
+        "farm" => 60,
         _ => 52,
     };
 
@@ -240,6 +306,9 @@ public class ArcadeViewModel : ViewModelBase
     public RelayCommand BackCommand { get; }
     public RelayCommand RetryScoreCommand { get; }
 
+    /// <summary>Toggles the top-scores strip under the board (GameWindow).</summary>
+    public RelayCommand ToggleLeaderboardCommand { get; }
+
     /// <summary>Opens the multiplayer Tic-Tac-Toe relay screen.</summary>
     public RelayCommand PlayTicTacToeCommand { get; }
 
@@ -280,12 +349,14 @@ public class ArcadeViewModel : ViewModelBase
     public ArcadeViewModel(KindleHubCore core, ILogger<ArcadeViewModel> logger,
                            System.Action<string>? navigate = null,
                            Func<string, int, CancellationToken, Task<bool>>? submitScore = null,
-                           System.Action<ArcadeViewModel>? showOnlinePage = null)
+                           System.Action<ArcadeViewModel>? showOnlinePage = null,
+                           Func<string, int, CancellationToken, Task<List<LeaderboardEntry>>>? fetchLeaderboard = null)
     {
         _core = core;
         _logger = logger;
         _scoreSubmitWasInjected = submitScore is not null;
         _submitScore = submitScore ?? ((slug, score, token) => _core.SubmitScoreAsync(slug, score, token));
+        _fetchLeaderboard = fetchLeaderboard ?? ((slug, limit, token) => _core.FetchLeaderboardAsync(slug, limit, token));
         _navigate = navigate;
         _showOnlinePage = showOnlinePage;
 
@@ -329,9 +400,19 @@ public class ArcadeViewModel : ViewModelBase
             _debugFoe?.Dispose(); _debugFoe = null;
             _game = null;
             IsOnlineGamePage = false;
+            TopScores.Clear();
+            _myRank = 0;
+            LeaderboardVisible = false;
+            OnPropertyChanged(nameof(HasTopScores));
+            OnPropertyChanged(nameof(MyRank));
             Refresh();
         });
         RetryScoreCommand = new RelayCommand(async () => await SubmitScoreIfNeededAsync(), () => CanRetryScore);
+        ToggleLeaderboardCommand = new RelayCommand(async () =>
+        {
+            LeaderboardVisible = !LeaderboardVisible;
+            if (LeaderboardVisible && TopScores.Count == 0) await LoadTopScoresAsync();
+        });
         PlayTicTacToeCommand = new RelayCommand(() =>
         {
             _game = null;
@@ -941,6 +1022,12 @@ public class ArcadeViewModel : ViewModelBase
         _isRealTime = _game.IsRealTime;
         _cells = new ObservableCollection<GameCell>(_game.Cells);
         Attempt++;
+        // A different game means a different leaderboard: drop the stale rows so
+        // the strip reloads for the new slug (or stays closed, matching the user).
+        TopScores.Clear();
+        _myRank = 0;
+        OnPropertyChanged(nameof(HasTopScores));
+        OnPropertyChanged(nameof(MyRank));
         // Cells is a new instance per game, so the view has to be told.
         OnPropertyChanged(nameof(Cells));
         Refresh();
@@ -1046,11 +1133,120 @@ public class ArcadeViewModel : ViewModelBase
         _ = SubmitScoreIfNeededAsync();
     }
 
+    /// <summary>Reports the submitted score's rank when it lands inside the visible board.</summary>
+    private async Task AnnounceSubmittedRankAsync(IGame game, int attempt)
+    {
+        if (Attempt != attempt || !ReferenceEquals(_game, game)) return;
+        _status = $"Score {game.Score} submitted to the {game.Name} leaderboard.";
+        OnPropertyChanged(nameof(Status));
+        try
+        {
+            var entries = await _fetchLeaderboard(game.Slug, 25, CancellationToken.None);
+            if (Attempt != attempt || !ReferenceEquals(_game, game)) return;
+            var me = _core.CurrentProfile?.UserId;
+            if (string.IsNullOrEmpty(me)) return;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (entries[i].UserId != me) continue;
+                _status = _myRank > 0 && _myRank == i + 1
+                    ? $"Score {game.Score} submitted — you are #{i + 1} on the {game.Name} leaderboard."
+                    : $"Score {game.Score} submitted. Your best is #{i + 1} of {entries.Count} on {game.Name}.";
+                OnPropertyChanged(nameof(Status));
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Rank lookup after submit failed for {Slug}", game.Slug);
+        }
+    }
+
     /// <summary>Advances a real-time game. Called by the view's clock.</summary>
     public void Tick(TimeSpan elapsed)
     {
         if (_game == null || !_game.NeedsTicks) return;
         if (_game.Tick(elapsed)) Refresh();
+    }
+
+    // ─── leaderboard strip ─────────────────────────────────────────────────────
+
+    /// <summary>One row of the top-scores strip under the game board.</summary>
+    public sealed class ArcadeScoreRow
+    {
+        public ArcadeScoreRow(int rank, string name, long score, bool isMe)
+        {
+            Rank = rank; Name = name; Score = score; IsMe = isMe;
+        }
+        public int Rank { get; }
+        public string Name { get; }
+        public long Score { get; }
+        public bool IsMe { get; }
+        public string RankLabel => $"#{Rank}";
+        public string ScoreLabel => Score.ToString("N0");
+        public string RowText => $"#{Rank}  {Name}  ·  {Score:N0}";
+    }
+
+    /// <summary>The top scores for the game on screen, best first.</summary>
+    public ObservableCollection<ArcadeScoreRow> TopScores { get; } = new();
+
+    public bool HasTopScores => TopScores.Count > 0;
+
+    /// <summary>True while the strip is expanded under the board.</summary>
+    public bool LeaderboardVisible { get => _leaderboardVisible; private set => SetProperty(ref _leaderboardVisible, value); }
+    private bool _leaderboardVisible;
+
+    /// <summary>The signed-in player's best rank, or 0 when unranked/unknown.</summary>
+    public int MyRank => _myRank;
+    private int _myRank;
+
+    public string LeaderboardStatus { get => _leaderboardStatus; private set => SetProperty(ref _leaderboardStatus, value); }
+    private string _leaderboardStatus = "";
+
+    private bool _loadingScores;
+
+    /// <summary>True while a top-score fetch is in flight, so the view can show a hint.</summary>
+    public bool IsLoadingScores => _loadingScores;
+
+    /// <summary>Fetches the top ten plus the player's own best rank for the current game.</summary>
+    public async Task LoadTopScoresAsync()
+    {
+        var slug = Slug;
+        if (string.IsNullOrEmpty(slug)) return;
+        var showing = _game;
+        try
+        {
+            _loadingScores = true;
+            var entries = await _fetchLeaderboard(slug, 25, CancellationToken.None);
+            if (!ReferenceEquals(_game, showing) && _connect4 == null) return; // switched games mid-fetch
+            var me = _core.CurrentProfile?.UserId;
+            TopScores.Clear();
+            _myRank = 0;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                var e = entries[i];
+                bool isMe = !string.IsNullOrEmpty(me) && e.UserId == me;
+                if (isMe && _myRank == 0) _myRank = i + 1;
+                if (TopScores.Count < 10)
+                    TopScores.Add(new ArcadeScoreRow(i + 1,
+                        string.IsNullOrWhiteSpace(e.DisplayName) ? "Reader" : e.DisplayName, e.Score, isMe));
+            }
+            LeaderboardStatus = entries.Count == 0
+                ? "No scores posted here yet — a finished game will put you first."
+                : _myRank > 0
+                    ? $"Your best is #{_myRank} of {entries.Count}."
+                    : $"Top {entries.Count} — play a round to join them.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Top scores fetch failed for {Slug}", slug);
+            LeaderboardStatus = "Couldn't load the leaderboard right now.";
+        }
+        finally
+        {
+            _loadingScores = false;
+            OnPropertyChanged(nameof(HasTopScores));
+            OnPropertyChanged(nameof(MyRank));
+        }
     }
 
     /// <summary>Posts the finished game's score to kh_scores, at most once per attempt.</summary>
@@ -1072,11 +1268,11 @@ public class ArcadeViewModel : ViewModelBase
             if (!posted) throw new InvalidOperationException("The leaderboard did not accept the score.");
             _scoreSubmittedAttempt = attempt;
             _ = _core.FlushOfflineScoresAsync(CancellationToken.None);
-            if (Attempt == attempt && ReferenceEquals(_game, game))
-            {
-                _status = $"Score {game.Score} submitted to the {game.Name} leaderboard.";
-                OnPropertyChanged(nameof(Status));
-            }
+            // Web parity bonus: show where the run landed, like the site's board
+            // does after a submit. Best-effort — a failure here must not mask the
+            // successful submit, and it must not block the caller.
+            if (LeaderboardVisible || _scoreSubmitWasInjected) _ = LoadTopScoresAsync();
+            _ = AnnounceSubmittedRankAsync(game, attempt);
         }
         catch (Exception ex)
         {
